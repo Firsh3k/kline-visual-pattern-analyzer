@@ -1231,9 +1231,7 @@ def analyze(code, name=None, market_env=None):
 
     # 分别计算底部（买入）和顶部（卖出）的环境适配度
     bull_best_id = sorted_bull[0][0]
-    bull_best_score = sorted_bull[0][1]['score']
     bear_best_id = sorted_bear[0][0]
-    bear_best_score = sorted_bear[0][1]['score']
     bull_env_accuracy = calc_env_accuracy(bull_best_id, bull_best_score, market_env)
     bear_env_accuracy = calc_env_accuracy(bear_best_id, bear_best_score, market_env)
     # 综合买卖准确率 = 信号分 × 环境适配率

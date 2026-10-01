@@ -1349,7 +1349,7 @@ function analyzeMarketEnv(data) {
   // 评分（带明细）
   let score = 50;
   const breakdown = [];
-  breakdown.push({ label: '基准分', value: 50 });
+  breakdown.push({ label: '基准分', value: '50' });
   if (maBull) { score += 25; breakdown.push({ label: '均线多头', value: '+25' }); }
   if (maBear) { score -= 25; breakdown.push({ label: '均线空头', value: '-25' }); }
   if (aboveMa20) { score += 8; breakdown.push({ label: '价格>MA20', value: '+8' }); }
@@ -2209,7 +2209,7 @@ function renderAnalysis(result, marketEnv) {
             <span>MA60: <b style="color:#f0f0f0">${marketEnv.ma60}</b></span>
           </div>
           <div style="margin-top:8px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${marketEnv.score}%;background:${marketEnv.score>=60?'#e74c3c':marketEnv.score>=45?'#f39c12':'#2ecc71'};border-radius:2px;"></div></div>
-          ${marketEnv.breakdown ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">${marketEnv.breakdown.map(b => `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#1a2332;color:${b.value.startsWith('+')?'#e74c3c':b.value.startsWith('-')?'#2ecc71':'#8899aa'};">${b.label} ${b.value}</span>`).join('')}</div>` : ''}
+          ${marketEnv.breakdown ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">${marketEnv.breakdown.map(b => `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#1a2332;color:${String(b.value).startsWith('+')?'#e74c3c':String(b.value).startsWith('-')?'#2ecc71':'#8899aa'};">${b.label} ${b.value}</span>`).join('')}</div>` : ''}
           ${marketEnv.dataLength ? `<div style="margin-top:6px;font-size:10px;color:#556677;">数据: ${marketEnv.dataLength}根K线, 最新: ${marketEnv.lastDate}</div>` : ''}
         ` : '<div style="font-size:12px;color:#556677;">大盘数据获取中...</div>'}
       </div>

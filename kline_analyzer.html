@@ -261,6 +261,11 @@ const BEAR_PATTERNS = [
   }
 ];
 
+// 形态ID到名称的映射（供calcEnvAccuracy等函数使用）
+const PATTERN_NAMES = {};
+PATTERNS.forEach(p => { PATTERN_NAMES[p.id] = p.name; });
+BEAR_PATTERNS.forEach(p => { PATTERN_NAMES[p.id] = p.name; });
+
 // ============ 渲染图形库 ============
 let currentPatternType = 'bull';
 function renderPatterns() {

@@ -151,8 +151,8 @@ canvas { width: 100%; display: block; }
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <label style="font-size:13px;color:#8899aa;">信号类型:</label>
           <select id="scanSignalType" style="background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:6px 10px;font-size:13px;">
-            <option value="bull" selected>仅底部信号（上升趋势）</option>
-            <option value="bear">仅顶部信号（下降趋势）</option>
+            <option value="bull" selected>仅买入信号（上升趋势）</option>
+            <option value="bear">仅卖出信号（下降趋势）</option>
             <option value="all">全部信号</option>
           </select>
           <label style="font-size:13px;color:#8899aa;">最低推荐度:</label>
@@ -2758,13 +2758,13 @@ function loadExampleWatchlist() {
 }
 
 // 分析单只股票（添加时自动调用）
-async function analyzeSingleStock(code) {
+async function analyzeSingleStock(code, marketEnv = null) {
   const status = document.getElementById('batchStatus');
   status.textContent = `正在分析 ${code}...`;
   try {
     const result = await fetchKline(code);
     if (result && result.data && result.data.length > 20) {
-      const r = calculateStockResult(result);
+      const r = calculateStockResult(result, marketEnv);
       watchlistResults[code] = r;
       renderWatchlistTags(); // 更新标签中的股票名称
       renderWatchlistTable();
@@ -2774,7 +2774,7 @@ async function analyzeSingleStock(code) {
 }
 
 // 计算单只股票的分析结果（复用逻辑）
-function calculateStockResult(result) {
+function calculateStockResult(result, marketEnv = null) {
   const code = result.code;
   const ind = calcIndicators(result.data);
   const matches = matchPatterns(result.data, ind);
@@ -2792,12 +2792,25 @@ function calculateStockResult(result) {
   const last = result.data[result.data.length - 1];
   const prev = result.data[result.data.length - 2];
   const pct = ((last.close - prev.close) / prev.close * 100).toFixed(2);
+
+  // 买卖信号准确率（需要大盘环境）
+  let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
+  if (marketEnv) {
+    const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
+    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
+    bullEnvRate = bullEnv.historicalAccuracy;
+    bearEnvRate = bearEnv.historicalAccuracy;
+    buyAccuracy = Math.round(sorted[0][1].score * bullEnv.historicalAccuracy / 100);
+    sellAccuracy = Math.round(bearSorted[0][1].score * bearEnv.historicalAccuracy / 100);
+  }
+
   return {
     code, name: result.name, price: last.close, pct,
     bullScore: sorted[0][1].score,
     bullName: PATTERNS.find(p => p.id === sorted[0][0]).name,
     bearScore: bearSorted[0][1].score,
     bearName: BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]).name,
+    buyAccuracy, sellAccuracy, bullEnvRate, bearEnvRate,
     attention: attention.score,
     level: attention.level,
     levelColor: attention.levelColor,
@@ -2810,6 +2823,13 @@ async function analyzeAllWatchlist() {
   const codes = getWatchlist();
   if (codes.length === 0) { alert('自选股池为空，请先添加股票'); return; }
   const status = document.getElementById('batchStatus');
+  status.textContent = '正在获取大盘环境...';
+  // 先拉取大盘环境
+  let marketEnv = null;
+  try {
+    const marketData = await fetchSinaKlineJSONP('sh000001');
+    if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
+  } catch(e) { console.error('大盘数据获取失败', e); }
   status.textContent = `正在分析 0/${codes.length}...`;
   watchlistResults = {};
   for (let i = 0; i < codes.length; i++) {
@@ -2818,14 +2838,14 @@ async function analyzeAllWatchlist() {
     try {
       const result = await fetchKline(code);
       if (result && result.data && result.data.length > 20) {
-        watchlistResults[code] = calculateStockResult(result);
+        watchlistResults[code] = calculateStockResult(result, marketEnv);
         renderWatchlistTags();
         renderWatchlistTable();
       }
     } catch(e) { console.error(code, e); }
     await new Promise(r => setTimeout(r, 300));
   }
-  status.textContent = `完成：共分析 ${Object.keys(watchlistResults).length} 只股票`;
+  status.textContent = `完成：共分析 ${Object.keys(watchlistResults).length} 只股票${marketEnv ? `（大盘${marketEnv.score}分 ${marketEnv.stage}）` : ''}`;
 }
 
 // 渲染自选股结果表格
@@ -2842,8 +2862,8 @@ function renderWatchlistTable() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">底部信号</th>
-            <th style="padding:10px 8px;color:#2ecc71;">顶部信号</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
             <th style="padding:10px 8px;width:40px;">操作</th>
@@ -2856,12 +2876,12 @@ function renderWatchlistTable() {
               <td style="padding:10px 8px;color:#f0f0f0">${r.price.toFixed(2)}</td>
               <td style="padding:10px 8px;color:${parseFloat(r.pct)>=0?'#e74c3c':'#2ecc71'}">${parseFloat(r.pct)>=0?'+':''}${r.pct}%</td>
               <td style="padding:10px 8px;">
-                <div style="color:#e74c3c;font-weight:600">${r.bullScore}%</div>
-                <div style="color:#556677;font-size:11px">${r.bullName}</div>
+                <div style="color:#e74c3c;font-weight:600;font-size:15px">${r.buyAccuracy}%</div>
+                <div style="color:#556677;font-size:11px">${r.bullName} · 适配${r.bullEnvRate}%</div>
               </td>
               <td style="padding:10px 8px;">
-                <div style="color:#2ecc71;font-weight:600">${r.bearScore}%</div>
-                <div style="color:#556677;font-size:11px">${r.bearName}</div>
+                <div style="color:#2ecc71;font-weight:600;font-size:15px">${r.sellAccuracy}%</div>
+                <div style="color:#556677;font-size:11px">${r.bearName} · 适配${r.bearEnvRate}%</div>
               </td>
               <td style="padding:10px 8px;">
                 <span style="display:inline-block;padding:4px 10px;border-radius:10px;background:${r.levelColor}22;color:${r.levelColor};font-weight:600;font-size:12px">${r.attention}分 ${r.level.split('·')[0]}</span>
@@ -2981,14 +3001,22 @@ async function startMarketScan() {
   resultsDiv.innerHTML = '';
   scanResults = [];
 
+  // 先拉取大盘环境
+  status.textContent = '正在获取大盘环境...';
+  let marketEnv = null;
+  try {
+    const marketData = await fetchSinaKlineJSONP('sh000001');
+    if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
+  } catch(e) { console.error('大盘数据获取失败', e); }
+
   // 信号类型过滤函数
   function passSignalFilter(r) {
-    if (signalType === 'bull') return r.bullScore >= 50 && r.bearScore < 50;
-    if (signalType === 'bear') return r.bearScore >= 50 && r.bullScore < 50;
+    if (signalType === 'bull') return r.buyAccuracy >= 30 && r.sellAccuracy < 40;
+    if (signalType === 'bear') return r.sellAccuracy >= 30 && r.buyAccuracy < 40;
     return true; // all
   }
 
-  const signalLabel = signalType === 'bull' ? '底部信号' : signalType === 'bear' ? '顶部信号' : '全部';
+  const signalLabel = signalType === 'bull' ? '买入信号' : signalType === 'bear' ? '卖出信号' : '全部';
 
   // 并发控制：同时最多5个请求
   const CONCURRENCY = 5;
@@ -3001,7 +3029,7 @@ async function startMarketScan() {
       try {
         const result = await fetchKline(code);
         if (result && result.data && result.data.length > 20) {
-          const r = calculateStockResult(result);
+          const r = calculateStockResult(result, marketEnv);
           if (r.attention >= minScore && passSignalFilter(r)) {
             scanResults.push(r);
             renderScanResults();
@@ -3041,8 +3069,8 @@ function renderScanResults() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">底部信号</th>
-            <th style="padding:10px 8px;color:#2ecc71;">顶部信号</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
           </tr>
@@ -3055,12 +3083,12 @@ function renderScanResults() {
               <td style="padding:10px 8px;color:#f0f0f0">${r.price.toFixed(2)}</td>
               <td style="padding:10px 8px;color:${parseFloat(r.pct)>=0?'#e74c3c':'#2ecc71'}">${parseFloat(r.pct)>=0?'+':''}${r.pct}%</td>
               <td style="padding:10px 8px;">
-                <div style="color:#e74c3c;font-weight:600">${r.bullScore}%</div>
-                <div style="color:#556677;font-size:11px">${r.bullName}</div>
+                <div style="color:#e74c3c;font-weight:600;font-size:15px">${r.buyAccuracy}%</div>
+                <div style="color:#556677;font-size:11px">${r.bullName} · 适配${r.bullEnvRate}%</div>
               </td>
               <td style="padding:10px 8px;">
-                <div style="color:#2ecc71;font-weight:600">${r.bearScore}%</div>
-                <div style="color:#556677;font-size:11px">${r.bearName}</div>
+                <div style="color:#2ecc71;font-weight:600;font-size:15px">${r.sellAccuracy}%</div>
+                <div style="color:#556677;font-size:11px">${r.bearName} · 适配${r.bearEnvRate}%</div>
               </td>
               <td style="padding:10px 8px;">
                 <span style="display:inline-block;padding:4px 10px;border-radius:10px;background:${r.levelColor}22;color:${r.levelColor};font-weight:600;font-size:12px">${r.attention}分 ${r.level.split('·')[0]}</span>

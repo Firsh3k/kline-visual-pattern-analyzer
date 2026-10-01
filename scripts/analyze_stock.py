@@ -1213,6 +1213,19 @@ def analyze(code, name=None, market_env=None):
     # 形态-环境适配度（当前大盘环境下该形态的历史准确率）
     env_accuracy = calc_env_accuracy(best_id, best_detail['score'], market_env)
 
+    # 分别计算底部（买入）和顶部（卖出）的环境适配度
+    bull_best_id = sorted_bull[0][0]
+    bull_best_score = sorted_bull[0][1]['score']
+    bear_best_id = sorted_bear[0][0]
+    bear_best_score = sorted_bear[0][1]['score']
+    bull_env_accuracy = calc_env_accuracy(bull_best_id, bull_best_score, market_env)
+    bear_env_accuracy = calc_env_accuracy(bear_best_id, bear_best_score, market_env)
+
+    # 综合买卖准确率 = 信号分 × 环境适配率
+    # 买入准确率：底部信号越强 + 该底部形态在当前环境越可靠 → 买入成功率越高
+    buy_accuracy = round(bull_best_score * bull_env_accuracy['historical_accuracy'] / 100)
+    sell_accuracy = round(bear_best_score * bear_env_accuracy['historical_accuracy'] / 100)
+
     # 推荐度评分（基础9项）
     attention = calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_div, neck_confirm)
 
@@ -1327,6 +1340,10 @@ def analyze(code, name=None, market_env=None):
         'overall_confidence': overall_confidence,
         'market_env': market_env,
         'env_accuracy': env_accuracy,
+        'bull_env_accuracy': bull_env_accuracy,
+        'bear_env_accuracy': bear_env_accuracy,
+        'buy_accuracy': buy_accuracy,
+        'sell_accuracy': sell_accuracy,
         'volume': vol,
         'macd_divergence': macd_div,
         'volume_divergence': vol_div,

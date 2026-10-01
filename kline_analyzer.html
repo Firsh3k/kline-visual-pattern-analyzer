@@ -2044,6 +2044,17 @@ function renderAnalysis(result, marketEnv) {
     else attention.level = 'E级·暂不关注';
   }
 
+  // 分别计算底部（买入）和顶部（卖出）的环境适配度
+  const bullBestId = sorted[0][0];
+  const bullBestPattern = PATTERNS.find(p => p.id === bullBestId);
+  const bearBestId = bearSorted[0][0];
+  const bearBestPattern = BEAR_PATTERNS.find(p => p.id === bearBestId);
+  const bullEnvAccuracy = calcEnvAccuracy(bullBestId, bullBestScore, marketEnv);
+  const bearEnvAccuracy = calcEnvAccuracy(bearBestId, bearBestScore, marketEnv);
+  // 综合买卖准确率 = 信号分 × 环境适配率
+  const buyAccuracy = Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100);
+  const sellAccuracy = Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100);
+
   // ===== 形态完成度与当前阶段 =====
   const patternReliability = best.reliability_pct || 75;
   const patternSampleNote = best.sample_note || '';
@@ -2205,35 +2216,48 @@ function renderAnalysis(result, marketEnv) {
       </div>
     </div>
 
-    <!-- ===== 形态-环境适配度 ===== -->
-    <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid ${envAccuracy.historicalAccuracy>=60?'rgba(231,76,60,0.4)':envAccuracy.historicalAccuracy>=45?'rgba(243,156,18,0.4)':'rgba(46,204,113,0.4)'};border-radius:10px;padding:14px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">形态-环境适配度 <span style="font-size:11px;color:#8899aa;font-weight:400;">（当前大盘环境下，该形态的历史准确率）</span></span>
-        <div style="display:flex;gap:20px;align-items:center;">
-          <div style="text-align:center;">
-            <div style="font-size:11px;color:#8899aa;">环境分类</div>
-            <div style="font-size:16px;font-weight:800;color:${envAccuracy.envType==='牛市'?'#e74c3c':envAccuracy.envType==='熊市'?'#2ecc71':'#f39c12'};">${envAccuracy.envType}</div>
+    <!-- ===== 形态-环境适配度（多空双侧） ===== -->
+    <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">买卖信号准确率 <span style="font-size:11px;color:#8899aa;font-weight:400;">（信号强度 × 环境适配率 = 综合准确率）</span></span>
+        <span style="font-size:12px;padding:3px 10px;border-radius:10px;background:${envAccuracy.envType==='牛市'?'rgba(231,76,60,0.2)':envAccuracy.envType==='熊市'?'rgba(46,204,113,0.2)':'rgba(243,156,18,0.2)'};color:${envAccuracy.envType==='牛市'?'#e74c3c':envAccuracy.envType==='熊市'?'#2ecc71':'#f39c12'};">当前环境：${envAccuracy.envType}（大盘${marketEnv?marketEnv.score:'-'}分）</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <!-- 底部信号（买入） -->
+        <div style="background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);border-radius:8px;padding:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span style="font-size:13px;font-weight:700;color:#e74c3c;">📈 底部信号（买入）</span>
+            <span style="font-size:11px;color:#8899aa;">匹配度 ${bullBestScore}分</span>
           </div>
-          <div style="text-align:center;">
-            <div style="font-size:11px;color:#8899aa;">历史准确率</div>
-            <div style="font-size:20px;font-weight:800;color:${envAccuracy.historicalAccuracy>=60?'#e74c3c':envAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${envAccuracy.historicalAccuracy}%</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bullBestPattern?bullBestPattern.name:bullBestId}</b></div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="text-align:center;padding:8px;background:rgba(231,76,60,0.15);border-radius:6px;">
+            <div style="font-size:11px;color:#8899aa;">买入综合准确率</div>
+            <div style="font-size:28px;font-weight:900;color:${buyAccuracy>=60?'#e74c3c':buyAccuracy>=40?'#f39c12':'#556677'};">${buyAccuracy}%</div>
           </div>
-          <div style="text-align:center;">
-            <div style="font-size:11px;color:#8899aa;">综合准确率</div>
-            <div style="font-size:20px;font-weight:800;color:${envAccuracy.combinedAccuracy>=60?'#e74c3c':envAccuracy.combinedAccuracy>=40?'#f39c12':'#2ecc71'};">${envAccuracy.combinedAccuracy}%</div>
+          <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${buyAccuracy}%;background:#e74c3c;border-radius:2px;"></div></div>
+        </div>
+        <!-- 顶部信号（卖出） -->
+        <div style="background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.3);border-radius:8px;padding:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span style="font-size:13px;font-weight:700;color:#2ecc71;">📉 顶部信号（卖出）</span>
+            <span style="font-size:11px;color:#8899aa;">匹配度 ${bearBestScore}分</span>
           </div>
-          <div style="text-align:center;">
-            <div style="font-size:11px;color:#8899aa;">评分加成</div>
-            <div style="font-size:20px;font-weight:800;color:${envAccuracy.scoreBonus>0?'#e74c3c':envAccuracy.scoreBonus<0?'#2ecc71':'#8899aa'};">${envAccuracy.scoreBonus>0?'+':''}${envAccuracy.scoreBonus}</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bearBestPattern?bearBestPattern.name:bearBestId}</b></div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="text-align:center;padding:8px;background:rgba(46,204,113,0.15);border-radius:6px;">
+            <div style="font-size:11px;color:#8899aa;">卖出综合准确率</div>
+            <div style="font-size:28px;font-weight:900;color:${sellAccuracy>=60?'#2ecc71':sellAccuracy>=40?'#f39c12':'#556677'};">${sellAccuracy}%</div>
           </div>
+          <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${sellAccuracy}%;background:#2ecc71;border-radius:2px;"></div></div>
         </div>
       </div>
-      <div style="font-size:12px;color:#aabbcc;line-height:1.6;">${envAccuracy.detail}</div>
-      <div style="margin-top:8px;height:6px;background:#1a2332;border-radius:3px;overflow:hidden;">
-        <div style="height:100%;width:${envAccuracy.historicalAccuracy}%;background:linear-gradient(90deg,${envAccuracy.historicalAccuracy>=60?'#e74c3c':envAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'},${envAccuracy.historicalAccuracy>=60?'#c0392b':envAccuracy.historicalAccuracy>=45?'#d68910':'#27ae60'});border-radius:3px;"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:#556677;margin-top:4px;">
-        <span>0%</span><span>低准确率</span><span>中准确率</span><span>高准确率</span><span>100%</span>
+      <!-- 综合判断 -->
+      <div style="margin-top:10px;padding:10px;background:#0a0e14;border-radius:6px;font-size:12px;color:#aabbcc;line-height:1.6;">
+        ${buyAccuracy > sellAccuracy + 10 ? '<b style="color:#e74c3c;">买入信号更强</b>：底部形态匹配度高且当前环境适合该形态，可考虑逢低布局。' :
+          sellAccuracy > buyAccuracy + 10 ? '<b style="color:#2ecc71;">卖出信号更强</b>：顶部形态匹配度高且当前环境适合该形态，建议止盈止损，不要抄底。' :
+          '<b style="color:#f39c12;">多空博弈</b>：买卖信号强度接近，方向不明，建议观望等待明确信号。'}
+        （买入${buyAccuracy}% vs 卖出${sellAccuracy}%，差值${Math.abs(buyAccuracy-sellAccuracy)}%）
       </div>
     </div>
 

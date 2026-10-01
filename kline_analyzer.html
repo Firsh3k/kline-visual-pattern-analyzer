@@ -1388,6 +1388,56 @@ function analyzeMarketEnv(data) {
   };
 }
 
+// ============ 形态-环境历史准确率表 ============
+// 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
+const PATTERN_ENV_ACCURACY = {
+  // 上升形态
+  'ma_bull':          { bull: 85, range: 55, bear: 30 },
+  'w_bottom':         { bull: 75, range: 70, bear: 50 },
+  'hs_bottom':        { bull: 78, range: 82, bear: 45 },
+  'platform_break':   { bull: 80, range: 55, bear: 25 },
+  // 下降形态
+  'ma_bear':          { bull: 25, range: 50, bear: 85 },
+  'm_top':            { bull: 50, range: 72, bear: 78 },
+  'hs_top':           { bull: 45, range: 75, bear: 83 },
+  'platform_break_down': { bull: 20, range: 50, bear: 82 },
+};
+
+// ============ 形态-环境适配度计算 ============
+function calcEnvAccuracy(patternId, patternScore, marketEnv) {
+  if (!marketEnv) {
+    return { envType: '未知', envScore: 50, historicalAccuracy: 0, combinedAccuracy: 0, scoreBonus: 0, detail: '暂无大盘数据' };
+  }
+  const envScore = marketEnv.score || 50;
+  let envType, envKey;
+  if (envScore >= 60) { envType = '牛市'; envKey = 'bull'; }
+  else if (envScore >= 40) { envType = '震荡市'; envKey = 'range'; }
+  else { envType = '熊市'; envKey = 'bear'; }
+
+  const envTable = PATTERN_ENV_ACCURACY[patternId] || { bull: 60, range: 60, bear: 60 };
+  const historicalAccuracy = envTable[envKey] || 60;
+  const combinedAccuracy = Math.round(patternScore * historicalAccuracy / 100);
+
+  let scoreBonus, advice;
+  if (historicalAccuracy >= 75) {
+    scoreBonus = 10; advice = '当前环境与形态高度匹配，信号可靠性高';
+  } else if (historicalAccuracy >= 60) {
+    scoreBonus = 5; advice = '当前环境与形态较为匹配，信号可靠性中等';
+  } else if (historicalAccuracy >= 45) {
+    scoreBonus = 0; advice = '当前环境与形态一般匹配，需结合其他信号确认';
+  } else if (historicalAccuracy >= 30) {
+    scoreBonus = -8; advice = '当前环境不利于该形态，信号可靠性较低，谨慎操作';
+  } else {
+    scoreBonus = -15; advice = '当前环境严重不利于该形态，极可能是假信号，建议回避';
+  }
+
+  const patternName = PATTERN_NAMES[patternId] || patternId;
+  return {
+    envType, envScore, historicalAccuracy, combinedAccuracy, scoreBonus,
+    detail: `${envType}环境下，${patternName}历史准确率${historicalAccuracy}%，综合准确率${combinedAccuracy}%。${advice}`
+  };
+}
+
 // ============ RSI + KDJ 信号检测 ============
 function detectRSIKDJ(data, ind) {
   const n = data.length;
@@ -1974,6 +2024,21 @@ function renderAnalysis(result, marketEnv) {
   const neckConfirm = calcNecklineConfirm(data, bestDetail, bestType === 'bear');
   const attention = calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm);
 
+  // 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+  const envAccuracy = calcEnvAccuracy(best.id, bestScore, marketEnv);
+  // 将环境适配度加成纳入推荐度评分
+  if (envAccuracy.scoreBonus !== 0) {
+    attention.score = Math.max(0, Math.min(100, attention.score + envAccuracy.scoreBonus));
+    attention.breakdown.push({ label: '环境适配度', value: envAccuracy.scoreBonus > 0 ? `+${envAccuracy.scoreBonus}` : envAccuracy.scoreBonus });
+    // 重新评定等级
+    if (bearBestScore >= 60) attention.level = 'S级·风险警示';
+    else if (attention.score >= 85) attention.level = 'A级·强烈推荐';
+    else if (attention.score >= 70) attention.level = 'B级·推荐关注';
+    else if (attention.score >= 55) attention.level = 'C级·值得观察';
+    else if (attention.score >= 40) attention.level = 'D级·一般';
+    else attention.level = 'E级·暂不关注';
+  }
+
   // ===== 形态完成度与当前阶段 =====
   const patternReliability = best.reliability_pct || 75;
   const patternSampleNote = best.sample_note || '';
@@ -2132,6 +2197,38 @@ function renderAnalysis(result, marketEnv) {
         <div style="font-size:14px;font-weight:700;color:${bestType==='bull'?'#e74c3c':'#2ecc71'};margin-bottom:6px;line-height:1.4;">${currentStage}</div>
         ${currentOutlook ? `<div style="font-size:12px;color:#aabbcc;line-height:1.5;margin-bottom:6px;">后续预判：${currentOutlook}</div>` : ''}
         ${currentAction ? `<div style="font-size:12px;color:#f39c12;line-height:1.5;">操作策略：${currentAction}</div>` : ''}
+      </div>
+    </div>
+
+    <!-- ===== 形态-环境适配度 ===== -->
+    <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid ${envAccuracy.historicalAccuracy>=60?'rgba(231,76,60,0.4)':envAccuracy.historicalAccuracy>=45?'rgba(243,156,18,0.4)':'rgba(46,204,113,0.4)'};border-radius:10px;padding:14px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">形态-环境适配度 <span style="font-size:11px;color:#8899aa;font-weight:400;">（当前大盘环境下，该形态的历史准确率）</span></span>
+        <div style="display:flex;gap:20px;align-items:center;">
+          <div style="text-align:center;">
+            <div style="font-size:11px;color:#8899aa;">环境分类</div>
+            <div style="font-size:16px;font-weight:800;color:${envAccuracy.envType==='牛市'?'#e74c3c':envAccuracy.envType==='熊市'?'#2ecc71':'#f39c12'};">${envAccuracy.envType}</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:11px;color:#8899aa;">历史准确率</div>
+            <div style="font-size:20px;font-weight:800;color:${envAccuracy.historicalAccuracy>=60?'#e74c3c':envAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${envAccuracy.historicalAccuracy}%</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:11px;color:#8899aa;">综合准确率</div>
+            <div style="font-size:20px;font-weight:800;color:${envAccuracy.combinedAccuracy>=60?'#e74c3c':envAccuracy.combinedAccuracy>=40?'#f39c12':'#2ecc71'};">${envAccuracy.combinedAccuracy}%</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:11px;color:#8899aa;">评分加成</div>
+            <div style="font-size:20px;font-weight:800;color:${envAccuracy.scoreBonus>0?'#e74c3c':envAccuracy.scoreBonus<0?'#2ecc71':'#8899aa'};">${envAccuracy.scoreBonus>0?'+':''}${envAccuracy.scoreBonus}</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#aabbcc;line-height:1.6;">${envAccuracy.detail}</div>
+      <div style="margin-top:8px;height:6px;background:#1a2332;border-radius:3px;overflow:hidden;">
+        <div style="height:100%;width:${envAccuracy.historicalAccuracy}%;background:linear-gradient(90deg,${envAccuracy.historicalAccuracy>=60?'#e74c3c':envAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'},${envAccuracy.historicalAccuracy>=60?'#c0392b':envAccuracy.historicalAccuracy>=45?'#d68910':'#27ae60'});border-radius:3px;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#556677;margin-top:4px;">
+        <span>0%</span><span>低准确率</span><span>中准确率</span><span>高准确率</span><span>100%</span>
       </div>
     </div>
 

@@ -931,6 +931,76 @@ PATTERN_RELIABILITY = {
     'platform_break': 80, 'platform_break_down': 81, 'ma_bull': 78, 'ma_bear': 80
 }
 
+# 形态-环境历史准确率表（基于技术分析经典统计）
+# 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
+PATTERN_ENV_ACCURACY = {
+    # 上升形态
+    'ma_bull':          {'bull': 85, 'range': 55, 'bear': 30},
+    'w_bottom':         {'bull': 75, 'range': 70, 'bear': 50},
+    'hs_bottom':        {'bull': 78, 'range': 82, 'bear': 45},
+    'platform_break':   {'bull': 80, 'range': 55, 'bear': 25},
+    # 下降形态
+    'ma_bear':          {'bull': 25, 'range': 50, 'bear': 85},
+    'm_top':            {'bull': 50, 'range': 72, 'bear': 78},
+    'hs_top':           {'bull': 45, 'range': 75, 'bear': 83},
+    'platform_break_down': {'bull': 20, 'range': 50, 'bear': 82},
+}
+
+
+def calc_env_accuracy(pattern_id, pattern_score, market_env):
+    """计算当前形态在当前大盘环境下的历史准确率
+    返回：环境分类、历史准确率、综合准确率（形态匹配度×环境适配率）、评分加成
+    """
+    if not market_env:
+        return {'env_type': '未知', 'historical_accuracy': 0, 'combined_accuracy': 0,
+                'score_bonus': 0, 'detail': '暂无大盘数据'}
+
+    env_score = market_env.get('score', 50)
+    # 环境分类
+    if env_score >= 60:
+        env_type = '牛市'
+        env_key = 'bull'
+    elif env_score >= 40:
+        env_type = '震荡市'
+        env_key = 'range'
+    else:
+        env_type = '熊市'
+        env_key = 'bear'
+
+    # 该形态在该环境下的历史准确率
+    env_table = PATTERN_ENV_ACCURACY.get(pattern_id, {'bull': 60, 'range': 60, 'bear': 60})
+    historical_accuracy = env_table.get(env_key, 60)
+
+    # 综合准确率 = 形态匹配度 × 环境适配率
+    # 形态匹配度用pattern_score/100，环境适配率用historical_accuracy/100
+    combined_accuracy = round(pattern_score * historical_accuracy / 100)
+
+    # 评分加成：环境适配度高加5-10分，低则扣5-15分
+    if historical_accuracy >= 75:
+        score_bonus = 10
+        advice = '当前环境与形态高度匹配，信号可靠性高'
+    elif historical_accuracy >= 60:
+        score_bonus = 5
+        advice = '当前环境与形态较为匹配，信号可靠性中等'
+    elif historical_accuracy >= 45:
+        score_bonus = 0
+        advice = '当前环境与形态一般匹配，需结合其他信号确认'
+    elif historical_accuracy >= 30:
+        score_bonus = -8
+        advice = '当前环境不利于该形态，信号可靠性较低，谨慎操作'
+    else:
+        score_bonus = -15
+        advice = '当前环境严重不利于该形态，极可能是假信号，建议回避'
+
+    return {
+        'env_type': env_type,
+        'env_score': env_score,
+        'historical_accuracy': historical_accuracy,
+        'combined_accuracy': combined_accuracy,
+        'score_bonus': score_bonus,
+        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}历史准确率{historical_accuracy}%，综合准确率{combined_accuracy}%。{advice}'
+    }
+
 
 # ============ 推荐度评分（与网页端calcAttentionScore一致）============
 def calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_div, neck_confirm):
@@ -1140,6 +1210,9 @@ def analyze(code, name=None, market_env=None):
     # 颈线确认
     neck_confirm = calc_neckline_confirm(data, best_detail, is_bear_dominant)
 
+    # 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+    env_accuracy = calc_env_accuracy(best_id, best_detail['score'], market_env)
+
     # 推荐度评分（基础9项）
     attention = calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_div, neck_confirm)
 
@@ -1175,8 +1248,9 @@ def analyze(code, name=None, market_env=None):
     if weekly_pattern['resonance']:
         weekly_bonus = 8 if weekly_pattern['type'] == best_type else -8
 
-    # 五大指标纳入评分
-    extra_score = rsi_kdj['score'] + bollinger['score'] + relative_strength['score'] + weekly_bonus
+    # 五大指标纳入评分 + 环境适配度加成
+    env_bonus = env_accuracy.get('score_bonus', 0)
+    extra_score = rsi_kdj['score'] + bollinger['score'] + relative_strength['score'] + weekly_bonus + env_bonus
     attention['score'] = max(0, min(100, attention['score'] + extra_score))
     if rsi_kdj['score'] != 0:
         attention['breakdown'].append({'label': 'RSI/KDJ信号', 'value': f'+{rsi_kdj["score"]}' if rsi_kdj['score'] > 0 else rsi_kdj['score']})
@@ -1186,6 +1260,8 @@ def analyze(code, name=None, market_env=None):
         attention['breakdown'].append({'label': '相对强度', 'value': f'+{relative_strength["score"]}' if relative_strength['score'] > 0 else relative_strength['score']})
     if weekly_bonus != 0:
         attention['breakdown'].append({'label': '周线共振', 'value': f'+{weekly_bonus}' if weekly_bonus > 0 else weekly_bonus})
+    if env_bonus != 0:
+        attention['breakdown'].append({'label': '环境适配度', 'value': f'+{env_bonus}' if env_bonus > 0 else env_bonus})
 
     # 重新评定等级
     if bear_best_score >= 60:
@@ -1250,6 +1326,7 @@ def analyze(code, name=None, market_env=None):
         'pattern_completion': round(completion),
         'overall_confidence': overall_confidence,
         'market_env': market_env,
+        'env_accuracy': env_accuracy,
         'volume': vol,
         'macd_divergence': macd_div,
         'volume_divergence': vol_div,

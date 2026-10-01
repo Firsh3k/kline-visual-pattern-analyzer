@@ -1346,16 +1346,22 @@ function analyzeMarketEnv(data) {
   const low20 = Math.min(...recent20.map(d => d.low));
   const volatility = ((high20 - low20) / low20 * 100);
   
-  // 评分
+  // 评分（带明细）
   let score = 50;
-  if (maBull) score += 25;
-  if (maBear) score -= 25;
-  if (aboveMa20) score += 8; else score -= 8;
-  if (aboveMa60) score += 8; else score -= 8;
-  if (ma20Up) score += 5; else score -= 5;
-  if (ma60Up) score += 4; else score -= 4;
-  if (change20 > 5) score += 5;
-  if (change20 < -5) score -= 5;
+  const breakdown = [];
+  breakdown.push({ label: '基准分', value: 50 });
+  if (maBull) { score += 25; breakdown.push({ label: '均线多头', value: '+25' }); }
+  if (maBear) { score -= 25; breakdown.push({ label: '均线空头', value: '-25' }); }
+  if (aboveMa20) { score += 8; breakdown.push({ label: '价格>MA20', value: '+8' }); }
+  else { score -= 8; breakdown.push({ label: '价格<MA20', value: '-8' }); }
+  if (aboveMa60) { score += 8; breakdown.push({ label: '价格>MA60', value: '+8' }); }
+  else { score -= 8; breakdown.push({ label: '价格<MA60', value: '-8' }); }
+  if (ma20Up) { score += 5; breakdown.push({ label: 'MA20向上', value: '+5' }); }
+  else { score -= 5; breakdown.push({ label: 'MA20向下', value: '-5' }); }
+  if (ma60Up) { score += 4; breakdown.push({ label: 'MA60向上', value: '+4' }); }
+  else { score -= 4; breakdown.push({ label: 'MA60向下', value: '-4' }); }
+  if (change20 > 5) { score += 5; breakdown.push({ label: '20日涨>5%', value: '+5' }); }
+  if (change20 < -5) { score -= 5; breakdown.push({ label: '20日跌>5%', value: '-5' }); }
   score = Math.max(0, Math.min(100, score));
   
   // 阶段判断
@@ -1383,13 +1389,15 @@ function analyzeMarketEnv(data) {
   }
   
   return {
-    score, stage, trend, advice, impact,
+    score, stage, trend, advice, impact, breakdown,
     price: curPrice.toFixed(2),
     change20: change20.toFixed(2),
     ma20: ma20.toFixed(2),
     ma60: ma60.toFixed(2),
     volatility: volatility.toFixed(1),
-    aboveMa20, aboveMa60, maBull, maBear
+    aboveMa20, aboveMa60, maBull, maBear,
+    dataLength: data.length,
+    lastDate: data[last].date
   };
 }
 
@@ -2201,6 +2209,8 @@ function renderAnalysis(result, marketEnv) {
             <span>MA60: <b style="color:#f0f0f0">${marketEnv.ma60}</b></span>
           </div>
           <div style="margin-top:8px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${marketEnv.score}%;background:${marketEnv.score>=60?'#e74c3c':marketEnv.score>=45?'#f39c12':'#2ecc71'};border-radius:2px;"></div></div>
+          ${marketEnv.breakdown ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">${marketEnv.breakdown.map(b => `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#1a2332;color:${b.value.startsWith('+')?'#e74c3c':b.value.startsWith('-')?'#2ecc71':'#8899aa'};">${b.label} ${b.value}</span>`).join('')}</div>` : ''}
+          ${marketEnv.dataLength ? `<div style="margin-top:6px;font-size:10px;color:#556677;">数据: ${marketEnv.dataLength}根K线, 最新: ${marketEnv.lastDate}</div>` : ''}
         ` : '<div style="font-size:12px;color:#556677;">大盘数据获取中...</div>'}
       </div>
 
@@ -2284,29 +2294,6 @@ function renderAnalysis(result, marketEnv) {
       ${marketEnv && marketEnv.impact !== 0 ? `<div style="font-size:11px;color:${marketEnv.impact>0?'#e74c3c':'#2ecc71'};margin-top:6px;">大盘环境${marketEnv.impact>0?'加持':'拖累'}：推荐度${marketEnv.impact>0?'+':''}${marketEnv.impact}分</div>` : ''}
     </div>
 
-    <!-- 多空对比：底部信号 vs 顶部信号 -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-      <div style="background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);border-radius:10px;padding:14px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <span style="font-size:14px;font-weight:600;color:#e74c3c;">底部信号（买入）</span>
-          <span style="font-size:24px;font-weight:800;color:#e74c3c;">${bullBestScore}%</span>
-        </div>
-        <div style="font-size:13px;color:#aabbcc;margin-bottom:8px;">${PATTERNS.find(p=>p.id===sorted[0][0]).name} · ${matches[sorted[0][0]].stage || ''}</div>
-        <div style="font-size:12px;color:#8899aa;line-height:1.8;">
-          ${matches[sorted[0][0]].points && matches[sorted[0][0]].points.length > 0 ? matches[sorted[0][0]].points.slice(0,4).map(p => `<span style="display:inline-block;margin-right:12px;">${p.label}: <b style="color:#f0f0f0">${p.value}</b></span>`).join('') : '暂无'}
-        </div>
-      </div>
-      <div style="background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.3);border-radius:10px;padding:14px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <span style="font-size:14px;font-weight:600;color:#2ecc71;">顶部信号（卖出）</span>
-          <span style="font-size:24px;font-weight:800;color:#2ecc71;">${bearBestScore}%</span>
-        </div>
-        <div style="font-size:13px;color:#aabbcc;margin-bottom:8px;">${BEAR_PATTERNS.find(p=>p.id===bearSorted[0][0]).name} · ${bearMatches[bearSorted[0][0]].stage || ''}</div>
-        <div style="font-size:12px;color:#8899aa;line-height:1.8;">
-          ${bearMatches[bearSorted[0][0]].points && bearMatches[bearSorted[0][0]].points.length > 0 ? bearMatches[bearSorted[0][0]].points.slice(0,4).map(p => `<span style="display:inline-block;margin-right:12px;">${p.label}: <b style="color:#f0f0f0">${p.value}</b></span>`).join('') : '暂无'}
-        </div>
-      </div>
-    </div>
     <!-- 关注推荐度指数 -->
     <div style="background:linear-gradient(135deg,#1a2332,#0f1419);border-radius:10px;padding:16px 20px;margin-bottom:16px;border:1px solid #2a3441;display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
       <div style="text-align:center;min-width:100px;">

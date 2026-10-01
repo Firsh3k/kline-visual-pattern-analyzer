@@ -83,20 +83,33 @@ def fetch_market_env():
         low20 = min(d['low'] for d in recent20)
         volatility = (high20 - low20) / low20 * 100
 
-        # 评分（基础50）
+        # 评分（基础50，带明细）
         score = 50
-        if ma_bull: score += 25
-        if ma_bear: score -= 25
-        if above_ma20: score += 8
-        else: score -= 8
-        if above_ma60: score += 8
-        else: score -= 8
-        if ma20_up: score += 5
-        else: score -= 5
-        if ma60_up: score += 4
-        else: score -= 4
-        if change20 > 5: score += 5
-        if change20 < -5: score -= 5
+        breakdown = [{'label': '基准分', 'value': '50'}]
+        if ma_bull:
+            score += 25; breakdown.append({'label': '均线多头', 'value': '+25'})
+        if ma_bear:
+            score -= 25; breakdown.append({'label': '均线空头', 'value': '-25'})
+        if above_ma20:
+            score += 8; breakdown.append({'label': '价格>MA20', 'value': '+8'})
+        else:
+            score -= 8; breakdown.append({'label': '价格<MA20', 'value': '-8'})
+        if above_ma60:
+            score += 8; breakdown.append({'label': '价格>MA60', 'value': '+8'})
+        else:
+            score -= 8; breakdown.append({'label': '价格<MA60', 'value': '-8'})
+        if ma20_up:
+            score += 5; breakdown.append({'label': 'MA20向上', 'value': '+5'})
+        else:
+            score -= 5; breakdown.append({'label': 'MA20向下', 'value': '-5'})
+        if ma60_up:
+            score += 4; breakdown.append({'label': 'MA60向上', 'value': '+4'})
+        else:
+            score -= 4; breakdown.append({'label': 'MA60向下', 'value': '-4'})
+        if change20 > 5:
+            score += 5; breakdown.append({'label': '20日涨>5%', 'value': '+5'})
+        if change20 < -5:
+            score -= 5; breakdown.append({'label': '20日跌>5%', 'value': '-5'})
         score = max(0, min(100, score))
 
         # 阶段判断
@@ -129,12 +142,15 @@ def fetch_market_env():
         return {
             'score': score, 'stage': stage, 'trend': trend,
             'advice': advice, 'impact': impact,
+            'breakdown': breakdown,
             'price': f'{cur_price:.2f}',
             'change20': f'{change20:.2f}',
             'ma20': f'{ma20:.2f}', 'ma60': f'{ma60:.2f}',
             'volatility': f'{volatility:.1f}',
             'aboveMa20': above_ma20, 'aboveMa60': above_ma60,
-            'maBull': ma_bull, 'maBear': ma_bear
+            'maBull': ma_bull, 'maBear': ma_bear,
+            'dataLength': n,
+            'lastDate': data[last]['day'][:10]
         }
     except Exception:
         return None
@@ -1220,9 +1236,7 @@ def analyze(code, name=None, market_env=None):
     bear_best_score = sorted_bear[0][1]['score']
     bull_env_accuracy = calc_env_accuracy(bull_best_id, bull_best_score, market_env)
     bear_env_accuracy = calc_env_accuracy(bear_best_id, bear_best_score, market_env)
-
     # 综合买卖准确率 = 信号分 × 环境适配率
-    # 买入准确率：底部信号越强 + 该底部形态在当前环境越可靠 → 买入成功率越高
     buy_accuracy = round(bull_best_score * bull_env_accuracy['historical_accuracy'] / 100)
     sell_accuracy = round(bear_best_score * bear_env_accuracy['historical_accuracy'] / 100)
 

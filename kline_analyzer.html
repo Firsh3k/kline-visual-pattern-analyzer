@@ -361,7 +361,7 @@ async function fetchKline(code) {
 // 新浪K线数据（JSONP方式）
 function fetchSinaKlineJSONP(symbol) {
   return new Promise((resolve, reject) => {
-    const callbackName = '_sina_kline_' + Date.now();
+    const callbackName = '_sina_kline_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/${callbackName}/CN_MarketDataService.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=250`;
     const script = document.createElement('script');
     const timer = setTimeout(() => {
@@ -2203,7 +2203,8 @@ function renderAnalysis(result, marketEnv) {
         ${marketEnv ? `
           <div style="font-size:15px;font-weight:700;color:${marketEnv.trend==='bull'?'#e74c3c':marketEnv.trend==='bear'?'#2ecc71':'#f39c12'};margin-bottom:6px;">${marketEnv.stage}</div>
           <div style="font-size:12px;color:#aabbcc;line-height:1.6;margin-bottom:8px;">${marketEnv.advice}</div>
-          <div style="display:flex;gap:10px;font-size:11px;color:#8899aa;">
+          <div style="display:flex;gap:10px;font-size:11px;color:#8899aa;flex-wrap:wrap;">
+            <span>上证: <b style="color:#f0f0f0">${marketEnv.price}</b></span>
             <span>20日涨跌: <b style="color:${parseFloat(marketEnv.change20)>=0?'#e74c3c':'#2ecc71'}">${parseFloat(marketEnv.change20)>=0?'+':''}${marketEnv.change20}%</b></span>
             <span>MA20: <b style="color:#f0f0f0">${marketEnv.ma20}</b></span>
             <span>MA60: <b style="color:#f0f0f0">${marketEnv.ma60}</b></span>

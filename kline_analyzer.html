@@ -103,8 +103,13 @@ canvas { width: 100%; display: block; }
 
   <!-- 股票分析 -->
   <div id="page-analyze" class="page">
-    <div class="search-bar">
-      <input type="text" id="codeInput" placeholder="输入股票代码，如 002436、600519" maxlength="6" onkeydown="if(event.key==='Enter')doAnalyze()">
+    <div class="search-bar" style="flex-wrap:wrap;gap:8px;">
+      <input type="text" id="codeInput" placeholder="输入股票代码，如 002436、600519" maxlength="6" onkeydown="if(event.key==='Enter')doAnalyze()" style="flex:1;min-width:200px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8899aa;cursor:pointer;">
+        <input type="checkbox" id="backtestMode" onchange="toggleBacktestMode()" style="cursor:pointer;">
+        <span>📅 回测模式</span>
+      </label>
+      <input type="date" id="backtestDate" style="display:none;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
       <button onclick="doAnalyze()" id="analyzeBtn">开始分析</button>
     </div>
     <div class="quick-codes">
@@ -112,6 +117,7 @@ canvas { width: 100%; display: block; }
       <span class="quick-code" onclick="quickAnalyze('600519')">贵州茅台 600519</span>
       <span class="quick-code" onclick="quickAnalyze('002594')">比亚迪 002594</span>
       <span class="quick-code" onclick="quickAnalyze('300750')">宁德时代 300750</span>
+      <span class="quick-code" onclick="quickAnalyze('688105')">诺唯赞 688105</span>
     </div>
     <div id="resultArea"></div>
   </div>
@@ -324,7 +330,7 @@ function switchTab(tab) {
 }
 
 // ============ 数据获取 ============
-async function fetchKline(code) {
+async function fetchKline(code, datalen = 250) {
   const market = code.startsWith('6') ? 'sh' : 'sz';
   const symbol = market + code;
   const controller = new AbortController();
@@ -332,7 +338,7 @@ async function fetchKline(code) {
   try {
     // 主数据源：新浪财经（JSONP方式，绕过CORS）
     try {
-      const data = await fetchSinaKlineJSONP(symbol);
+      const data = await fetchSinaKlineJSONP(symbol, datalen);
       if (data && data.length > 0) {
         const name = await fetchStockNameJSONP(symbol);
         return { name: name || code, code, data };
@@ -359,10 +365,10 @@ async function fetchKline(code) {
 }
 
 // 新浪K线数据（JSONP方式）
-function fetchSinaKlineJSONP(symbol) {
+function fetchSinaKlineJSONP(symbol, datalen = 250) {
   return new Promise((resolve, reject) => {
     const callbackName = '_sina_kline_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/${callbackName}/CN_MarketDataService.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=250`;
+    const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/${callbackName}/CN_MarketDataService.getKLineData?symbol=${symbol}&scale=240&ma=no&datalen=${datalen}`;
     const script = document.createElement('script');
     const timer = setTimeout(() => {
       cleanup();
@@ -1820,6 +1826,19 @@ function drawKline(canvas, data, ind, startIdx, endIdx, showMA, markers) {
 }
 
 // ============ 主分析流程 ============
+// 回测模式切换
+function toggleBacktestMode() {
+  const enabled = document.getElementById('backtestMode').checked;
+  const dateInput = document.getElementById('backtestDate');
+  dateInput.style.display = enabled ? 'inline-block' : 'none';
+  if (enabled && !dateInput.value) {
+    // 默认设置为30天前的日期
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    dateInput.value = d.toISOString().split('T')[0];
+  }
+}
+
 async function doAnalyze() {
   const code = document.getElementById('codeInput').value.trim();
   if (!code || !/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
@@ -1828,14 +1847,51 @@ async function doAnalyze() {
   const area = document.getElementById('resultArea');
   area.innerHTML = '<div class="loading"><div class="spinner"></div>正在拉取K线数据并分析...</div>';
   try {
+    const isBacktest = document.getElementById('backtestMode').checked;
+    const backtestDate = isBacktest ? document.getElementById('backtestDate').value : null;
+    const datalen = isBacktest ? 500 : 250;
+
     // 并行拉取个股和大盘数据
     const [result, marketData] = await Promise.all([
-      fetchKline(code),
-      fetchSinaKlineJSONP('sh000001').catch(() => null) // 上证指数
+      fetchKline(code, datalen),
+      fetchSinaKlineJSONP('sh000001', datalen).catch(() => null)
     ]);
     if (!result.data || result.data.length < 30) throw new Error('数据不足');
-    const marketEnv = marketData && marketData.length > 60 ? analyzeMarketEnv(marketData) : null;
-    renderAnalysis(result, marketEnv);
+
+    // 回测模式：截取到回测日期为止的数据
+    let analysisData = result.data;
+    let marketAnalysisData = marketData;
+    let backtestInfo = null;
+    if (isBacktest && backtestDate) {
+      const cutoff = backtestDate;
+      analysisData = result.data.filter(d => d.date <= cutoff);
+      if (analysisData.length > 250) analysisData = analysisData.slice(-250);
+      if (marketData) {
+        marketAnalysisData = marketData.filter(d => d.date <= cutoff);
+        if (marketAnalysisData.length > 250) marketAnalysisData = marketAnalysisData.slice(-250);
+      }
+      if (analysisData.length < 60) throw new Error('回测日期数据不足，请选择更近的日期');
+      // 后续走势验证数据
+      const afterData = result.data.filter(d => d.date > cutoff);
+      if (afterData.length > 0) {
+        const btClose = analysisData[analysisData.length - 1].close;
+        const latestClose = afterData[afterData.length - 1].close;
+        const maxPrice = Math.max(...afterData.map(d => d.high));
+        const minPrice = Math.min(...afterData.map(d => d.low));
+        backtestInfo = {
+          date: cutoff,
+          btClose, latestClose,
+          returnPct: ((latestClose - btClose) / btClose * 100).toFixed(2),
+          maxPrice, maxPct: ((maxPrice / btClose - 1) * 100).toFixed(2),
+          minPrice, minPct: ((minPrice / btClose - 1) * 100).toFixed(2),
+          afterData, fullData: result.data
+        };
+      }
+      result.data = analysisData; // 用截取后的数据进行分析
+    }
+
+    const marketEnv = marketAnalysisData && marketAnalysisData.length > 60 ? analyzeMarketEnv(marketAnalysisData) : null;
+    renderAnalysis(result, marketEnv, backtestInfo);
   } catch (e) {
     area.innerHTML = `<div class="error-msg">数据获取失败：${e.message}。请检查代码是否正确，或使用CSV上传功能。</div>
       <div class="csv-upload"><label>上传CSV文件分析 <input type="file" accept=".csv" onchange="handleCSV(event)"></label></div>`;
@@ -1998,7 +2054,7 @@ function calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDi
   return { score, level, levelColor, advice, breakdown, bestPattern: bestId };
 }
 
-function renderAnalysis(result, marketEnv) {
+function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const { name, code, data } = result;
   const ind = calcIndicators(data);
   const matches = matchPatterns(data, ind);
@@ -2191,6 +2247,48 @@ function renderAnalysis(result, marketEnv) {
       <span class="change ${cls}">${change>=0?'+':''}${change.toFixed(2)} (${change>=0?'+':''}${pct}%)</span>
       <span style="color:#556677;font-size:13px">${last.date} | 共${n}个交易日</span>
     </div>
+
+    ${backtestInfo ? `
+    <!-- 回测验证面板 -->
+    <div style="background:linear-gradient(135deg,#1a1a0f,#2a2a1a);border:2px solid #f39c12;border-radius:10px;padding:14px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:15px;font-weight:700;color:#f39c12;">📅 回测模式 · ${backtestInfo.date}</span>
+        ${(() => {
+          const isBuySignal = buyAccuracy > sellAccuracy + 10;
+          const isSellSignal = sellAccuracy > buyAccuracy + 10;
+          const actualUp = parseFloat(backtestInfo.returnPct) > 0;
+          let correct = null, verdict = '', verdictColor = '';
+          if (isBuySignal) { correct = actualUp; verdict = actualUp ? '✓ 买入判断正确' : '✗ 买入判断失误（假信号）'; verdictColor = actualUp ? '#2ecc71' : '#e74c3c'; }
+          else if (isSellSignal) { correct = !actualUp; verdict = !actualUp ? '✓ 卖出判断正确' : '✗ 卖出判断失误（假破位）'; verdictColor = !actualUp ? '#2ecc71' : '#e74c3c'; }
+          else { verdict = '多空博弈，方向不明'; verdictColor = '#f39c12'; }
+          return `<span style="font-size:14px;font-weight:700;color:${verdictColor};">${verdict}</span>`;
+        })()}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;text-align:center;">
+        <div>
+          <div style="font-size:11px;color:#8899aa;">回测日收盘</div>
+          <div style="font-size:18px;font-weight:700;color:#f0f0f0;">${backtestInfo.btClose.toFixed(2)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#8899aa;">最新收盘</div>
+          <div style="font-size:18px;font-weight:700;color:#f0f0f0;">${backtestInfo.latestClose.toFixed(2)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#8899aa;">至今涨跌</div>
+          <div style="font-size:18px;font-weight:700;color:${parseFloat(backtestInfo.returnPct)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(backtestInfo.returnPct)>=0?'+':''}${backtestInfo.returnPct}%</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#8899aa;">期间最高</div>
+          <div style="font-size:18px;font-weight:700;color:#e74c3c;">+${backtestInfo.maxPct}%</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#8899aa;">期间最低</div>
+          <div style="font-size:18px;font-weight:700;color:#2ecc71;">${backtestInfo.minPct}%</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:#8899aa;">灰色区域为回测日之后的实际走势，用于验证当时的形态判断是否准确</div>
+    </div>
+    ` : ''}
 
     <!-- ===== 新增：大盘环境 + 当前阶段 + 形态可靠性 ===== -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">

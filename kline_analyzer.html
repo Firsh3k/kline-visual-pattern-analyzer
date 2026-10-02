@@ -201,9 +201,12 @@ canvas { width: 100%; display: block; }
       
       <!-- 云配置同步 -->
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:8px;padding:12px;margin-bottom:12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
           <span style="font-size:13px;font-weight:600;color:#f39c12;">☁️ 云配置同步（GitHub）</span>
-          <span id="configSyncStatus" style="font-size:11px;color:#556677;">用于跨设备同步自选股和自定义板块</span>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span id="autoSyncBadge" style="font-size:10px;padding:2px 8px;border-radius:8px;background:#1a2332;color:#556677;display:none;">自动同步已开启</span>
+            <button onclick="toggleGithubSettings()" style="padding:4px 10px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:4px;font-size:11px;cursor:pointer;">⚙️ 设置</button>
+          </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button onclick="exportConfig()" style="padding:8px 16px;background:#27ae60;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">📤 导出配置</button>
@@ -211,10 +214,46 @@ canvas { width: 100%; display: block; }
             📥 导入文件
             <input type="file" accept=".json" onchange="importConfigFromFile(event)" style="display:none;">
           </label>
-          <input type="text" id="githubConfigUrl" placeholder="粘贴GitHub raw链接，如 https://raw.githubusercontent.com/.../watchlist.json" style="flex:1;min-width:250px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:12px;">
+          <input type="text" id="githubConfigUrl" placeholder="粘贴GitHub raw链接导入" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:12px;">
           <button onclick="importConfigFromUrl()" style="padding:8px 16px;background:#9b59b6;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">从URL导入</button>
+          <button onclick="syncToGithub()" id="syncBtn" style="padding:8px 16px;background:#e67e22;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;display:none;">🔄 立即同步</button>
+        </div>
+        <!-- GitHub设置面板（默认隐藏） -->
+        <div id="githubSettingsPanel" style="display:none;margin-top:10px;padding:10px;background:#0f1419;border-radius:6px;border:1px solid #2a3441;">
+          <div style="font-size:12px;font-weight:600;color:#f39c12;margin-bottom:8px;">GitHub 自动同步设置</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">GitHub 用户名</label>
+              <input type="text" id="ghUsername" placeholder="如 Firsh3k" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">仓库名</label>
+              <input type="text" id="ghRepo" placeholder="如 kline-visual-pattern-analyzer" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">分支</label>
+              <input type="text" id="ghBranch" value="main" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">配置文件路径</label>
+              <input type="text" id="ghPath" value="config/watchlist.json" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
+            </div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">Personal Access Token（需 repo 权限）</label>
+            <input type="password" id="ghToken" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;">
+              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步（增减个股自动更新GitHub）
+            </label>
+            <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
+            <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
+          </div>
+          <div style="margin-top:6px;font-size:10px;color:#556677;">⚠️ Token仅保存在本地浏览器，不会上传到任何服务器。建议使用仅repo权限的细粒度Token。</div>
         </div>
         <div id="configSummary" style="margin-top:8px;font-size:11px;color:#556677;"></div>
+        <div id="syncStatus" style="margin-top:4px;font-size:11px;"></div>
       </div>
       
       <span id="batchStatus" style="font-size:13px;color:#8899aa;"></span>
@@ -3279,9 +3318,195 @@ function updateConfigSummary() {
     `<span style="color:#556677;">导出后请将JSON文件提交到GitHub仓库，其他设备通过raw链接导入即可同步</span>`;
 }
 
-// 页面加载时更新配置摘要
+// ============ GitHub 自动同步 ============
+const GITHUB_SETTINGS_KEY = 'kline_github_settings_v1';
+
+function getGithubSettings() {
+  try {
+    const data = localStorage.getItem(GITHUB_SETTINGS_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch(e) { return null; }
+}
+
+function saveGithubSettings() {
+  const settings = {
+    username: document.getElementById('ghUsername').value.trim(),
+    repo: document.getElementById('ghRepo').value.trim(),
+    branch: document.getElementById('ghBranch').value.trim() || 'main',
+    path: document.getElementById('ghPath').value.trim() || 'config/watchlist.json',
+    token: document.getElementById('ghToken').value.trim(),
+    autoSync: document.getElementById('autoSyncEnabled').checked
+  };
+  if (!settings.username || !settings.repo || !settings.token) {
+    alert('请填写GitHub用户名、仓库名和Token');
+    return;
+  }
+  try {
+    localStorage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
+    showSyncStatus('✅ 设置已保存', '#27ae60');
+    updateAutoSyncUI();
+  } catch(e) {
+    alert('保存失败: ' + e.message);
+  }
+}
+
+function loadGithubSettings() {
+  const settings = getGithubSettings();
+  if (settings) {
+    document.getElementById('ghUsername').value = settings.username || '';
+    document.getElementById('ghRepo').value = settings.repo || '';
+    document.getElementById('ghBranch').value = settings.branch || 'main';
+    document.getElementById('ghPath').value = settings.path || 'config/watchlist.json';
+    document.getElementById('ghToken').value = settings.token || '';
+    document.getElementById('autoSyncEnabled').checked = settings.autoSync || false;
+  }
+  updateAutoSyncUI();
+}
+
+function toggleGithubSettings() {
+  const panel = document.getElementById('githubSettingsPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') loadGithubSettings();
+}
+
+function toggleAutoSync() {
+  const enabled = document.getElementById('autoSyncEnabled').checked;
+  if (enabled) {
+    const settings = getGithubSettings();
+    if (!settings || !settings.token) {
+      alert('请先填写并保存GitHub设置');
+      document.getElementById('autoSyncEnabled').checked = false;
+      return;
+    }
+  }
+  updateAutoSyncUI();
+}
+
+function updateAutoSyncUI() {
+  const settings = getGithubSettings();
+  const enabled = settings && settings.autoSync;
+  document.getElementById('autoSyncBadge').style.display = enabled ? 'inline-block' : 'none';
+  document.getElementById('syncBtn').style.display = settings ? 'inline-block' : 'none';
+}
+
+function showSyncStatus(msg, color) {
+  const el = document.getElementById('syncStatus');
+  el.textContent = msg;
+  el.style.color = color;
+  setTimeout(() => { el.textContent = ''; }, 5000);
+}
+
+function buildConfigObject() {
+  const watchlist = getWatchlist();
+  let customSectors = [];
+  try {
+    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
+    customSectors = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  return {
+    version: '1.0',
+    exportDate: new Date().toISOString().split('T')[0],
+    exportTime: new Date().toLocaleString('zh-CN'),
+    description: 'K线形态分析工具 - 自选股云配置（自动同步）',
+    watchlist: watchlist,
+    customSectors: customSectors,
+    settings: {
+      scanMinScore: document.getElementById('scanMinScore')?.value || '60',
+      scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
+    },
+    stats: {
+      watchlistCount: watchlist.length,
+      customSectorsCount: customSectors.length
+    }
+  };
+}
+
+async function syncToGithub() {
+  const settings = getGithubSettings();
+  if (!settings || !settings.token) {
+    alert('请先在设置中填写GitHub信息');
+    return;
+  }
+  showSyncStatus('⏳ 正在同步到GitHub...', '#f39c12');
+  
+  try {
+    const config = buildConfigObject();
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
+    const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}`;
+    
+    // 获取当前文件的sha
+    let sha = null;
+    try {
+      const getResp = await fetch(apiUrl, {
+        headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json' }
+      });
+      if (getResp.ok) {
+        const fileData = await getResp.json();
+        sha = fileData.sha;
+      }
+    } catch(e) {}
+    
+    // 创建或更新文件
+    const resp = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `auto-sync: 更新自选股配置 (${config.watchlist.length}只)`,
+        content: content,
+        sha: sha,
+        branch: settings.branch
+      })
+    });
+    
+    if (resp.ok) {
+      const rawUrl = `https://raw.githubusercontent.com/${settings.username}/${settings.repo}/${settings.branch}/${settings.path}`;
+      showSyncStatus(`✅ 同步成功！Raw链接: ${rawUrl}`, '#27ae60');
+      // 自动填充到导入框
+      document.getElementById('githubConfigUrl').value = rawUrl;
+    } else {
+      const err = await resp.json();
+      showSyncStatus(`❌ 同步失败: ${err.message || resp.status}`, '#e74c3c');
+    }
+  } catch(e) {
+    showSyncStatus(`❌ 同步失败: ${e.message}`, '#e74c3c');
+  }
+}
+
+async function testGithubConnection() {
+  const settings = getGithubSettings();
+  if (!settings || !settings.token) {
+    alert('请先填写并保存GitHub设置');
+    return;
+  }
+  showSyncStatus('⏳ 测试连接...', '#f39c12');
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${settings.username}/${settings.repo}`, {
+      headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (resp.ok) {
+      showSyncStatus('✅ 连接成功！仓库可访问', '#27ae60');
+    } else {
+      showSyncStatus(`❌ 连接失败: ${resp.status} ${resp.statusText}`, '#e74c3c');
+    }
+  } catch(e) {
+    showSyncStatus(`❌ 连接失败: ${e.message}`, '#e74c3c');
+  }
+}
+
+// 自动同步触发：增减个股时调用
+function triggerAutoSync() {
+  const settings = getGithubSettings();
+  if (settings && settings.autoSync && settings.token) {
+    // 延迟500ms，避免连续操作频繁同步
+    clearTimeout(window._autoSyncTimer);
+    window._autoSyncTimer = setTimeout(() => syncToGithub(), 500);
+  }
+}
+
+// 页面加载时加载GitHub设置
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateConfigSummary, 500);
+  setTimeout(loadGithubSettings, 600);
 });
 
 // 渲染自选股标签
@@ -3313,6 +3538,8 @@ function addStock() {
   saveWatchlist(codes);
   input.value = '';
   renderWatchlistTags();
+  updateConfigSummary();
+  triggerAutoSync();
   // 自动分析这只股票
   analyzeSingleStock(code);
 }
@@ -3325,6 +3552,8 @@ function removeStock(code) {
   delete watchlistResults[code];
   renderWatchlistTags();
   renderWatchlistTable();
+  updateConfigSummary();
+  triggerAutoSync();
 }
 
 // 清空全部
@@ -3335,6 +3564,8 @@ function clearAllWatchlist() {
   renderWatchlistTags();
   document.getElementById('batchResults').innerHTML = '';
   document.getElementById('batchStatus').textContent = '';
+  updateConfigSummary();
+  triggerAutoSync();
 }
 
 // 加载示例自选股

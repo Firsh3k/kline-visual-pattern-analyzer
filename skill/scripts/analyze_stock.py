@@ -654,23 +654,30 @@ def match_patterns(data, ind):
             head = lows[head_idx]
             left_shoulder_idx = left_part.index(left_shoulder) if left_part and left_shoulder else 0
 
+            # 局部索引→全局索引偏移（seg = data[n-lookback:]，所以局部0对应全局n-lookback）
+            idx_offset = n - lookback
+
             # 真正的两点连线颈线（BUG-011修复）
-            # 左颈线点：左肩到头部之间的反弹高点
+            # 左颈线点：左肩到头部之间的反弹高点（局部索引）
             neck_left_idx = left_shoulder_idx + highs[left_shoulder_idx:head_idx].index(max(highs[left_shoulder_idx:head_idx])) if head_idx > left_shoulder_idx else head_idx - 1
             neck_left_price = highs[neck_left_idx]
-            # 右颈线点：头部到右肩之间的反弹高点
+            # 右颈线点：头部到右肩之间的反弹高点（局部索引）
             right_shoulder_idx_rel = right_part.index(right_shoulder) if right_part and right_shoulder else 0
-            right_shoulder_global_idx = head_idx + 3 + right_shoulder_idx_rel
-            if right_shoulder_global_idx > head_idx + 3:
-                neck_right_idx = head_idx + 3 + highs[head_idx+3:right_shoulder_global_idx+1].index(max(highs[head_idx+3:right_shoulder_global_idx+1]))
+            right_shoulder_local_idx = head_idx + 3 + right_shoulder_idx_rel
+            if right_shoulder_local_idx > head_idx + 3:
+                neck_right_idx = head_idx + 3 + highs[head_idx+3:right_shoulder_local_idx+1].index(max(highs[head_idx+3:right_shoulder_local_idx+1]))
             else:
                 neck_right_idx = head_idx + 3
             neck_right_price = highs[min(neck_right_idx, lookback-1)] if neck_right_idx < lookback else neck_left_price
 
-            # 颈线斜率（支持倾斜颈线）
-            neck_slope = (neck_right_price - neck_left_price) / (neck_right_idx - neck_left_idx) if neck_right_idx > neck_left_idx else 0
-            # 当前位置的动态颈线值
-            cur_neckline = neck_left_price + neck_slope * (last - neck_left_idx)
+            # 转换为全局索引用于动态颈线计算
+            neck_left_global = idx_offset + neck_left_idx
+            neck_right_global = idx_offset + neck_right_idx
+
+            # 颈线斜率（支持倾斜颈线，基于全局索引）
+            neck_slope = (neck_right_price - neck_left_price) / (neck_right_global - neck_left_global) if neck_right_global > neck_left_global else 0
+            # 当前位置的动态颈线值（全局索引last）
+            cur_neckline = neck_left_price + neck_slope * (last - neck_left_global)
             neckline = cur_neckline  # 使用动态颈线
 
             left_higher = left_shoulder is not None and left_shoulder > head
@@ -678,18 +685,19 @@ def match_patterns(data, ind):
             symmetry = (left_shoulder and right_shoulder and abs(left_shoulder - right_shoulder) / left_shoulder < 0.2)
 
             # BUG-012修复：突破事件检测（前一日在颈线下，当日在颈线上）
+            # 全部使用全局索引，动态颈线值也基于全局索引计算
             breakout_event = False
             breakout_day_idx = None
             for i in range(max(1, last - 10), last + 1):
-                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_idx)
-                cur_neck = neck_left_price + neck_slope * (i - neck_left_idx)
+                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_global)
+                cur_neck = neck_left_price + neck_slope * (i - neck_left_global)
                 if data[i-1]['close'] <= prev_neck and data[i]['close'] > cur_neck:
                     breakout_event = True
                     breakout_day_idx = i
                     break
 
             broken = cur_price > neckline * 0.98
-            right_shoulder_done = right_shoulder_global_idx < lookback - 3
+            right_shoulder_done = right_shoulder_local_idx < lookback - 3
 
             hs_detail['score'] = (20 if left_higher else 5) + (20 if right_higher else 5) + (20 if symmetry else 5) + (40 if broken else 10)
             hs_detail['key_points'] = [
@@ -846,23 +854,30 @@ def match_bear_patterns(data, ind):
             head = highs[head_idx]
             left_shoulder_idx = left_part.index(left_shoulder) if left_part and left_shoulder else 0
 
+            # 局部索引→全局索引偏移
+            idx_offset = n - lookback
+
             # 真正的两点连线颈线（BUG-011修复）
-            # 左颈线点：左肩到头部之间的回调低点
+            # 左颈线点：左肩到头部之间的回调低点（局部索引）
             neck_left_idx = left_shoulder_idx + lows[left_shoulder_idx:head_idx].index(min(lows[left_shoulder_idx:head_idx])) if head_idx > left_shoulder_idx else head_idx - 1
             neck_left_price = lows[neck_left_idx]
-            # 右颈线点：头部到右肩之间的回调低点
+            # 右颈线点：头部到右肩之间的回调低点（局部索引）
             right_shoulder_idx_rel = right_part.index(right_shoulder) if right_part and right_shoulder else 0
-            right_shoulder_global_idx = head_idx + 3 + right_shoulder_idx_rel
-            if right_shoulder_global_idx > head_idx + 3:
-                neck_right_idx = head_idx + 3 + lows[head_idx+3:right_shoulder_global_idx+1].index(min(lows[head_idx+3:right_shoulder_global_idx+1]))
+            right_shoulder_local_idx = head_idx + 3 + right_shoulder_idx_rel
+            if right_shoulder_local_idx > head_idx + 3:
+                neck_right_idx = head_idx + 3 + lows[head_idx+3:right_shoulder_local_idx+1].index(min(lows[head_idx+3:right_shoulder_local_idx+1]))
             else:
                 neck_right_idx = head_idx + 3
             neck_right_price = lows[min(neck_right_idx, lookback-1)] if neck_right_idx < lookback else neck_left_price
 
-            # 颈线斜率（支持倾斜颈线）
-            neck_slope = (neck_right_price - neck_left_price) / (neck_right_idx - neck_left_idx) if neck_right_idx > neck_left_idx else 0
-            # 当前位置的动态颈线值
-            cur_neckline = neck_left_price + neck_slope * (last - neck_left_idx)
+            # 转换为全局索引
+            neck_left_global = idx_offset + neck_left_idx
+            neck_right_global = idx_offset + neck_right_idx
+
+            # 颈线斜率（支持倾斜颈线，基于全局索引）
+            neck_slope = (neck_right_price - neck_left_price) / (neck_right_global - neck_left_global) if neck_right_global > neck_left_global else 0
+            # 当前位置的动态颈线值（全局索引last）
+            cur_neckline = neck_left_price + neck_slope * (last - neck_left_global)
             neckline = cur_neckline
 
             left_lower = left_shoulder is not None and left_shoulder < head
@@ -870,18 +885,19 @@ def match_bear_patterns(data, ind):
             symmetry = (left_shoulder and right_shoulder and abs(left_shoulder - right_shoulder) / left_shoulder < 0.2)
 
             # BUG-012修复：破位事件检测（前一日在颈线上，当日在颈线下）
+            # 全部使用全局索引
             breakdown_event = False
             breakdown_day_idx = None
             for i in range(max(1, last - 10), last + 1):
-                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_idx)
-                cur_neck = neck_left_price + neck_slope * (i - neck_left_idx)
+                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_global)
+                cur_neck = neck_left_price + neck_slope * (i - neck_left_global)
                 if data[i-1]['close'] >= prev_neck and data[i]['close'] < cur_neck:
                     breakdown_event = True
                     breakdown_day_idx = i
                     break
 
             broken = cur_price < neckline * 1.02
-            right_shoulder_done = right_shoulder_global_idx < lookback - 3
+            right_shoulder_done = right_shoulder_local_idx < lookback - 3
 
             hs_top['score'] = (20 if left_lower else 5) + (20 if right_lower else 5) + (20 if symmetry else 5) + (40 if broken else 10)
             hs_top['key_points'] = [

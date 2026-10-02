@@ -246,7 +246,10 @@ canvas { width: 100%; display: block; }
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;">
-              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步（增减个股自动更新GitHub）
+              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;" title="推荐开启：关闭浏览器后Token自动清除，更安全">
+              <input type="checkbox" id="useSessionStorage" checked> 会话存储（推荐）
             </label>
             <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
             <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
@@ -1057,27 +1060,35 @@ function matchPatterns(data, ind) {
       const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
       const neckLeftIdx = lsIdx + highs.slice(lsIdx, headIdx).indexOf(Math.max(...highs.slice(lsIdx, headIdx)));
       const neckLeftPrice = highs[neckLeftIdx];
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
+      const rightShoulderLocalIdx = headIdx + 3 + rightShoulderIdx;
       let neckRightIdx = headIdx + 3;
-      if (rightShoulderGlobalIdx > headIdx + 3) {
-        const seg = highs.slice(headIdx + 3, rightShoulderGlobalIdx + 1);
+      if (rightShoulderLocalIdx > headIdx + 3) {
+        const seg = highs.slice(headIdx + 3, rightShoulderLocalIdx + 1);
         neckRightIdx = headIdx + 3 + seg.indexOf(Math.max(...seg));
       }
       const neckRightPrice = highs[Math.min(neckRightIdx, lookback - 1)];
-      const neckSlope = neckRightIdx > neckLeftIdx ? (neckRightPrice - neckLeftPrice) / (neckRightIdx - neckLeftIdx) : 0;
-      const neckline = neckLeftPrice + neckSlope * (last - neckLeftIdx);
+
+      // 局部索引→全局索引偏移（seg = data.slice(n-lookback)）
+      const idxOffset = n - lookback;
+      const neckLeftGlobal = idxOffset + neckLeftIdx;
+      const neckRightGlobal = idxOffset + neckRightIdx;
+
+      // 颈线斜率（基于全局索引）
+      const neckSlope = neckRightGlobal > neckLeftGlobal ? (neckRightPrice - neckLeftPrice) / (neckRightGlobal - neckLeftGlobal) : 0;
+      // 当前位置的动态颈线值（全局索引last）
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftGlobal);
 
       const leftHigher = leftShoulder && leftShoulder > head;
       const rightHigher = rightShoulder && rightShoulder > head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice > neckline * 0.98;
-      const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+      const rightShoulderDone = rightShoulderLocalIdx < lookback - 3;
 
-      // BUG-012修复：突破事件检测
+      // BUG-012修复：突破事件检测（全部使用全局索引）
       let breakoutEvent = false, breakoutDayIdx = null;
       for (let i = Math.max(1, last - 10); i <= last; i++) {
-        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftIdx);
-        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftIdx);
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftGlobal);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftGlobal);
         if (data[i-1].close <= prevNeck && data[i].close > curNeck) {
           breakoutEvent = true; breakoutDayIdx = i; break;
         }
@@ -1098,7 +1109,7 @@ function matchPatterns(data, ind) {
       }
       hsDetail.markers.points.push({ idx: n - lookback + headIdx, price: head, label: '头', color: '#e74c3c' });
       if (rightShoulderDone && rightShoulderIdx >= 0) {
-        hsDetail.markers.points.push({ idx: n - lookback + rightShoulderGlobalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
+        hsDetail.markers.points.push({ idx: n - lookback + rightShoulderLocalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
       }
       hsDetail.markers.lines = [{ price: neckline, label: '头肩底颈线', color: '#f39c12' }];
       if (!leftHigher) {
@@ -1331,27 +1342,35 @@ function matchBearPatterns(data, ind) {
       const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
       const neckLeftIdx = lsIdx + lows.slice(lsIdx, headIdx).indexOf(Math.min(...lows.slice(lsIdx, headIdx)));
       const neckLeftPrice = lows[neckLeftIdx];
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
+      const rightShoulderLocalIdx = headIdx + 3 + rightShoulderIdx;
       let neckRightIdx = headIdx + 3;
-      if (rightShoulderGlobalIdx > headIdx + 3) {
-        const seg = lows.slice(headIdx + 3, rightShoulderGlobalIdx + 1);
+      if (rightShoulderLocalIdx > headIdx + 3) {
+        const seg = lows.slice(headIdx + 3, rightShoulderLocalIdx + 1);
         neckRightIdx = headIdx + 3 + seg.indexOf(Math.min(...seg));
       }
       const neckRightPrice = lows[Math.min(neckRightIdx, lookback - 1)];
-      const neckSlope = neckRightIdx > neckLeftIdx ? (neckRightPrice - neckLeftPrice) / (neckRightIdx - neckLeftIdx) : 0;
-      const neckline = neckLeftPrice + neckSlope * (last - neckLeftIdx);
+
+      // 局部索引→全局索引偏移
+      const idxOffset = n - lookback;
+      const neckLeftGlobal = idxOffset + neckLeftIdx;
+      const neckRightGlobal = idxOffset + neckRightIdx;
+
+      // 颈线斜率（基于全局索引）
+      const neckSlope = neckRightGlobal > neckLeftGlobal ? (neckRightPrice - neckLeftPrice) / (neckRightGlobal - neckLeftGlobal) : 0;
+      // 当前位置的动态颈线值（全局索引last）
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftGlobal);
 
       const leftLower = leftShoulder && leftShoulder < head;
       const rightLower = rightShoulder && rightShoulder < head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice < neckline * 1.02;
-      const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+      const rightShoulderDone = rightShoulderLocalIdx < lookback - 3;
 
-      // BUG-012修复：破位事件检测
+      // BUG-012修复：破位事件检测（全部使用全局索引）
       let breakdownEvent = false, breakdownDayIdx = null;
       for (let i = Math.max(1, last - 10); i <= last; i++) {
-        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftIdx);
-        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftIdx);
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftGlobal);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftGlobal);
         if (data[i-1].close >= prevNeck && data[i].close < curNeck) {
           breakdownEvent = true; breakdownDayIdx = i; break;
         }
@@ -1369,7 +1388,7 @@ function matchBearPatterns(data, ind) {
       ];
       if (leftShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + leftShoulderIdx, price: leftShoulder, label: '左肩', color: '#3498db' });
       hsTop.markers.points.push({ idx: n - lookback + headIdx, price: head, label: '头', color: '#e74c3c' });
-      if (rightShoulderDone && rightShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + rightShoulderGlobalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
+      if (rightShoulderDone && rightShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + rightShoulderLocalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
       hsTop.markers.lines = [{ price: neckline, label: '头肩顶颈线', color: '#f39c12' }];
 
       if (!leftLower) {
@@ -3442,19 +3461,37 @@ const GITHUB_SETTINGS_KEY = 'kline_github_settings_v1';
 
 function getGithubSettings() {
   try {
-    const data = localStorage.getItem(GITHUB_SETTINGS_KEY);
-    return data ? JSON.parse(data) : null;
+    // 优先从 sessionStorage 读取（更安全，关闭浏览器即清除）
+    let data = sessionStorage.getItem(GITHUB_SETTINGS_KEY);
+    if (!data) {
+      // 兼容旧版 localStorage
+      data = localStorage.getItem(GITHUB_SETTINGS_KEY);
+    }
+    if (!data) return null;
+    const settings = JSON.parse(data);
+    // Token 过期检查（默认7天）
+    if (settings.token && settings.savedAt) {
+      const ageDays = (Date.now() - settings.savedAt) / (1000 * 60 * 60 * 24);
+      if (ageDays > 7) {
+        console.warn('GitHub Token已过期（超过7天），请重新输入');
+        settings._tokenExpired = true;
+      }
+    }
+    return settings;
   } catch(e) { return null; }
 }
 
 function saveGithubSettings() {
+  const useSession = document.getElementById('useSessionStorage')?.checked ?? true;
   const settings = {
     username: document.getElementById('ghUsername').value.trim() || 'Firsh3k',
     repo: document.getElementById('ghRepo').value.trim() || 'kline-visual-pattern-analyzer',
     branch: document.getElementById('ghBranch').value.trim() || 'main',
     path: document.getElementById('ghPath').value.trim() || 'config/watchlist.json',
     token: document.getElementById('ghToken').value.trim(),
-    autoSync: document.getElementById('autoSyncEnabled').checked
+    autoSync: document.getElementById('autoSyncEnabled').checked,
+    savedAt: Date.now(),
+    storageType: useSession ? 'session' : 'local'
   };
   if (!settings.token) {
     alert('请填写GitHub Personal Access Token');
@@ -3466,13 +3503,17 @@ function saveGithubSettings() {
     return;
   }
   try {
-    localStorage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
-    showSyncStatus('✅ 设置已保存！Token已加密存储在本地', '#27ae60');
+    const storage = useSession ? sessionStorage : localStorage;
+    storage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
+    // 清除另一个存储中的旧数据
+    const otherStorage = useSession ? localStorage : sessionStorage;
+    otherStorage.removeItem(GITHUB_SETTINGS_KEY);
+    const storageName = useSession ? 'sessionStorage（关闭浏览器即清除）' : 'localStorage（持久化，安全性较低）';
+    showSyncStatus(`✅ 设置已保存！Token存储在${storageName}，7天后自动过期`, '#27ae60');
     updateAutoSyncUI();
-    // 保存成功后测试连接
     setTimeout(() => testGithubConnection(), 300);
   } catch(e) {
-    alert('保存失败: ' + e.message + '。可能是浏览器禁用了localStorage，请检查隐私设置。');
+    alert('保存失败: ' + e.message + '。可能是浏览器禁用了存储，请检查隐私设置。');
   }
 }
 
@@ -3483,9 +3524,16 @@ function loadGithubSettings() {
     document.getElementById('ghRepo').value = settings.repo || 'kline-visual-pattern-analyzer';
     document.getElementById('ghBranch').value = settings.branch || 'main';
     document.getElementById('ghPath').value = settings.path || 'config/watchlist.json';
-    document.getElementById('ghToken').value = settings.token || '';
+    document.getElementById('ghToken').value = settings._tokenExpired ? '' : (settings.token || '');
     document.getElementById('autoSyncEnabled').checked = settings.autoSync || false;
-    showSyncStatus(`✅ 已加载保存的设置（${settings.username}/${settings.repo}）`, '#27ae60');
+    if (document.getElementById('useSessionStorage')) {
+      document.getElementById('useSessionStorage').checked = settings.storageType !== 'local';
+    }
+    if (settings._tokenExpired) {
+      showSyncStatus('⚠️ Token已过期（超过7天），请重新输入Token', '#e74c3c');
+    } else {
+      showSyncStatus(`✅ 已加载保存的设置（${settings.username}/${settings.repo}）`, '#27ae60');
+    }
   } else {
     showSyncStatus('💡 请填写Token后点击保存设置', '#f39c12');
   }

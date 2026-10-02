@@ -1,0 +1,126 @@
+{
+  "description": "JS/Python Parity Test Fixtures - 固定OHLCV数据用于两端算法一致性验证",
+  "version": "1.0",
+  "created": "2026-10-02",
+  "note": "所有fixtures为人工构造的确定性数据，确保JS和Python在相同输入下输出完全一致",
+  "fixtures": [
+    {
+      "id": "flat_no_signal",
+      "name": "横盘无信号",
+      "description": "100根横盘K线，无明显形态信号，用于验证基线输出",
+      "data": [
+        {"day": "2026-01-01", "open": 10.00, "high": 10.05, "low": 9.95, "close": 10.00, "volume": 1000000},
+        {"day": "2026-01-02", "open": 10.00, "high": 10.05, "low": 9.95, "close": 10.01, "volume": 1000000},
+        {"day": "2026-01-03", "open": 10.01, "high": 10.06, "low": 9.96, "close": 10.00, "volume": 1000000},
+        {"day": "2026-01-04", "open": 10.00, "high": 10.05, "low": 9.95, "close": 10.02, "volume": 1000000},
+        {"day": "2026-01-05", "open": 10.02, "high": 10.07, "low": 9.97, "close": 10.01, "volume": 1000000},
+        {"day": "2026-01-06", "open": 10.01, "high": 10.06, "low": 9.96, "close": 10.00, "volume": 1000000},
+        {"day": "2026-01-07", "open": 10.00, "high": 10.05, "low": 9.95, "close": 10.01, "volume": 1000000},
+        {"day": "2026-01-08", "open": 10.01, "high": 10.06, "low": 9.96, "close": 10.02, "volume": 1000000},
+        {"day": "2026-01-09", "open": 10.02, "high": 10.07, "low": 9.97, "close": 10.01, "volume": 1000000},
+        {"day": "2026-01-10", "open": 10.01, "high": 10.06, "low": 9.96, "close": 10.00, "volume": 1000000}
+      ],
+      "expected": {
+        "ma_bull_score": 0,
+        "ma_bear_score": 0,
+        "w_bottom_score": 0,
+        "m_top_score": 0,
+        "hs_bottom_score": 0,
+        "hs_top_score": 0
+      }
+    },
+    {
+      "id": "ma_bull_strong",
+      "name": "均线多头排列",
+      "description": "100根持续上涨K线，形成MA5>MA10>MA20>MA60多头排列",
+      "data_generator": "linear_uptrend",
+      "params": {"start_price": 10.0, "daily_return": 0.005, "days": 100, "base_volume": 1000000},
+      "expected": {
+        "ma_bull_score_min": 80,
+        "ma_bull_stage_contains": "多头"
+      }
+    },
+    {
+      "id": "ma_bear_strong",
+      "name": "均线空头排列",
+      "description": "100根持续下跌K线，形成MA5<MA10<MA20<MA60空头排列",
+      "data_generator": "linear_downtrend",
+      "params": {"start_price": 20.0, "daily_return": -0.005, "days": 100, "base_volume": 1000000},
+      "expected": {
+        "ma_bear_score_min": 80,
+        "ma_bear_stage_contains": "空头"
+      }
+    },
+    {
+      "id": "w_bottom_standard",
+      "name": "标准W底",
+      "description": "80根K线构造标准W底：下跌→第一底→反弹→第二底（差距2%）→突破颈线",
+      "data_generator": "w_bottom_pattern",
+      "params": {
+        "start_price": 15.0,
+        "first_low": 10.0,
+        "second_low": 10.2,
+        "neckline": 13.0,
+        "breakout_price": 13.5,
+        "days": 80
+      },
+      "expected": {
+        "w_bottom_score_min": 50,
+        "w_bottom_neckline_equals": 13.0,
+        "w_bottom_stage_contains": "突破"
+      }
+    },
+    {
+      "id": "m_top_standard",
+      "name": "标准M头",
+      "description": "80根K线构造标准M头：上涨→第一顶→回调→第二顶（差距2%）→跌破颈线",
+      "data_generator": "m_top_pattern",
+      "params": {
+        "start_price": 10.0,
+        "first_high": 20.0,
+        "second_high": 19.6,
+        "neckline": 15.0,
+        "breakdown_price": 14.5,
+        "days": 80
+      },
+      "expected": {
+        "m_top_score_min": 50,
+        "m_top_neckline_equals": 15.0,
+        "m_top_stage_contains": "跌破"
+      }
+    }
+  ],
+  "comparison_fields": [
+    "ma_bull.score",
+    "ma_bull.stage",
+    "ma_bear.score",
+    "ma_bear.stage",
+    "w_bottom.score",
+    "w_bottom.stage",
+    "w_bottom.neckline",
+    "m_top.score",
+    "m_top.stage",
+    "m_top.neckline",
+    "hs_bottom.score",
+    "hs_bottom.stage",
+    "hs_bottom.neckline",
+    "hs_top.score",
+    "hs_top.stage",
+    "hs_top.neckline",
+    "platform_break.score",
+    "platform_break.stage",
+    "platform_break_down.score",
+    "platform_break_down.stage",
+    "volume.relation",
+    "volume.volRatio",
+    "fake_signal_risk.risk_score",
+    "fake_signal_risk.risk_level",
+    "market_env.score",
+    "market_env.stage"
+  ],
+  "tolerance": {
+    "score": 0,
+    "price": 0.01,
+    "ratio": 0.001
+  }
+}

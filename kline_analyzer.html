@@ -248,8 +248,8 @@ canvas { width: 100%; display: block; }
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;">
               <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步
             </label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;" title="推荐开启：关闭浏览器后Token自动清除，更安全">
-              <input type="checkbox" id="useSessionStorage" checked> 会话存储（推荐）
+            <label style="display:flex;align-items:center;gap:6px;cursor:not-allowed;font-size:12px;color:#8899aa;" title="安全策略：强制使用会话存储，关闭浏览器后Token自动清除">
+              <input type="checkbox" id="useSessionStorage" checked disabled> 会话存储（强制，安全策略）
             </label>
             <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
             <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
@@ -3561,20 +3561,18 @@ function saveGithubSettings() {
     alert('Token格式不正确，长度至少10个字符');
     return;
   }
-  // #18 安全增强：localStorage持久化write PAT需要二次确认
+  // #18/#16 安全强制：完全禁止 localStorage 持久化 write PAT
+  // GitHub PAT 含 repo 写权限，持久化到 localStorage 存在安全风险
+  // 强制使用 sessionStorage（关闭浏览器即自动清除）
   if (!useSession) {
-    const confirmed = confirm(
-      '⚠️ 安全警告：您选择了 localStorage 持久化存储。\n\n' +
-      'GitHub Personal Access Token（含 repo 写权限）将永久保存在浏览器中，' +
-      '任何同源脚本或恶意扩展都可能读取此 Token，导致仓库被篡改或删除。\n\n' +
-      '强烈建议使用 sessionStorage（关闭浏览器即自动清除）。\n\n' +
-      '如您确认了解风险并仍要使用 localStorage，请点击"确定"继续；否则点击"取消"改用 sessionStorage。'
+    alert(
+      '⚠️ 安全策略：不允许将 GitHub Personal Access Token 持久化到 localStorage。\n\n' +
+      '原因：PAT 含 repo 写权限，任何同源脚本或恶意扩展都可能读取，导致仓库被篡改或删除。\n\n' +
+      '已自动切换为 sessionStorage（关闭浏览器即自动清除，更安全）。'
     );
-    if (!confirmed) {
-      document.getElementById('useSessionStorage').checked = true;
-      showSyncStatus('已切换为 sessionStorage（推荐），请重新点击保存', '#f39c12');
-      return;
-    }
+    document.getElementById('useSessionStorage').checked = true;
+    useSession = true;
+    settings.storageType = 'session';
   }
   try {
     const storage = useSession ? sessionStorage : localStorage;

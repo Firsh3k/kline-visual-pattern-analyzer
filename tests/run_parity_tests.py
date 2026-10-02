@@ -235,6 +235,128 @@ GENERATORS['hs_bottom_sloped'] = generate_hs_bottom_sloped
 GENERATORS['hs_bottom_failed'] = generate_hs_bottom_failed
 
 
+def generate_hs_bottom_downward(params):
+    """生成头肩底向下倾斜颈线数据（左颈线高于右颈线）"""
+    days = params['days']
+    data = []
+    p1 = int(days * 0.20)
+    for i in range(p1):
+        t = i / p1
+        close_p = params['start_price'] + (params['left_shoulder'] - params['start_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p2 = int(days * 0.20)
+    for i in range(p2):
+        t = i / p2
+        close_p = params['left_shoulder'] + (params['head'] - params['left_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p3 = int(days * 0.10)
+    for i in range(p3):
+        t = i / p3
+        close_p = params['head'] + (params['neck_left_price'] - params['head']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p4 = int(days * 0.20)
+    for i in range(p4):
+        t = i / p4
+        close_p = params['neck_left_price'] + (params['right_shoulder'] - params['neck_left_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p5 = int(days * 0.10)
+    for i in range(p5):
+        t = i / p5
+        close_p = params['right_shoulder'] + (params['neck_right_price'] - params['right_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p6 = days - len(data)
+    for i in range(p6):
+        t = i / p6
+        close_p = params['neck_right_price'] + (params['breakout_price'] - params['neck_right_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    return data
+
+
+def generate_hs_bottom_flat(params):
+    """生成头肩底水平颈线数据（左右颈线点价格相同）"""
+    days = params['days']
+    data = []
+    p1 = int(days * 0.20)
+    for i in range(p1):
+        t = i / p1
+        close_p = params['start_price'] + (params['left_shoulder'] - params['start_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p2 = int(days * 0.20)
+    for i in range(p2):
+        t = i / p2
+        close_p = params['left_shoulder'] + (params['head'] - params['left_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p3 = int(days * 0.10)
+    for i in range(p3):
+        t = i / p3
+        close_p = params['head'] + (params['neckline_price'] - params['head']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p4 = int(days * 0.20)
+    for i in range(p4):
+        t = i / p4
+        close_p = params['neckline_price'] + (params['right_shoulder'] - params['neckline_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p5 = int(days * 0.10)
+    for i in range(p5):
+        t = i / p5
+        close_p = params['right_shoulder'] + (params['neckline_price'] - params['right_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p6 = days - len(data)
+    for i in range(p6):
+        t = i / p6
+        close_p = params['neckline_price'] + (params['breakout_price'] - params['neckline_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    return data
+
+
+def generate_hs_top_breakdown(params):
+    """生成头肩顶破位后运行数据（bear路径状态机）"""
+    days = params['days']
+    data = []
+    # 阶段1: 上涨到左肩
+    p1 = int(days * 0.15)
+    for i in range(p1):
+        t = i / p1
+        close_p = params['start_price'] + (params['left_shoulder'] - params['start_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段2: 上涨到头部
+    p2 = int(days * 0.15)
+    for i in range(p2):
+        t = i / p2
+        close_p = params['left_shoulder'] + (params['head'] - params['left_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段3: 下跌到左颈线点
+    p3 = int(days * 0.10)
+    for i in range(p3):
+        t = i / p3
+        close_p = params['head'] + (params['neckline'] - params['head']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段4: 上涨到右肩
+    p4 = int(days * 0.15)
+    for i in range(p4):
+        t = i / p4
+        close_p = params['neckline'] + (params['right_shoulder'] - params['neckline']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段5: 下跌到右颈线点
+    p5 = int(days * 0.10)
+    for i in range(p5):
+        t = i / p5
+        close_p = params['right_shoulder'] + (params['neckline'] - params['right_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段6: 破位下跌
+    p6 = days - len(data)
+    for i in range(p6):
+        t = i / p6
+        close_p = params['neckline'] + (params['breakdown_price'] - params['neckline']) * t
+        data.append(_make_bar(close_p, len(data)))
+    return data
+
+
+GENERATORS['hs_bottom_downward'] = generate_hs_bottom_downward
+GENERATORS['hs_bottom_flat'] = generate_hs_bottom_flat
+GENERATORS['hs_top_breakdown'] = generate_hs_top_breakdown
+
+
 def run_fixture(fixture):
     """运行单个fixture，返回分析结果"""
     # 生成数据

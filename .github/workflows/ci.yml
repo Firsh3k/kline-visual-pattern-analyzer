@@ -58,6 +58,11 @@ jobs:
         print('All parity fixtures passed')
         "
 
+    - name: Run sector data validation (#20/#21)
+      run: |
+        cd tests
+        python validate_sector_data.py
+
   js-syntax-check:
     runs-on: ubuntu-latest
     steps:

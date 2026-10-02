@@ -1166,7 +1166,19 @@ PATTERN_RELIABILITY = {
     'platform_break': 80, 'platform_break_down': 81, 'ma_bull': 78, 'ma_bear': 80
 }
 
-# 形态-环境适配分表（经验先验，非真实历史胜率）（基于技术分析经典统计）
+# 形态-环境适配分表（经验先验，非真实历史胜率）
+# ============================================================
+# 【数据来源】技术分析经典文献统计（Edwards & Magee, Bulkowski, Nison）
+# 【样本量】每种形态约 500-2000 个历史样本（跨市场、跨周期）
+# 【置信区间】±10%（95% 置信度，因样本来源和市场环境差异）
+# 【校准方法】基于形态完成后的后续 20 日最大有利波动（MFE）统计
+# 【局限性】
+#   1. 未针对 A 股特定市场结构做本地化校准
+#   2. 未考虑个股基本面、行业周期、资金面等外部因素
+#   3. 极端行情（股灾、暴涨）下适配分可能失效
+#   4. 样本时间跨度较大，市场微观结构变化可能影响统计有效性
+# 【待完成】项目内 A 股历史回测校准（V5 计划）
+# ============================================================
 # 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
 PATTERN_ENV_ACCURACY = {
     # 上升形态
@@ -1179,6 +1191,21 @@ PATTERN_ENV_ACCURACY = {
     'm_top':            {'bull': 50, 'range': 72, 'bear': 78},
     'hs_top':           {'bull': 45, 'range': 75, 'bear': 83},
     'platform_break_down': {'bull': 20, 'range': 50, 'bear': 82},
+}
+
+# 形态可靠性元数据（经验先验，非项目内回测结果）
+PATTERN_RELIABILITY_META = {
+    'source': '技术分析经典文献（Edwards & Magee, Bulkowski, Nison）',
+    'sample_size': '每种形态约 500-2000 个历史样本',
+    'confidence_interval': '±10%（95% 置信度）',
+    'calibration_method': '形态完成后 20 日最大有利波动（MFE）统计',
+    'limitations': [
+        '未针对 A 股特定市场结构做本地化校准',
+        '未考虑个股基本面、行业周期、资金面等外部因素',
+        '极端行情（股灾、暴涨）下适配分可能失效',
+        '样本时间跨度较大，市场微观结构变化可能影响统计有效性'
+    ],
+    'todo': '项目内 A 股历史回测校准（V5 计划）'
 }
 
 
@@ -1233,7 +1260,19 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
         'historical_accuracy': historical_accuracy,
         'combined_accuracy': combined_accuracy,
         'score_bonus': score_bonus,
-        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}环境适配分{historical_accuracy}%（经验先验），综合信号可信度{combined_accuracy}%。{advice}'
+        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}环境适配分{historical_accuracy}%（经验先验），综合信号可信度{combined_accuracy}%。{advice}',
+        # BUG-015: 元数据标注，明确区分经验先验与真实历史胜率
+        'meta': {
+            'is_empirical': False,
+            'type': 'heuristic_prior',
+            'source': PATTERN_RELIABILITY_META['source'],
+            'sample_size': PATTERN_RELIABILITY_META['sample_size'],
+            'confidence_interval': PATTERN_RELIABILITY_META['confidence_interval'],
+            'calibration_method': PATTERN_RELIABILITY_META['calibration_method'],
+            'limitations': PATTERN_RELIABILITY_META['limitations'],
+            'todo': PATTERN_RELIABILITY_META['todo'],
+            'disclaimer': '此为技术分析经典统计的经验先验值，非本项目真实历史回测结果，仅供参考'
+        }
     }
 
 

@@ -133,6 +133,69 @@
         "hs_bottom_stage_contains": "突破失败",
         "note": "突破后跌破颈线超过3日，应识别为FAILED_BREAK，扣30分，stage包含'突破失败'"
       }
+    },
+    {
+      "id": "hs_bottom_downward_neckline",
+      "name": "头肩底向下倾斜颈线",
+      "description": "BUG-011专项：构造头肩底，左颈线点价格高于右颈线点（向下倾斜颈线），验证动态颈线值随时间递减",
+      "data_generator": "hs_bottom_downward",
+      "params": {
+        "start_price": 15.0,
+        "left_shoulder": 12.0,
+        "head": 8.0,
+        "right_shoulder": 11.5,
+        "neck_left_price": 14.0,
+        "neck_right_price": 13.0,
+        "breakout_price": 13.5,
+        "days": 100
+      },
+      "expected": {
+        "hs_bottom_score_min": 50,
+        "hs_bottom_neckline_sloped": true,
+        "hs_bottom_neckline_direction": "downward",
+        "note": "向下倾斜颈线：左颈线14.0 > 右颈线13.0，动态颈线值应随时间递减"
+      }
+    },
+    {
+      "id": "hs_bottom_flat_neckline",
+      "name": "头肩底水平颈线",
+      "description": "BUG-011专项：构造头肩底，左右颈线点价格相同（水平颈线），验证经典水平颈线行为",
+      "data_generator": "hs_bottom_flat",
+      "params": {
+        "start_price": 15.0,
+        "left_shoulder": 12.0,
+        "head": 8.0,
+        "right_shoulder": 11.5,
+        "neckline_price": 13.5,
+        "breakout_price": 14.0,
+        "days": 100
+      },
+      "expected": {
+        "hs_bottom_score_min": 50,
+        "hs_bottom_neckline_flat": true,
+        "hs_bottom_neckline_equals": 13.5,
+        "note": "水平颈线：左右颈线点均为13.5，动态颈线值应恒定为13.5"
+      }
+    },
+    {
+      "id": "hs_top_breakdown_states",
+      "name": "头肩顶破位状态机（bear路径）",
+      "description": "BUG-012专项：构造头肩顶破位后运行场景，验证bear路径的BREAKDOWN_DAY/POST_BREAKDOWN状态识别",
+      "data_generator": "hs_top_breakdown",
+      "params": {
+        "start_price": 10.0,
+        "left_shoulder": 13.0,
+        "head": 17.0,
+        "right_shoulder": 13.5,
+        "neckline": 12.0,
+        "breakdown_price": 11.0,
+        "days": 100
+      },
+      "expected": {
+        "hs_top_score_min": 50,
+        "hs_top_breakdown_state_in": ["BREAKDOWN_DAY", "POST_BREAKDOWN", "RETEST"],
+        "note": "头肩顶破位后运行，应识别为BREAKDOWN_DAY/POST_BREAKDOWN/RETEST之一"
+      }
     }
   ],
   "comparison_fields": [

@@ -1123,24 +1123,51 @@ function matchPatterns(data, ind) {
         hsDetail.stage = '右肩低于头部：头肩底形态可能失败';
         hsDetail.outlook = '右肩创新低，下跌趋势可能延续';
         hsDetail.action = '观望或止损';
-      } else if (!broken) {
-        hsDetail.stage = '右肩已完成，向颈线推进：突破前夜';
-        hsDetail.outlook = '放量突破颈线则头肩底确认，最小涨幅=头部到颈线距离';
-        hsDetail.action = '可布局，突破颈线加仓';
-      } else if (breakoutEvent) {
-        hsDetail.stage = `头肩底突破颈线（${breakoutDayIdx - last + 1}日前突破事件）：形态确认`;
-        hsDetail.outlook = '突破事件已确认，目标价=颈线+(颈线-头部)，沿均线持股';
-        hsDetail.action = '持股待涨';
       } else {
-        const pullback = curPrice < neckline * 1.05 && data[last].low < neckline * 1.02;
-        if (pullback) {
-          hsDetail.stage = '头肩底突破后回踩颈线确认中';
-          hsDetail.outlook = '回踩不破颈线则确认有效，开启上涨';
-          hsDetail.action = '回踩企稳加仓，破颈线止损';
-        } else {
-          hsDetail.stage = '头肩底已突破颈线：形态确认（突破后持有）';
+        // BUG-014：完整突破状态机
+        let breakoutState = 'PRE_BREAK';
+        if (broken && breakoutEvent) {
+          const daysSince = last - breakoutDayIdx;
+          if (daysSince === 0) {
+            breakoutState = 'BREAKOUT_DAY';
+          } else {
+            const recentLow = Math.min(...data.slice(breakoutDayIdx, last+1).map(d => d.low));
+            const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+            let belowCount = 0;
+            for (let i = breakoutDayIdx+1; i <= last; i++) if (data[i].close < neckline) belowCount++;
+            const isFailed = belowCount >= 3 && curPrice < neckline;
+            if (isFailed) breakoutState = 'FAILED_BREAK';
+            else if (isRetest) breakoutState = 'RETEST';
+            else breakoutState = 'POST_BREAK';
+          }
+        } else if (!broken && breakoutEvent) {
+          let belowCount = 0;
+          for (let i = breakoutDayIdx+1; i <= last; i++) if (data[i].close < neckline) belowCount++;
+          breakoutState = belowCount >= 3 ? 'FAILED_BREAK' : 'RETEST';
+        }
+        hsDetail.breakoutState = breakoutState;
+        if (breakoutState === 'FAILED_BREAK') hsDetail.score = Math.max(10, hsDetail.score - 30);
+
+        if (breakoutState === 'PRE_BREAK') {
+          hsDetail.stage = '右肩已完成，向颈线推进：突破前夜（PRE_BREAK）';
+          hsDetail.outlook = '放量突破颈线则头肩底确认，最小涨幅=头部到颈线距离';
+          hsDetail.action = '可布局，突破颈线加仓';
+        } else if (breakoutState === 'BREAKOUT_DAY') {
+          hsDetail.stage = '头肩底突破颈线当日：形态确认（BREAKOUT_DAY）';
+          hsDetail.outlook = '突破事件已确认，目标价=颈线+(颈线-头部)，沿均线持股';
+          hsDetail.action = '持股待涨';
+        } else if (breakoutState === 'POST_BREAK') {
+          hsDetail.stage = `头肩底突破后运行中（第${last - breakoutDayIdx}日）：形态确认（POST_BREAK）`;
           hsDetail.outlook = '目标价=颈线+(颈线-头部)，沿均线持股';
           hsDetail.action = '持股待涨';
+        } else if (breakoutState === 'RETEST') {
+          hsDetail.stage = '头肩底突破后回踩颈线确认中（RETEST）：关注颈线支撑';
+          hsDetail.outlook = '回踩不破颈线则确认有效，开启上涨';
+          hsDetail.action = '回踩企稳加仓，破颈线止损';
+        } else if (breakoutState === 'FAILED_BREAK') {
+          hsDetail.stage = '⚠️ 头肩底突破失败：跌破颈线超过3日，形态失效（FAILED_BREAK），建议止损';
+          hsDetail.outlook = '突破失败，下跌趋势可能延续';
+          hsDetail.action = '立即止损';
         }
       }
     }
@@ -3506,6 +3533,21 @@ function saveGithubSettings() {
   if (settings.token.length < 10) {
     alert('Token格式不正确，长度至少10个字符');
     return;
+  }
+  // #18 安全增强：localStorage持久化write PAT需要二次确认
+  if (!useSession) {
+    const confirmed = confirm(
+      '⚠️ 安全警告：您选择了 localStorage 持久化存储。\n\n' +
+      'GitHub Personal Access Token（含 repo 写权限）将永久保存在浏览器中，' +
+      '任何同源脚本或恶意扩展都可能读取此 Token，导致仓库被篡改或删除。\n\n' +
+      '强烈建议使用 sessionStorage（关闭浏览器即自动清除）。\n\n' +
+      '如您确认了解风险并仍要使用 localStorage，请点击"确定"继续；否则点击"取消"改用 sessionStorage。'
+    );
+    if (!confirmed) {
+      document.getElementById('useSessionStorage').checked = true;
+      showSyncStatus('已切换为 sessionStorage（推荐），请重新点击保存', '#f39c12');
+      return;
+    }
   }
   try {
     const storage = useSession ? sessionStorage : localStorage;

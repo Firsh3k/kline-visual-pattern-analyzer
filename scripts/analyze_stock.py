@@ -701,7 +701,38 @@ def match_patterns(data, ind):
             broken = cur_price > neckline * 0.98
             right_shoulder_done = right_shoulder_local_idx < lookback - 3
 
+            # BUG-014：完整突破状态机 PRE_BREAK / BREAKOUT_DAY / POST_BREAK / RETEST / FAILED_BREAK
+            breakout_state = 'PRE_BREAK'
+            if broken and breakout_event:
+                days_since_break = last - breakout_day_idx
+                if days_since_break == 0:
+                    breakout_state = 'BREAKOUT_DAY'
+                else:
+                    # 检查是否回踩颈线
+                    recent_low = min(d['low'] for d in data[breakout_day_idx:last+1])
+                    is_retest = recent_low <= neckline * 1.02 and cur_price <= neckline * 1.08
+                    # 检查是否突破失败（跌破颈线超过3天）
+                    below_count = sum(1 for i in range(breakout_day_idx+1, last+1) if data[i]['close'] < neckline)
+                    is_failed = below_count >= 3 and cur_price < neckline
+                    if is_failed:
+                        breakout_state = 'FAILED_BREAK'
+                    elif is_retest:
+                        breakout_state = 'RETEST'
+                    else:
+                        breakout_state = 'POST_BREAK'
+            elif not broken and breakout_event:
+                # 曾经突破但现在跌破颈线
+                below_count = sum(1 for i in range(breakout_day_idx+1, last+1) if data[i]['close'] < neckline)
+                if below_count >= 3:
+                    breakout_state = 'FAILED_BREAK'
+                else:
+                    breakout_state = 'RETEST'
+
             hs_detail['score'] = (20 if left_higher else 5) + (20 if right_higher else 5) + (20 if symmetry else 5) + (40 if broken else 10)
+            # FAILED_BREAK状态扣分
+            if breakout_state == 'FAILED_BREAK':
+                hs_detail['score'] = max(10, hs_detail['score'] - 30)
+            hs_detail['breakout_state'] = breakout_state
             hs_detail['key_points'] = [
                 {'name': '左肩', 'price': round(left_shoulder, 2) if left_shoulder else None},
                 {'name': '头部', 'price': round(head, 2)},
@@ -709,7 +740,8 @@ def match_patterns(data, ind):
                 {'name': '左颈线点', 'price': round(neck_left_price, 2)},
                 {'name': '右颈线点', 'price': round(neck_right_price, 2)},
                 {'name': '当前颈线', 'price': round(neckline, 2)},
-                {'name': '当前价', 'price': round(cur_price, 2)}
+                {'name': '当前价', 'price': round(cur_price, 2)},
+                {'name': '突破状态', 'price': breakout_state}
             ]
             if not left_higher:
                 hs_detail['stage'] = '头肩底不成立：左肩未高于头部'
@@ -717,13 +749,16 @@ def match_patterns(data, ind):
                 hs_detail['stage'] = '右肩构建中'
             elif not right_higher:
                 hs_detail['stage'] = '右肩低于头部：头肩底形态可能失败'
-            elif not broken:
-                hs_detail['stage'] = '右肩已完成，向颈线推进：突破前夜'
-            elif breakout_event:
-                hs_detail['stage'] = f'头肩底突破颈线（第{breakout_day_idx - last + 1}日前突破事件）：形态确认'
-            else:
-                pullback = cur_price < neckline * 1.05 and data[last]['low'] < neckline * 1.02
-                hs_detail['stage'] = '头肩底突破后回踩颈线确认中' if pullback else '头肩底已突破颈线：形态确认（突破后持有）'
+            elif breakout_state == 'PRE_BREAK':
+                hs_detail['stage'] = '右肩已完成，向颈线推进：突破前夜（PRE_BREAK）'
+            elif breakout_state == 'BREAKOUT_DAY':
+                hs_detail['stage'] = '头肩底突破颈线当日：形态确认（BREAKOUT_DAY）'
+            elif breakout_state == 'POST_BREAK':
+                hs_detail['stage'] = f'头肩底突破后运行中（第{last - breakout_day_idx}日）：形态确认（POST_BREAK）'
+            elif breakout_state == 'RETEST':
+                hs_detail['stage'] = '头肩底突破后回踩颈线确认中（RETEST）：关注颈线支撑'
+            elif breakout_state == 'FAILED_BREAK':
+                hs_detail['stage'] = '⚠️ 头肩底突破失败：跌破颈线超过3日，形态失效（FAILED_BREAK），建议止损'
     results['hs_bottom'] = hs_detail
 
     # 4. 平台突破
@@ -901,7 +936,37 @@ def match_bear_patterns(data, ind):
             broken = cur_price < neckline * 1.02
             right_shoulder_done = right_shoulder_local_idx < lookback - 3
 
+            # BUG-014：完整破位状态机 PRE_BREAKDOWN / BREAKDOWN_DAY / POST_BREAKDOWN / RETEST / FAILED_BREAKDOWN
+            breakdown_state = 'PRE_BREAKDOWN'
+            if broken and breakdown_event:
+                days_since_break = last - breakdown_day_idx
+                if days_since_break == 0:
+                    breakdown_state = 'BREAKDOWN_DAY'
+                else:
+                    # 检查是否回抽颈线
+                    recent_high = max(d['high'] for d in data[breakdown_day_idx:last+1])
+                    is_retest = recent_high >= neckline * 0.98 and cur_price >= neckline * 0.92
+                    # 检查是否破位失败（涨回颈线上方超过3天）
+                    above_count = sum(1 for i in range(breakdown_day_idx+1, last+1) if data[i]['close'] > neckline)
+                    is_failed = above_count >= 3 and cur_price > neckline
+                    if is_failed:
+                        breakdown_state = 'FAILED_BREAKDOWN'
+                    elif is_retest:
+                        breakdown_state = 'RETEST'
+                    else:
+                        breakdown_state = 'POST_BREAKDOWN'
+            elif not broken and breakdown_event:
+                above_count = sum(1 for i in range(breakdown_day_idx+1, last+1) if data[i]['close'] > neckline)
+                if above_count >= 3:
+                    breakdown_state = 'FAILED_BREAKDOWN'
+                else:
+                    breakdown_state = 'RETEST'
+
             hs_top['score'] = (20 if left_lower else 5) + (20 if right_lower else 5) + (20 if symmetry else 5) + (40 if broken else 10)
+            # FAILED_BREAKDOWN状态扣分
+            if breakdown_state == 'FAILED_BREAKDOWN':
+                hs_top['score'] = max(10, hs_top['score'] - 30)
+            hs_top['breakdown_state'] = breakdown_state
             hs_top['key_points'] = [
                 {'name': '左肩', 'price': round(left_shoulder, 2) if left_shoulder else None},
                 {'name': '头部', 'price': round(head, 2)},
@@ -909,7 +974,8 @@ def match_bear_patterns(data, ind):
                 {'name': '左颈线点', 'price': round(neck_left_price, 2)},
                 {'name': '右颈线点', 'price': round(neck_right_price, 2)},
                 {'name': '当前颈线', 'price': round(neckline, 2)},
-                {'name': '当前价', 'price': round(cur_price, 2)}
+                {'name': '当前价', 'price': round(cur_price, 2)},
+                {'name': '破位状态', 'price': breakdown_state}
             ]
             if not left_lower:
                 hs_top['stage'] = '头肩顶不成立：左肩未低于头部'
@@ -917,13 +983,16 @@ def match_bear_patterns(data, ind):
                 hs_top['stage'] = '右肩构建中'
             elif not right_lower:
                 hs_top['stage'] = '右肩高于头部：头肩顶形态可能失败'
-            elif not broken:
-                hs_top['stage'] = '右肩已完成，向颈线下行：破位前夜'
-            elif breakdown_event:
-                hs_top['stage'] = f'头肩顶跌破颈线（第{breakdown_day_idx - last + 1}日前破位事件）：顶部确认'
-            else:
-                pullback = cur_price > neckline * 0.95 and data[last]['high'] > neckline
-                hs_top['stage'] = '头肩顶破位后回抽颈线确认中' if pullback else '头肩顶已跌破颈线：顶部确认（破位后离场）'
+            elif breakdown_state == 'PRE_BREAKDOWN':
+                hs_top['stage'] = '右肩已完成，向颈线下行：破位前夜（PRE_BREAKDOWN）'
+            elif breakdown_state == 'BREAKDOWN_DAY':
+                hs_top['stage'] = '头肩顶跌破颈线当日：顶部确认（BREAKDOWN_DAY）'
+            elif breakdown_state == 'POST_BREAKDOWN':
+                hs_top['stage'] = f'头肩顶破位后运行中（第{last - breakdown_day_idx}日）：顶部确认（POST_BREAKDOWN）'
+            elif breakdown_state == 'RETEST':
+                hs_top['stage'] = '头肩顶破位后回抽颈线确认中（RETEST）：关注颈线压力'
+            elif breakdown_state == 'FAILED_BREAKDOWN':
+                hs_top['stage'] = '⚠️ 头肩顶破位失败：涨回颈线上方超过3日，形态失效（FAILED_BREAKDOWN）'
     results['hs_top'] = hs_top
 
     # 4. 平台破位

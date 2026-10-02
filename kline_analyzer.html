@@ -1440,24 +1440,39 @@ function analyzeVolume(data, ind) {
 
 // ============ 周线/月线聚合（与Python端extract_weekly_data一致） ============
 // 重要：每根日K线只能属于一个周K线，新周第一天只进入新周，不会先写入旧周
+// 使用 ISO calendar week（周一为一周开始）
+function getISOWeek(dateStr) {
+  const d = new Date(dateStr);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+}
+
 function extractWeeklyData(data) {
-  const weeklyData = [];
-  const n = data.length;
-  // 从最后一天开始，向前每5天聚合为一周
-  // i是当前周的最后一天索引，i每次减5，确保每根K线只属于一个周
-  for (let i = n - 1; i >= 4; i -= 5) {
-    const startIdx = Math.max(0, i - 4);
-    const week = data.slice(startIdx, i + 1);
-    weeklyData.unshift({
-      date: week[week.length - 1].date,
-      open: week[0].open,
-      high: Math.max(...week.map(d => d.high)),
-      low: Math.min(...week.map(d => d.low)),
-      close: week[week.length - 1].close,
-      volume: week.reduce((s, d) => s + d.volume, 0)
-    });
+  const weekly = [];
+  let currentWeek = null;
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i];
+    const week = getISOWeek(d.date);
+    if (currentWeek === null || week !== currentWeek) {
+      // 新周：当前K线只作为新周第一天，不写入旧周
+      currentWeek = week;
+      weekly.push({
+        date: d.date, day: d.date,
+        open: d.open, high: d.high,
+        low: d.low, close: d.close,
+        volume: d.volume
+      });
+    } else {
+      // 同一周内：累加到当前周
+      weekly[weekly.length - 1].high = Math.max(weekly[weekly.length - 1].high, d.high);
+      weekly[weekly.length - 1].low = Math.min(weekly[weekly.length - 1].low, d.low);
+      weekly[weekly.length - 1].close = d.close;
+      weekly[weekly.length - 1].volume += d.volume;
+    }
   }
-  return weeklyData;
+  return weekly;
 }
 
 function extractMonthlyData(data) {
@@ -1881,30 +1896,7 @@ function calcATRStopLoss(data, ind) {
   };
 }
 
-// ============ 周线数据提取与形态匹配 ============
-function extractWeeklyData(data) {
-  const weekly = [];
-  let week = [];
-  for (let i = 0; i < data.length; i++) {
-    const date = new Date(data[i].date);
-    const dayOfWeek = date.getDay();
-    week.push(data[i]);
-    if (dayOfWeek === 5 || i === data.length - 1) {
-      if (week.length > 0) {
-        weekly.push({
-          date: week[week.length-1].date,
-          open: week[0].open,
-          high: Math.max(...week.map(d => d.high)),
-          low: Math.min(...week.map(d => d.low)),
-          close: week[week.length-1].close,
-          volume: week.reduce((a,b) => a + b.volume, 0)
-        });
-      }
-      week = [];
-    }
-  }
-  return weekly;
-}
+// ============ 周线形态匹配（使用上方统一的 extractWeeklyData） ============
 
 function matchWeeklyPatterns(data) {
   if (data.length < 20) return { score: 0, signal: '周线数据不足', detail: '需要至少20周数据' };

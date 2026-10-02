@@ -62,26 +62,34 @@ def fetch_market_env():
 
 
 def extract_weekly_data(data):
-    """从日线数据聚合周线（每5个交易日为一周）
+    """从日线数据按 ISO calendar week 聚合周线
     重要：每根日K线只能属于一个周K线，新周第一天只进入新周，不会先写入旧周
+    使用 ISO week（周一为一周开始），跨周时当前K线只属于新周
     """
-    weekly_data = []
-    n = len(data)
-    # 从最后一天开始，向前每5天聚合为一周
-    # i是当前周的最后一天索引，week = data[i-4:i+1]
-    # i每次减5，确保每根K线只属于一个周
-    for i in range(n - 1, 3, -5):
-        start_idx = max(0, i - 4)
-        week = data[start_idx:i + 1]
-        weekly_data.insert(0, {
-            'date': week[-1]['day'],
-            'open': week[0]['open'],
-            'high': max(d['high'] for d in week),
-            'low': min(d['low'] for d in week),
-            'close': week[-1]['close'],
-            'volume': sum(d['volume'] for d in week)
-        })
-    return weekly_data
+    weekly = []
+    current_week = None
+    for d in data:
+        try:
+            dt = datetime.strptime(d['day'][:10], '%Y-%m-%d')
+            week = dt.isocalendar()[1]
+        except (ValueError, KeyError):
+            week = hash(d.get('day', '')) % 52
+        if current_week is None or week != current_week:
+            # 新周：当前K线只作为新周第一天，不写入旧周
+            current_week = week
+            weekly.append({
+                'day': d['day'], 'date': d['day'],
+                'open': d['open'], 'high': d['high'],
+                'low': d['low'], 'close': d['close'],
+                'volume': d['volume']
+            })
+        else:
+            # 同一周内：累加到当前周
+            weekly[-1]['high'] = max(weekly[-1]['high'], d['high'])
+            weekly[-1]['low'] = min(weekly[-1]['low'], d['low'])
+            weekly[-1]['close'] = d['close']
+            weekly[-1]['volume'] += d['volume']
+    return weekly
 
 
 def extract_monthly_data(data):
@@ -344,11 +352,14 @@ def analyze_volume(data, ind):
     else:
         vol_status = '正常'
 
-    price_up = data[last]['close'] > data[last-1]['close'] if n >= 2 else False
-    vol_up = data[last]['volume'] > (ind['vma5'][last] or 0)
+    # 与Web端一致：近5日首尾价格趋势 + VMA5趋势
+    recent5 = data[n-5:] if n >= 5 else data
+    price_up = recent5[-1]['close'] > recent5[0]['close']
+    prev_v5 = ind['vma5'][n-6] if n >= 6 else v5
+    vol_up = v5 > prev_v5
 
     if price_up and vol_up:
-        relation = '量价齐升'
+        relation = '量价齐升（健康上涨）'
     elif price_up and not vol_up:
         relation = '价涨量缩（上涨乏力，警惕）'
     elif not price_up and vol_up:
@@ -929,32 +940,7 @@ def detect_bollinger(data, ind):
     return result
 
 
-# ============ 周线数据提取与形态 ============
-def extract_weekly_data(data):
-    weekly = []
-    current_week = None
-    for d in data:
-        try:
-            dt = datetime.strptime(d['day'][:10], '%Y-%m-%d')
-            week = dt.isocalendar()[1]
-        except (ValueError, KeyError):
-            week = hash(d.get('day', '')) % 52
-        if current_week is None or week != current_week:
-            if current_week is not None and weekly:
-                weekly[-1]['high'] = max(weekly[-1]['high'], d['high'])
-                weekly[-1]['low'] = min(weekly[-1]['low'], d['low'])
-                weekly[-1]['close'] = d['close']
-                weekly[-1]['volume'] += d['volume']
-            current_week = week
-            weekly.append({'day': d['day'], 'open': d['open'], 'high': d['high'],
-                           'low': d['low'], 'close': d['close'], 'volume': d['volume']})
-        else:
-            weekly[-1]['high'] = max(weekly[-1]['high'], d['high'])
-            weekly[-1]['low'] = min(weekly[-1]['low'], d['low'])
-            weekly[-1]['close'] = d['close']
-            weekly[-1]['volume'] += d['volume']
-    return weekly
-
+# ============ 周线形态匹配（使用上方统一的 extract_weekly_data） ============
 
 def match_weekly_patterns(weekly_data):
     result = {'resonance': False, 'type': None, 'detail': ''}

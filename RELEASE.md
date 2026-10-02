@@ -4,6 +4,47 @@
 
 ---
 
+## v4.4 - 2026-10-02 (Batch 1 Critical Bug Fixes)
+
+### BUG修复（P0/P1）
+
+- **BUG-001 [P0]**：恢复被误删的 `kline_analyzer.html`（4038行完整代码）
+  - 影响：GitHub main 分支 Web 主程序不存在，无法从主分支重建
+  - 修复：重新推送完整 HTML 文件
+
+- **BUG-002 [P1]**：周线/月线聚合函数化，明确边界保证
+  - 影响：代码可维护性，缺少统一函数和明确的"每根K线只属于一个周期"保证
+  - 修复：新增 `extract_weekly_data()` / `extract_monthly_data()` 统一函数（JS/Python双端），重构大盘环境分析调用这些函数
+
+- **BUG-003 [P1]**：Python假信号模块MACD字段名错误
+  - 影响：Python端 MACD 顶背离/底背离假信号风险从未触发
+  - 修复：`top_divergence` → `topDivergence`，`bottom_divergence` → `bottomDivergence`
+
+- **BUG-004 [P1]**：假信号量价背离在 Web/Python 两端完全失效
+  - 影响：量价背离维度（价涨量缩+10风险，价跌量缩+15风险）在两端都从未触发
+  - 根本原因：① Web端 `calcFakeSignalRisk` 读 `vol.signal` 但 `analyzeVolume` 返回 `vol.relation`；② Python端词汇不统一（`'量价齐缩'` vs `'价跌量缩'`）
+  - 修复：Web端 `vol.signal` → `vol.relation`；Python端统一 relation 词汇与 Web 端一致
+
+- **BUG-005 [P1]**：legacy `pattern_scanner.py` W底颈线错误使用 lows
+  - 影响：颈线被人为压低，W底突破更容易触发（假阳性）
+  - 修复：`np.max(lows[...])` → `np.max(highs[...])`，添加 highs 变量定义
+  - 注意：主分析脚本 `analyze_stock.py` 原本就正确
+
+- **BUG-006 [P1]**：W底第二底价格相似度缺少上限
+  - 影响：两底相差20%仍可能被判定为标准W底（假阳性）
+  - 修复：所有路径统一添加 `abs(L2-L1)/L1 <= 5%` 约束（analyze_stock.py + kline_analyzer.html + pattern_scanner.py）
+
+### 代码质量
+- JS/Python 算法一致性验证：周线聚合、量价分析、W底判定完全一致
+- legacy pattern_scanner.py 三份同步（root/scripts/skill）
+- 语法检查：Python + JS 全部通过
+
+### 关联Issue
+- QA Master Tracker: #25
+- 修复Commit: `f960aeb0`
+
+---
+
 ## v4.3 - 2026-10-02
 
 ### 新功能

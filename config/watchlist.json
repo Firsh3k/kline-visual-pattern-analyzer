@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "exportDate": "2026-10-02",
+  "exportTime": "2026-10-02 15:00:00",
+  "description": "K线形态分析工具 - 自选股配置模板。将此文件提交到GitHub后，在其他设备通过raw链接导入即可同步自选股。",
+  "watchlist": [
+    "002436",
+    "688105",
+    "603127",
+    "301080",
+    "688099"
+  ],
+  "customSectors": [
+    {
+      "code": "885955",
+      "name": "重组蛋白",
+      "stocks": ["301080", "301047", "688105"]
+    }
+  ],
+  "settings": {
+    "scanMinScore": "60",
+    "scanSignalType": "bull"
+  },
+  "stats": {
+    "watchlistCount": 5,
+    "customSectorsCount": 1
+  },
+  "usage": {
+    "export": "在自选股页面点击「导出配置」，下载JSON文件",
+    "upload": "将下载的JSON文件提交到GitHub仓库的config/目录",
+    "import": "在其他设备打开页面，粘贴GitHub raw链接，点击「从URL导入」",
+    "rawUrlFormat": "https://raw.githubusercontent.com/用户名/仓库名/分支/config/watchlist.json"
+  }
+}

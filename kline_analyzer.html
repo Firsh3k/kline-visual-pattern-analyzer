@@ -199,6 +199,24 @@ canvas { width: 100%; display: block; }
       <!-- 自选股标签列表 -->
       <div id="watchlistTags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;min-height:32px;"></div>
       
+      <!-- 云配置同步 -->
+      <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:600;color:#f39c12;">☁️ 云配置同步（GitHub）</span>
+          <span id="configSyncStatus" style="font-size:11px;color:#556677;">用于跨设备同步自选股和自定义板块</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button onclick="exportConfig()" style="padding:8px 16px;background:#27ae60;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">📤 导出配置</button>
+          <label style="padding:8px 16px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">
+            📥 导入文件
+            <input type="file" accept=".json" onchange="importConfigFromFile(event)" style="display:none;">
+          </label>
+          <input type="text" id="githubConfigUrl" placeholder="粘贴GitHub raw链接，如 https://raw.githubusercontent.com/.../watchlist.json" style="flex:1;min-width:250px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:12px;">
+          <button onclick="importConfigFromUrl()" style="padding:8px 16px;background:#9b59b6;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">从URL导入</button>
+        </div>
+        <div id="configSummary" style="margin-top:8px;font-size:11px;color:#556677;"></div>
+      </div>
+      
       <span id="batchStatus" style="font-size:13px;color:#8899aa;"></span>
     </div>
     <div id="batchResults"></div>
@@ -3121,6 +3139,150 @@ function getWatchlist() {
 function saveWatchlist(codes) {
   try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(codes)); } catch(e) {}
 }
+
+// ============ 云配置同步（GitHub） ============
+const CUSTOM_SECTORS_KEY = 'kline_custom_sectors_v1';
+
+// 导出配置为JSON文件
+function exportConfig() {
+  const watchlist = getWatchlist();
+  let customSectors = [];
+  try {
+    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
+    customSectors = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  
+  const config = {
+    version: '1.0',
+    exportDate: new Date().toISOString().split('T')[0],
+    exportTime: new Date().toLocaleString('zh-CN'),
+    watchlist: watchlist,
+    customSectors: customSectors,
+    settings: {
+      scanMinScore: document.getElementById('scanMinScore')?.value || '60',
+      scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
+    },
+    stats: {
+      watchlistCount: watchlist.length,
+      customSectorsCount: customSectors.length
+    }
+  };
+  
+  const blob = new Blob([JSON.stringify(config, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `kline_config_${config.exportDate}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  document.getElementById('configSyncStatus').textContent = `✅ 已导出 ${watchlist.length} 只自选股 + ${customSectors.length} 个自定义板块`;
+  document.getElementById('configSyncStatus').style.color = '#27ae60';
+  updateConfigSummary();
+}
+
+// 从文件导入配置
+function importConfigFromFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const config = JSON.parse(e.target.result);
+      applyConfig(config, '本地文件');
+    } catch(err) {
+      alert('配置文件格式错误: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// 从GitHub URL导入配置
+function importConfigFromUrl() {
+  const url = document.getElementById('githubConfigUrl').value.trim();
+  if (!url) {
+    alert('请输入GitHub raw链接');
+    return;
+  }
+  if (!url.includes('raw.githubusercontent.com')) {
+    alert('请输入有效的GitHub raw链接，格式如：https://raw.githubusercontent.com/用户名/仓库名/分支/路径/watchlist.json');
+    return;
+  }
+  
+  document.getElementById('configSyncStatus').textContent = '⏳ 正在从GitHub加载配置...';
+  document.getElementById('configSyncStatus').style.color = '#f39c12';
+  
+  fetch(url)
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(config => {
+      applyConfig(config, 'GitHub');
+    })
+    .catch(err => {
+      document.getElementById('configSyncStatus').textContent = '❌ 加载失败: ' + err.message;
+      document.getElementById('configSyncStatus').style.color = '#e74c3c';
+    });
+}
+
+// 应用配置
+function applyConfig(config, source) {
+  if (!config.watchlist || !Array.isArray(config.watchlist)) {
+    alert('配置文件缺少watchlist字段');
+    return;
+  }
+  
+  // 导入自选股（合并去重）
+  const existing = getWatchlist();
+  const merged = [...new Set([...existing, ...config.watchlist])];
+  saveWatchlist(merged);
+  watchlistResults = {};
+  renderWatchlistTags();
+  
+  // 导入自定义板块
+  if (config.customSectors && Array.isArray(config.customSectors)) {
+    try {
+      localStorage.setItem(CUSTOM_SECTORS_KEY, JSON.stringify(config.customSectors));
+    } catch(e) {}
+  }
+  
+  // 应用设置
+  if (config.settings) {
+    if (config.settings.scanMinScore && document.getElementById('scanMinScore')) {
+      document.getElementById('scanMinScore').value = config.settings.scanMinScore;
+    }
+    if (config.settings.scanSignalType && document.getElementById('scanSignalType')) {
+      document.getElementById('scanSignalType').value = config.settings.scanSignalType;
+    }
+  }
+  
+  document.getElementById('configSyncStatus').textContent = `✅ 从${source}导入成功：${config.watchlist.length}只自选股 + ${(config.customSectors||[]).length}个自定义板块`;
+  document.getElementById('configSyncStatus').style.color = '#27ae60';
+  updateConfigSummary();
+}
+
+// 更新配置摘要
+function updateConfigSummary() {
+  const watchlist = getWatchlist();
+  let customSectors = [];
+  try {
+    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
+    customSectors = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  
+  document.getElementById('configSummary').innerHTML = 
+    `当前配置：<b style="color:#f0f0f0">${watchlist.length}</b> 只自选股 | <b style="color:#f0f0f0">${customSectors.length}</b> 个自定义板块 | ` +
+    `<span style="color:#556677;">导出后请将JSON文件提交到GitHub仓库，其他设备通过raw链接导入即可同步</span>`;
+}
+
+// 页面加载时更新配置摘要
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(updateConfigSummary, 500);
+});
 
 // 渲染自选股标签
 function renderWatchlistTags() {

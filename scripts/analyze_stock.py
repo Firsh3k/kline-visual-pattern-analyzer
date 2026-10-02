@@ -345,9 +345,11 @@ def analyze_volume(data, ind):
     v20 = ind['vma20'][last] or 0
     vol_ratio = v5 / v20 if v20 > 0 else 1
 
-    if vol_ratio > 1.5:
+    # 与Web端一致：今日量能相对5日均量的状态
+    today_vol = data[last]['volume']
+    if today_vol > v5 * 1.5:
         vol_status = '放量'
-    elif vol_ratio < 0.7:
+    elif today_vol < v5 * 0.7:
         vol_status = '缩量'
     else:
         vol_status = '正常'

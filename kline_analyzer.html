@@ -3463,18 +3463,23 @@ function getGithubSettings() {
   try {
     // 优先从 sessionStorage 读取（更安全，关闭浏览器即清除）
     let data = sessionStorage.getItem(GITHUB_SETTINGS_KEY);
+    let storageUsed = sessionStorage;
     if (!data) {
       // 兼容旧版 localStorage
       data = localStorage.getItem(GITHUB_SETTINGS_KEY);
+      storageUsed = localStorage;
     }
     if (!data) return null;
     const settings = JSON.parse(data);
-    // Token 过期检查（默认7天）
+    // Token 过期检查（默认7天）— 过期则实际删除，不只是标记
     if (settings.token && settings.savedAt) {
       const ageDays = (Date.now() - settings.savedAt) / (1000 * 60 * 60 * 24);
       if (ageDays > 7) {
-        console.warn('GitHub Token已过期（超过7天），请重新输入');
-        settings._tokenExpired = true;
+        console.warn('GitHub Token已过期（超过7天），已自动删除');
+        // 实际删除两个存储中的数据
+        sessionStorage.removeItem(GITHUB_SETTINGS_KEY);
+        localStorage.removeItem(GITHUB_SETTINGS_KEY);
+        return null;
       }
     }
     return settings;

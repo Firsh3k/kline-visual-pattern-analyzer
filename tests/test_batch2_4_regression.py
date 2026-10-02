@@ -119,8 +119,8 @@ def test_batch_scan_path_resolution():
     with open(batch_scan_path, 'r', encoding='utf-8') as f:
         source = f.read()
     assert '向上查找data目录' in source or 'os.path.dirname(os.path.dirname' in source, "缺少向上查找data目录逻辑"
-    assert 'ValueError' in source, "缺少参数错误处理"
-    print("  ✅ batch_scan路径解析已修复")
+    assert 'argparse' in source, "缺少argparse CLI参数解析"
+    print("  ✅ batch_scan路径解析已修复（argparse）")
 
 
 def test_signal_confidence_naming():

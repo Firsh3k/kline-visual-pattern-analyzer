@@ -251,7 +251,13 @@ canvas { width: 100%; display: block; }
             <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
             <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
           </div>
-          <div style="margin-top:6px;font-size:10px;color:#556677;">⚠️ Token仅保存在本地浏览器，不会上传到任何服务器。建议使用仅repo权限的细粒度Token。</div>
+          <div style="margin-top:8px;padding:8px;background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:4px;font-size:10px;color:#e74c3c;line-height:1.5;">
+            <b>⚠️ 安全提醒</b><br>
+            1. Token仅保存在本地浏览器localStorage，不会上传到任何服务器<br>
+            2. <b>强烈建议</b>使用GitHub Fine-grained Token（仅授予目标仓库的Contents读写权限），不要使用经典repo全权限Token<br>
+            3. 公共电脑使用后请清除浏览器数据，或使用"清除设置"按钮<br>
+            4. 若仓库为<b>私有仓库</b>，通过raw链接导入配置时可能需要认证，建议使用"GitHub自动同步设置"功能而非匿名raw链接
+          </div>
         </div>
         <div id="configSummary" style="margin-top:8px;font-size:11px;color:#556677;"></div>
         <div id="syncStatus" style="margin-top:4px;font-size:11px;"></div>
@@ -1034,7 +1040,7 @@ function matchPatterns(data, ind) {
   }
   results.w_bottom = wDetail;
 
-  // ===== 3. 头肩底 =====
+  // ===== 3. 头肩底（倾斜颈线+突破事件检测）=====
   let hsDetail = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
   if (lookback > 30) {
     const headIdx = lows.indexOf(Math.min(...lows));
@@ -1046,25 +1052,47 @@ function matchPatterns(data, ind) {
       const rightShoulder = rightPart.length > 0 ? Math.min(...rightPart) : null;
       const rightShoulderIdx = rightPart.length > 0 ? rightPart.indexOf(rightShoulder) : -1;
       const head = lows[headIdx];
-      const neckLeft = Math.max(...highs.slice(0, headIdx));
-      const neckRight = rightPart.length > 0 ? Math.max(...highs.slice(headIdx + 3)) : neckLeft;
-      const neckline = Math.min(neckLeft, neckRight);
+
+      // 真正的两点连线颈线（BUG-011修复）
+      const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
+      const neckLeftIdx = lsIdx + highs.slice(lsIdx, headIdx).indexOf(Math.max(...highs.slice(lsIdx, headIdx)));
+      const neckLeftPrice = highs[neckLeftIdx];
+      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
+      let neckRightIdx = headIdx + 3;
+      if (rightShoulderGlobalIdx > headIdx + 3) {
+        const seg = highs.slice(headIdx + 3, rightShoulderGlobalIdx + 1);
+        neckRightIdx = headIdx + 3 + seg.indexOf(Math.max(...seg));
+      }
+      const neckRightPrice = highs[Math.min(neckRightIdx, lookback - 1)];
+      const neckSlope = neckRightIdx > neckLeftIdx ? (neckRightPrice - neckLeftPrice) / (neckRightIdx - neckLeftIdx) : 0;
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftIdx);
+
       const leftHigher = leftShoulder && leftShoulder > head;
       const rightHigher = rightShoulder && rightShoulder > head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice > neckline * 0.98;
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
       const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+
+      // BUG-012修复：突破事件检测
+      let breakoutEvent = false, breakoutDayIdx = null;
+      for (let i = Math.max(1, last - 10); i <= last; i++) {
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftIdx);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftIdx);
+        if (data[i-1].close <= prevNeck && data[i].close > curNeck) {
+          breakoutEvent = true; breakoutDayIdx = i; break;
+        }
+      }
 
       hsDetail.score = (leftHigher?20:5)+(rightHigher?20:5)+(symmetry?20:5)+(broken?40:10);
       hsDetail.points = [
         { label: '左肩', value: leftShoulder ? leftShoulder.toFixed(2) : '-' },
         { label: '头部', value: head.toFixed(2) },
         { label: '右肩', value: rightShoulder ? rightShoulder.toFixed(2) : '构建中' },
-        { label: '颈线位', value: neckline.toFixed(2) },
+        { label: '左颈线点', value: neckLeftPrice.toFixed(2) },
+        { label: '右颈线点', value: neckRightPrice.toFixed(2) },
+        { label: '当前颈线', value: neckline.toFixed(2) },
         { label: '当前价', value: curPrice.toFixed(2) }
       ];
-      // 图上标注
       if (leftShoulderIdx >= 0) {
         hsDetail.markers.points.push({ idx: n - lookback + leftShoulderIdx, price: leftShoulder, label: '左肩', color: '#3498db' });
       }
@@ -1075,8 +1103,7 @@ function matchPatterns(data, ind) {
       hsDetail.markers.lines = [{ price: neckline, label: '头肩底颈线', color: '#f39c12' }];
       if (!leftHigher) {
         hsDetail.stage = '头肩底不成立：左肩未高于头部';
-        hsDetail.outlook = '形态不标准';
-        hsDetail.action = '观望';
+        hsDetail.outlook = '形态不标准'; hsDetail.action = '观望';
       } else if (!rightShoulderDone) {
         hsDetail.stage = '右肩构建中：头部已形成，正在构建右肩';
         hsDetail.outlook = '右肩低点应高于头部，右肩完成后关注颈线突破';
@@ -1089,6 +1116,10 @@ function matchPatterns(data, ind) {
         hsDetail.stage = '右肩已完成，向颈线推进：突破前夜';
         hsDetail.outlook = '放量突破颈线则头肩底确认，最小涨幅=头部到颈线距离';
         hsDetail.action = '可布局，突破颈线加仓';
+      } else if (breakoutEvent) {
+        hsDetail.stage = `头肩底突破颈线（${breakoutDayIdx - last + 1}日前突破事件）：形态确认`;
+        hsDetail.outlook = '突破事件已确认，目标价=颈线+(颈线-头部)，沿均线持股';
+        hsDetail.action = '持股待涨';
       } else {
         const pullback = curPrice < neckline * 1.05 && data[last].low < neckline * 1.02;
         if (pullback) {
@@ -1096,7 +1127,7 @@ function matchPatterns(data, ind) {
           hsDetail.outlook = '回踩不破颈线则确认有效，开启上涨';
           hsDetail.action = '回踩企稳加仓，破颈线止损';
         } else {
-          hsDetail.stage = '头肩底已突破颈线：形态确认，上涨进行中';
+          hsDetail.stage = '头肩底已突破颈线：形态确认（突破后持有）';
           hsDetail.outlook = '目标价=颈线+(颈线-头部)，沿均线持股';
           hsDetail.action = '持股待涨';
         }
@@ -1283,7 +1314,7 @@ function matchBearPatterns(data, ind) {
   }
   results.m_top = mTop;
 
-  // ===== 3. 头肩顶 =====
+  // ===== 3. 头肩顶（倾斜颈线+破位事件检测）=====
   let hsTop = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
   if (lookback > 30) {
     const headIdx = highs.indexOf(Math.max(...highs));
@@ -1295,22 +1326,45 @@ function matchBearPatterns(data, ind) {
       const rightShoulder = rightPart.length > 0 ? Math.max(...rightPart) : null;
       const rightShoulderIdx = rightPart.length > 0 ? rightPart.indexOf(rightShoulder) : -1;
       const head = highs[headIdx];
-      const neckLeft = Math.min(...lows.slice(0, headIdx));
-      const neckRight = rightPart.length > 0 ? Math.min(...lows.slice(headIdx + 3)) : neckLeft;
-      const neckline = Math.max(neckLeft, neckRight);
+
+      // 真正的两点连线颈线（BUG-011修复）
+      const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
+      const neckLeftIdx = lsIdx + lows.slice(lsIdx, headIdx).indexOf(Math.min(...lows.slice(lsIdx, headIdx)));
+      const neckLeftPrice = lows[neckLeftIdx];
+      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
+      let neckRightIdx = headIdx + 3;
+      if (rightShoulderGlobalIdx > headIdx + 3) {
+        const seg = lows.slice(headIdx + 3, rightShoulderGlobalIdx + 1);
+        neckRightIdx = headIdx + 3 + seg.indexOf(Math.min(...seg));
+      }
+      const neckRightPrice = lows[Math.min(neckRightIdx, lookback - 1)];
+      const neckSlope = neckRightIdx > neckLeftIdx ? (neckRightPrice - neckLeftPrice) / (neckRightIdx - neckLeftIdx) : 0;
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftIdx);
+
       const leftLower = leftShoulder && leftShoulder < head;
       const rightLower = rightShoulder && rightShoulder < head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice < neckline * 1.02;
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
       const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+
+      // BUG-012修复：破位事件检测
+      let breakdownEvent = false, breakdownDayIdx = null;
+      for (let i = Math.max(1, last - 10); i <= last; i++) {
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftIdx);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftIdx);
+        if (data[i-1].close >= prevNeck && data[i].close < curNeck) {
+          breakdownEvent = true; breakdownDayIdx = i; break;
+        }
+      }
 
       hsTop.score = (leftLower?20:5)+(rightLower?20:5)+(symmetry?20:5)+(broken?40:10);
       hsTop.points = [
         { label: '左肩', value: leftShoulder ? leftShoulder.toFixed(2) : '-' },
         { label: '头部', value: head.toFixed(2) },
         { label: '右肩', value: rightShoulder ? rightShoulder.toFixed(2) : '构建中' },
-        { label: '颈线位', value: neckline.toFixed(2) },
+        { label: '左颈线点', value: neckLeftPrice.toFixed(2) },
+        { label: '右颈线点', value: neckRightPrice.toFixed(2) },
+        { label: '当前颈线', value: neckline.toFixed(2) },
         { label: '当前价', value: curPrice.toFixed(2) }
       ];
       if (leftShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + leftShoulderIdx, price: leftShoulder, label: '左肩', color: '#3498db' });
@@ -1320,8 +1374,7 @@ function matchBearPatterns(data, ind) {
 
       if (!leftLower) {
         hsTop.stage = '头肩顶不成立：左肩未低于头部';
-        hsTop.outlook = '形态不标准';
-        hsTop.action = '观望';
+        hsTop.outlook = '形态不标准'; hsTop.action = '观望';
       } else if (!rightShoulderDone) {
         hsTop.stage = '右肩构建中：头部已形成，正在构建右肩';
         hsTop.outlook = '右肩高点应低于头部，右肩完成后关注颈线破位';
@@ -1334,6 +1387,10 @@ function matchBearPatterns(data, ind) {
         hsTop.stage = '右肩已完成，向颈线下行：破位前夜';
         hsTop.outlook = '放量跌破颈线则头肩顶确认，最小跌幅=头部到颈线距离';
         hsTop.action = '可减仓，跌破颈线清仓';
+      } else if (breakdownEvent) {
+        hsTop.stage = `头肩顶跌破颈线（${breakdownDayIdx - last + 1}日前破位事件）：顶部确认`;
+        hsTop.outlook = '破位事件已确认，目标价=颈线-(头部-颈线)，沿均线持币';
+        hsTop.action = '止损离场，不要抄底';
       } else {
         const pullback = curPrice > neckline * 0.95 && data[last].high > neckline;
         if (pullback) {
@@ -1341,7 +1398,7 @@ function matchBearPatterns(data, ind) {
           hsTop.outlook = '回抽不过颈线则确认有效，开启下跌';
           hsTop.action = '回抽是最后离场机会，不过颈线清仓';
         } else {
-          hsTop.stage = '头肩顶已跌破颈线：顶部确认，下跌进行中';
+          hsTop.stage = '头肩顶已跌破颈线：顶部确认（破位后离场）';
           hsTop.outlook = '目标价=颈线-(头部-颈线)，沿均线持币';
           hsTop.action = '止损离场，不要抄底';
         }
@@ -2682,7 +2739,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bullBestPattern?bullBestPattern.name:bullBestId}</b></div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
           <div style="text-align:center;padding:8px;background:rgba(231,76,60,0.15);border-radius:6px;">
-            <div style="font-size:11px;color:#8899aa;">买入综合准确率</div>
+            <div style="font-size:11px;color:#8899aa;">买入信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${buyAccuracy>=60?'#e74c3c':buyAccuracy>=40?'#f39c12':'#556677'};">${buyAccuracy}%</div>
           </div>
           <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${buyAccuracy}%;background:#e74c3c;border-radius:2px;"></div></div>
@@ -2696,7 +2753,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bearBestPattern?bearBestPattern.name:bearBestId}</b></div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
           <div style="text-align:center;padding:8px;background:rgba(46,204,113,0.15);border-radius:6px;">
-            <div style="font-size:11px;color:#8899aa;">卖出综合准确率</div>
+            <div style="font-size:11px;color:#8899aa;">卖出信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${sellAccuracy>=60?'#2ecc71':sellAccuracy>=40?'#f39c12':'#556677'};">${sellAccuracy}%</div>
           </div>
           <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${sellAccuracy}%;background:#2ecc71;border-radius:2px;"></div></div>
@@ -2708,6 +2765,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
           sellAccuracy > buyAccuracy + 10 ? '<b style="color:#2ecc71;">卖出信号更强</b>：顶部形态匹配度高且当前环境适合该形态，建议止盈止损，不要抄底。' :
           '<b style="color:#f39c12;">多空博弈</b>：买卖信号强度接近，方向不明，建议观望等待明确信号。'}
         （买入${buyAccuracy}% vs 卖出${sellAccuracy}%，差值${Math.abs(buyAccuracy-sellAccuracy)}%）
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1a2332;font-size:10px;color:#556677;">
+          <sup style="color:#f39c12;">*</sup> 信号可信度 = 形态匹配度 × 环境适配率（经验先验值），非项目内真实回测胜率。形态经典可靠性（头肩底85%等）为行业经验统计，待回测校准。
+        </div>
       </div>
     </div>
 

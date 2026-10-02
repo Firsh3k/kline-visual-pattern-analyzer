@@ -203,12 +203,37 @@ a:hover {{ text-decoration:underline; }}
 
 
 if __name__ == '__main__':
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(base_dir, 'data')
-    output_dir = os.path.join(base_dir, 'output')
+    # 向上查找data目录：先找脚本同级，再找上一级，再找上上级
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = None
+    for candidate in [
+        os.path.join(script_dir, 'data'),
+        os.path.join(os.path.dirname(script_dir), 'data'),
+        os.path.join(os.path.dirname(os.path.dirname(script_dir)), 'data'),
+    ]:
+        if os.path.isdir(candidate):
+            data_dir = candidate
+            break
+
+    if data_dir is None:
+        print("错误：未找到data目录。请确保项目结构包含data/目录，其中存放CSV股票数据文件。")
+        print("用法：python3 batch_scan.py [recent_days]")
+        print("  recent_days: 扫描最近N个交易日的信号（默认10）")
+        sys.exit(1)
+
+    output_dir = os.path.join(os.path.dirname(data_dir), 'output')
+    os.makedirs(output_dir, exist_ok=True)
 
     recent_days = 10
     if len(sys.argv) >= 2:
-        recent_days = int(sys.argv[1])
+        try:
+            recent_days = int(sys.argv[1])
+        except ValueError:
+            print(f"错误：参数 '{sys.argv[1]}' 不是有效的整数。recent_days必须是整数。")
+            print("用法：python3 batch_scan.py [recent_days]")
+            sys.exit(1)
 
+    print(f"数据目录: {data_dir}")
+    print(f"输出目录: {output_dir}")
+    print(f"扫描最近 {recent_days} 个交易日的信号\n")
     batch_scan(data_dir, output_dir, recent_days)

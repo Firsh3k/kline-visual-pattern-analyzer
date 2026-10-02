@@ -1,0 +1,87 @@
+name: Kline Pattern Analyzer CI
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**', 'bugfix/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy
+
+    - name: Python syntax check
+      run: |
+        python -m py_compile skill/scripts/analyze_stock.py
+        python -m py_compile skill/scripts/pattern_scanner.py
+        python -m py_compile skill/scripts/batch_scan.py
+        echo "Python syntax OK"
+
+    - name: Run Batch 1 regression tests
+      run: |
+        cd tests
+        python test_batch1_regression.py
+
+    - name: Run Batch 2-4 regression tests
+      run: |
+        cd tests
+        python test_batch2_4_regression.py
+
+  js-syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: JS syntax check
+      run: |
+        node -e "
+        const fs = require('fs');
+        const html = fs.readFileSync('kline_analyzer.html', 'utf8');
+        const scripts = html.match(/<script[^>]*>([\s\S]*?)<\/script>/g);
+        let totalJS = '';
+        scripts.forEach(s => { totalJS += s.replace(/<\/?script[^>]*>/g, '') + '\n'; });
+        try { new Function(totalJS); console.log('JS syntax OK'); }
+        catch(e) { console.error('JS syntax error:', e.message); process.exit(1); }
+        "
+
+  file-integrity:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check critical files exist
+      run: |
+        test -f kline_analyzer.html || (echo "ERROR: kline_analyzer.html missing" && exit 1)
+        test -f skill/scripts/analyze_stock.py || (echo "ERROR: analyze_stock.py missing" && exit 1)
+        test -f skill/scripts/pattern_scanner.py || (echo "ERROR: pattern_scanner.py missing" && exit 1)
+        test -f skill/scripts/batch_scan.py || (echo "ERROR: batch_scan.py missing" && exit 1)
+        test -f tests/test_batch1_regression.py || (echo "ERROR: test_batch1_regression.py missing" && exit 1)
+        test -f tests/test_batch2_4_regression.py || (echo "ERROR: test_batch2_4_regression.py missing" && exit 1)
+        echo "All critical files present"
+
+    - name: Check HTML file size (prevent accidental deletion)
+      run: |
+        SIZE=$(wc -c < kline_analyzer.html)
+        echo "kline_analyzer.html size: $SIZE bytes"
+        if [ "$SIZE" -lt 100000 ]; then
+          echo "ERROR: kline_analyzer.html too small ($SIZE bytes), possible deletion"
+          exit 1
+        fi
+        echo "HTML file size OK"

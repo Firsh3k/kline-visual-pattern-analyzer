@@ -172,6 +172,7 @@ def detect_double_bottom(df):
             continue
         closes = segment['close'].values
         lows = segment['low'].values
+        highs = segment['high'].values
 
         # 找局部最低点（用5日窗口）
         min_idx = np.argmin(lows)
@@ -189,15 +190,18 @@ def detect_double_bottom(df):
         second_low_idx = first_low_idx + 5 + second_low_idx_rel
         second_low = lows[second_low_idx]
 
-        # 第二个低点不低于第一个低点的97%（允许3%误差）
+        # 第二个低点不低于第一个低点的97%（允许3%误差），且两底差异不超过5%
         if second_low < first_low * 0.97:
+            continue
+        bottom_diff_pct = abs(second_low - first_low) / first_low * 100
+        if bottom_diff_pct > 5.0:
             continue
         # 两个低点之间至少间隔10天
         if second_low_idx - first_low_idx < 10:
             continue
 
-        # 颈线 = 两个低点之间的最高点
-        neckline = np.max(lows[first_low_idx:second_low_idx + 1])
+        # 颈线 = 两个低点之间的最高点（用highs而非lows）
+        neckline = np.max(highs[first_low_idx:second_low_idx + 1])
 
         # 当前价格突破颈线
         current_close = closes[-1]
@@ -661,113 +665,20 @@ def analyze_stock(csv_path, stock_name, stock_code, output_dir):
 
 
 if __name__ == '__main__':
-    # 两种模式：
-    # 传统模式: python3 pattern_scanner.py <csv路径> <股票名称> <股票代码>
-    # 新模式:   python3 pattern_scanner.py <股票代码> [股票名称] --json
-    import urllib.request
-    import re
-    import tempfile
-
+    # 默认分析贵州茅台
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(base_dir, 'data', '600519.csv')
     output_dir = os.path.join(base_dir, 'output')
 
-    args = sys.argv[1:]
-    json_mode = '--json' in args
-    args = [a for a in args if a != '--json']
-
-    if json_mode or (len(args) >= 1 and args[0].endswith('.csv') is False and len(args[0]) == 6 and args[0].isdigit()):
-        # 新模式：传入股票代码，自动拉K线
-        code = args[0].strip()
-        name = args[1] if len(args) >= 2 else code
-
-        # 从新浪拉K线
-        market = 'sh' if code.startswith('6') else 'sz'
-        url = f'https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_{market}{code}=/CN_MarketDataService.getKLineData?symbol={market}{code}&scale=240&ma=no&datalen=250'
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=15)
-            text = resp.read().decode('utf-8')
-            match = re.search(r'\((.*)\)', text, re.DOTALL)
-            if match:
-                kline_data = json.loads(match.group(1))
-            else:
-                kline_data = None
-        except Exception as e:
-            kline_data = None
-
-        if not kline_data or len(kline_data) < 60:
-            result = {'code': code, 'name': name, 'error': f'K线数据不足（{len(kline_data) if kline_data else 0}根）'}
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            sys.exit(1)
-
-        # 保存为临时CSV
-        df_kline = pd.DataFrame(kline_data)
-        df_kline['day'] = pd.to_datetime(df_kline['day'])
-        df_kline = df_kline.sort_values('day').reset_index(drop=True)
-        df_kline['date'] = df_kline['day'].dt.strftime('%Y%m%d')
-
-        tmp_dir = tempfile.mkdtemp()
-        csv_path = os.path.join(tmp_dir, f'{code}.csv')
-        df_kline[['date', 'open', 'high', 'low', 'close', 'volume']].to_csv(csv_path, index=False)
-
-        # 运行形态检测
-        df = load_data(csv_path)
-        df = calc_indicators(df)
-        signals = detect_all_patterns(df)
-
-        # 调用analyze_stock获取评分（统一评分逻辑）
-        try:
-            sys.path.insert(0, base_dir)
-            from analyze_stock import analyze as score_analyze, to_native
-            score_result = score_analyze(code, name)
-            score_result = to_native(score_result)
-        except Exception as e:
-            score_result = {'error': f'评分计算失败: {str(e)}'}
-
-        if json_mode:
-            # JSON输出模式：合并形态信号和评分
-            recent_signals = []
-            for s in signals[-5:]:
-                recent_signals.append({
-                    'date': s['date'].strftime('%Y-%m-%d') if hasattr(s['date'], 'strftime') else str(s['date']),
-                    'type': s['type'],
-                    'strength': s['strength'],
-                    'desc': s['desc'],
-                    'action': s['action']
-                })
-
-            # 统计各形态数量
-            pattern_stats = {}
-            for s in signals:
-                ptype = s['type']
-                pattern_stats[ptype] = pattern_stats.get(ptype, 0) + 1
-
-            result = {
-                'code': code,
-                'name': name,
-                'date': df['date'].iloc[-1].strftime('%Y-%m-%d') if hasattr(df['date'].iloc[-1], 'strftime') else str(df['date'].iloc[-1]),
-                'close': round(float(df['close'].iloc[-1]), 2),
-                'change_pct': round(float(df['pct_change'].iloc[-1]), 2) if pd.notna(df['pct_change'].iloc[-1]) else 0,
-                'total_signals': len(signals),
-                'recent_signals': recent_signals,
-                'pattern_stats': pattern_stats,
-                'scoring': score_result,
-                'version': '2.0-scanner'
-            }
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-        else:
-            # 生成HTML报告+K线图
-            os.makedirs(output_dir, exist_ok=True)
-            chart_path = os.path.join(output_dir, f'{code}_chart.png')
-            report_path = os.path.join(output_dir, f'{code}_report.html')
-            generate_chart(df, signals, name, code, chart_path)
-            generate_html_report(df, signals, chart_path, name, code, report_path)
-            print(f"\n完成！报告已保存至: {report_path}")
-            print(f"K线图已保存至: {chart_path}")
-            print(f"共检测到 {len(signals)} 个形态信号")
+    if len(sys.argv) >= 2:
+        csv_path = sys.argv[1]
+    if len(sys.argv) >= 3:
+        stock_name = sys.argv[2]
     else:
-        # 传统模式：传入CSV路径
-        csv_path = args[0] if len(args) >= 1 else os.path.join(base_dir, 'data', '600519.csv')
-        stock_name = args[1] if len(args) >= 2 else '贵州茅台'
-        stock_code = args[2] if len(args) >= 3 else '600519'
-        analyze_stock(csv_path, stock_name, stock_code, output_dir)
+        stock_name = '贵州茅台'
+    if len(sys.argv) >= 4:
+        stock_code = sys.argv[3]
+    else:
+        stock_code = '600519'
+
+    analyze_stock(csv_path, stock_name, stock_code, output_dir)

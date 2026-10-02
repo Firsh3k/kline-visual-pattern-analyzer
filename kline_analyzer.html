@@ -977,7 +977,9 @@ function matchPatterns(data, ind) {
     const rightLow = rightLows.length > 0 ? Math.min(...rightLows) : minLow;
     const rightIdx = minIdx + 3 + (rightLows.length > 0 ? rightLows.indexOf(rightLow) : 0);
     const neckline = Math.max(...highs.slice(0, minIdx));
-    const secondHigher = rightLow >= minLow * 0.97;
+    // 两个底价格相似度：差距≤5%才算标准双底（既有下限也有上限）
+    const bottomDiffPct = Math.abs(rightLow - minLow) / minLow * 100;
+    const secondHigher = rightLow >= minLow * 0.97 && bottomDiffPct <= 5.0;
     const breakNeck = curPrice > neckline;
     const nearNeck = Math.abs(curPrice - neckline) / neckline < 0.03;
     const volConfirm = ind.vma5[last] > ind.vma20[last] * 1.1;

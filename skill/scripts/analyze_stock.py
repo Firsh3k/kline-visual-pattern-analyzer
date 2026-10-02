@@ -570,7 +570,9 @@ def match_patterns(data, ind):
         right_low = min(right_lows) if right_lows else min_low
         right_idx = min_idx + 3 + (right_lows.index(right_low) if right_lows else 0)
         neckline = max(highs[:min_idx])
-        second_higher = right_low >= min_low * 0.97
+        # 两个底价格相似度：差距≤5%才算标准双底（既有下限也有上限）
+        bottom_diff_pct = abs(right_low - min_low) / min_low * 100
+        second_higher = right_low >= min_low * 0.97 and bottom_diff_pct <= 5.0
         break_neck = cur_price > neckline
         near_neck = abs(cur_price - neckline) / neckline < 0.03
         vol_confirm = (ind['vma5'][last] or 0) > (ind['vma20'][last] or 0) * 1.1
@@ -1074,11 +1076,11 @@ def calc_fake_signal_risk(data, ind, best_type, best_score, market_env, macd_div
             risk_score += 20
 
     # 3. MACD背离
-    if best_type == 'bull' and macd_div and macd_div.get('top_divergence', 0) > 30:
-        risks.append({'label': 'MACD顶背离', 'detail': f"价格创新高但MACD未创新高（背离度{macd_div['top_divergence']}%），说明上涨动能在衰减，主力可能在边拉边出货。顶背离后下跌概率约70%。应对：减仓或等回踩确认", 'weight': 15})
+    if best_type == 'bull' and macd_div and macd_div.get('topDivergence', 0) > 30:
+        risks.append({'label': 'MACD顶背离', 'detail': f"价格创新高但MACD未创新高（背离度{macd_div['topDivergence']}%），说明上涨动能在衰减，主力可能在边拉边出货。顶背离后下跌概率约70%。应对：减仓或等回踩确认", 'weight': 15})
         risk_score += 15
-    if best_type == 'bear' and macd_div and macd_div.get('bottom_divergence', 0) > 30:
-        risks.append({'label': 'MACD底背离', 'detail': f"价格创新低但MACD未创新低（背离度{macd_div['bottom_divergence']}%），说明下跌动能在衰竭，卖盘已接近枯竭。底背离后反弹概率约65%。应对：不急于割肉，等反弹确认", 'weight': 20})
+    if best_type == 'bear' and macd_div and macd_div.get('bottomDivergence', 0) > 30:
+        risks.append({'label': 'MACD底背离', 'detail': f"价格创新低但MACD未创新低（背离度{macd_div['bottomDivergence']}%），说明下跌动能在衰竭，卖盘已接近枯竭。底背离后反弹概率约65%。应对：不急于割肉，等反弹确认", 'weight': 20})
         risk_score += 20
 
     # 4. 远离均线
@@ -1087,11 +1089,11 @@ def calc_fake_signal_risk(data, ind, best_type, best_score, market_env, macd_div
         risk_score += 10
 
     # 5. 量价背离
-    if vol and vol.get('signal'):
-        if best_type == 'bull' and '价涨量缩' in vol['signal']:
+    if vol and vol.get('relation'):
+        if best_type == 'bull' and '价涨量缩' in vol['relation']:
             risks.append({'label': '价涨量缩', 'detail': '价格上涨但成交量持续萎缩，说明买盘力量在减弱，上涨缺乏资金支撑。价涨量缩是典型的见顶前兆，后续大概率回调。应对：减仓锁定利润', 'weight': 10})
             risk_score += 10
-        if best_type == 'bear' and '价跌量缩' in vol['signal']:
+        if best_type == 'bear' and '价跌量缩' in vol['relation']:
             risks.append({'label': '价跌量缩', 'detail': '价格下跌但成交量萎缩，说明卖盘力量在减弱，下跌缺乏恐慌盘。价跌量缩往往是下跌末期，主力可能在悄悄吸筹。应对：不急于割肉，观察是否企稳', 'weight': 15})
             risk_score += 15
 

@@ -56,104 +56,128 @@ def fetch_market_env():
                 'day': d['day'], 'open': float(d['open']), 'high': float(d['high']),
                 'low': float(d['low']), 'close': float(d['close']), 'volume': float(d['volume'])
             })
-        n = len(data)
-        last = n - 1
-        ind = calc_indicators(data)
-        cur_price = data[last]['close']
-        ma20 = ind['ma20'][last] or cur_price
-        ma60 = ind['ma60'][last] or cur_price
-
-        # 20日涨跌幅
-        price20ago = data[max(0, last - 20)]['close']
-        change20 = (cur_price - price20ago) / price20ago * 100
-
-        # 均线状态
-        above_ma20 = cur_price > ma20
-        above_ma60 = cur_price > ma60
-        ma20_up = ma20 > (ind['ma20'][max(0, last - 5)] or ma20)
-        ma60_up = ma60 > (ind['ma60'][max(0, last - 10)] or ma60)
-        ma_bull = (ind['ma5'][last] and ind['ma10'][last] and
-                   ind['ma5'][last] > ind['ma10'][last] > ma20 > ma60)
-        ma_bear = (ind['ma5'][last] and ind['ma10'][last] and
-                   ind['ma5'][last] < ind['ma10'][last] < ma20 < ma60)
-
-        # 波动率（20日振幅）
-        recent20 = data[n-20:]
-        high20 = max(d['high'] for d in recent20)
-        low20 = min(d['low'] for d in recent20)
-        volatility = (high20 - low20) / low20 * 100
-
-        # 评分（基础50，带明细）
-        score = 50
-        breakdown = [{'label': '基准分', 'value': '50'}]
-        if ma_bull:
-            score += 25; breakdown.append({'label': '均线多头', 'value': '+25'})
-        if ma_bear:
-            score -= 25; breakdown.append({'label': '均线空头', 'value': '-25'})
-        if above_ma20:
-            score += 8; breakdown.append({'label': '价格>MA20', 'value': '+8'})
-        else:
-            score -= 8; breakdown.append({'label': '价格<MA20', 'value': '-8'})
-        if above_ma60:
-            score += 8; breakdown.append({'label': '价格>MA60', 'value': '+8'})
-        else:
-            score -= 8; breakdown.append({'label': '价格<MA60', 'value': '-8'})
-        if ma20_up:
-            score += 5; breakdown.append({'label': 'MA20向上', 'value': '+5'})
-        else:
-            score -= 5; breakdown.append({'label': 'MA20向下', 'value': '-5'})
-        if ma60_up:
-            score += 4; breakdown.append({'label': 'MA60向上', 'value': '+4'})
-        else:
-            score -= 4; breakdown.append({'label': 'MA60向下', 'value': '-4'})
-        if change20 > 5:
-            score += 5; breakdown.append({'label': '20日涨>5%', 'value': '+5'})
-        if change20 < -5:
-            score -= 5; breakdown.append({'label': '20日跌>5%', 'value': '-5'})
-        score = max(0, min(100, score))
-
-        # 阶段判断
-        if score >= 75:
-            stage = '强势上升'
-            trend = 'bull'
-            advice = '大盘强势，个股突破形态成功率高，可积极操作'
-            impact = 10
-        elif score >= 60:
-            stage = '震荡偏强'
-            trend = 'bull'
-            advice = '大盘偏强，个股机会较多，注意选股质量'
-            impact = 5
-        elif score >= 45:
-            stage = '震荡整理'
-            trend = 'neutral'
-            advice = '大盘震荡，个股分化严重，精选个股，控制仓位'
-            impact = 0
-        elif score >= 30:
-            stage = '震荡偏弱'
-            trend = 'bear'
-            advice = '大盘偏弱，注意假突破，降低仓位，快进快出'
-            impact = -8
-        else:
-            stage = '弱势下降'
-            trend = 'bear'
-            advice = '大盘弱势，个股普跌，建议空仓或轻仓，不要抄底'
-            impact = -15
-
-        return {
-            'score': score, 'stage': stage, 'trend': trend,
-            'advice': advice, 'impact': impact,
-            'breakdown': breakdown,
-            'price': f'{cur_price:.2f}',
-            'change20': f'{change20:.2f}',
-            'ma20': f'{ma20:.2f}', 'ma60': f'{ma60:.2f}',
-            'volatility': f'{volatility:.1f}',
-            'aboveMa20': above_ma20, 'aboveMa60': above_ma60,
-            'maBull': ma_bull, 'maBear': ma_bear,
-            'dataLength': n,
-            'lastDate': data[last]['day'][:10]
-        }
+        return calc_market_env_from_data(data)
     except Exception:
         return None
+
+
+def calc_market_env_from_data(data):
+    """从已有K线数据计算大盘环境（回测模式用，与fetch_market_env逻辑一致）"""
+    if not data or len(data) < 60:
+        return None
+    n = len(data)
+    last = n - 1
+    ind = calc_indicators(data)
+    cur_price = data[last]['close']
+    ma20 = ind['ma20'][last] or cur_price
+    ma60 = ind['ma60'][last] or cur_price
+    price20ago = data[max(0, last - 20)]['close']
+    change20 = (cur_price - price20ago) / price20ago * 100
+    above_ma20 = cur_price > ma20
+    above_ma60 = cur_price > ma60
+    ma20_up = ma20 > (ind['ma20'][max(0, last - 5)] or ma20)
+    ma60_up = ma60 > (ind['ma60'][max(0, last - 10)] or ma60)
+    ma_bull = (ind['ma5'][last] and ind['ma10'][last] and
+               ind['ma5'][last] > ind['ma10'][last] > ma20 > ma60)
+    ma_bear = (ind['ma5'][last] and ind['ma10'][last] and
+               ind['ma5'][last] < ind['ma10'][last] < ma20 < ma60)
+    recent20 = data[n-20:]
+    high20 = max(d['high'] for d in recent20)
+    low20 = min(d['low'] for d in recent20)
+    volatility = (high20 - low20) / low20 * 100
+    score = 50
+    breakdown = [{'label': '基准分', 'value': '50'}]
+    if ma_bull: score += 25; breakdown.append({'label': '均线多头', 'value': '+25'})
+    if ma_bear: score -= 25; breakdown.append({'label': '均线空头', 'value': '-25'})
+    if above_ma20: score += 8; breakdown.append({'label': '价格>MA20', 'value': '+8'})
+    else: score -= 8; breakdown.append({'label': '价格<MA20', 'value': '-8'})
+    if above_ma60: score += 8; breakdown.append({'label': '价格>MA60', 'value': '+8'})
+    else: score -= 8; breakdown.append({'label': '价格<MA60', 'value': '-8'})
+    if ma20_up: score += 5; breakdown.append({'label': 'MA20向上', 'value': '+5'})
+    else: score -= 5; breakdown.append({'label': 'MA20向下', 'value': '-5'})
+    if ma60_up: score += 4; breakdown.append({'label': 'MA60向上', 'value': '+4'})
+    else: score -= 4; breakdown.append({'label': 'MA60向下', 'value': '-4'})
+    if change20 > 5: score += 5; breakdown.append({'label': '20日涨>5%', 'value': '+5'})
+    if change20 < -5: score -= 5; breakdown.append({'label': '20日跌>5%', 'value': '-5'})
+    score = max(0, min(100, score))
+    if score >= 75:
+        stage = '强势上升'; trend = 'bull'; advice = '大盘强势，个股突破形态成功率高，可积极操作'; impact = 10
+    elif score >= 60:
+        stage = '震荡偏强'; trend = 'bull'; advice = '大盘偏强，个股机会较多，注意选股质量'; impact = 5
+    elif score >= 45:
+        stage = '震荡整理'; trend = 'neutral'; advice = '大盘震荡，个股分化严重，精选个股，控制仓位'; impact = 0
+    elif score >= 30:
+        stage = '震荡偏弱'; trend = 'bear'; advice = '大盘偏弱，注意假突破，降低仓位，快进快出'; impact = -8
+    else:
+        stage = '弱势下降'; trend = 'bear'; advice = '大盘弱势，个股普跌，建议空仓或轻仓，不要抄底'; impact = -15
+
+    # 多周期涨跌幅
+    change5 = ((cur_price - data[max(0, last-5)]['close']) / data[max(0, last-5)]['close'] * 100) if n >= 6 else 0
+    change60 = ((cur_price - data[max(0, last-60)]['close']) / data[max(0, last-60)]['close'] * 100) if n >= 61 else 0
+    change120 = ((cur_price - data[max(0, last-120)]['close']) / data[max(0, last-120)]['close'] * 100) if n >= 121 else 0
+    change250 = ((cur_price - data[0]['close']) / data[0]['close'] * 100) if n >= 250 else 0
+
+    # 周线聚合（每5个交易日为一周）
+    weekly_data = []
+    for i in range(n - 1, 3, -5):
+        week = data[max(0, i-4):i+1]
+        weekly_data.insert(0, {
+            'date': week[-1]['day'], 'close': week[-1]['close'],
+            'high': max(d['high'] for d in week), 'low': min(d['low'] for d in week)
+        })
+    weekly_trend = '数据不足'; weekly_change4 = 0
+    if len(weekly_data) >= 10:
+        w_last = len(weekly_data) - 1
+        w_ma5 = sum(d['close'] for d in weekly_data[w_last-4:w_last+1]) / 5
+        w_ma10 = sum(d['close'] for d in weekly_data[w_last-9:w_last+1]) / 10
+        weekly_change4 = (weekly_data[w_last]['close'] - weekly_data[w_last-4]['close']) / weekly_data[w_last-4]['close'] * 100
+        if w_ma5 > w_ma10 and weekly_data[w_last]['close'] > w_ma5: weekly_trend = '周线多头'
+        elif w_ma5 < w_ma10 and weekly_data[w_last]['close'] < w_ma5: weekly_trend = '周线空头'
+        else: weekly_trend = '周线震荡'
+
+    # 月线聚合（每20个交易日为一月）
+    monthly_data = []
+    for i in range(n - 1, 19, -20):
+        month = data[max(0, i-19):i+1]
+        monthly_data.insert(0, {
+            'date': month[-1]['day'], 'close': month[-1]['close'],
+            'high': max(d['high'] for d in month), 'low': min(d['low'] for d in month)
+        })
+    monthly_trend = '数据不足'; monthly_change3 = 0
+    if len(monthly_data) >= 6:
+        m_last = len(monthly_data) - 1
+        m_ma3 = sum(d['close'] for d in monthly_data[m_last-2:m_last+1]) / 3
+        m_ma6 = sum(d['close'] for d in monthly_data[m_last-5:m_last+1]) / 6
+        monthly_change3 = (monthly_data[m_last]['close'] - monthly_data[m_last-3]['close']) / monthly_data[m_last-3]['close'] * 100
+        if m_ma3 > m_ma6 and monthly_data[m_last]['close'] > m_ma3: monthly_trend = '月线多头'
+        elif m_ma3 < m_ma6 and monthly_data[m_last]['close'] < m_ma3: monthly_trend = '月线空头'
+        else: monthly_trend = '月线震荡'
+
+    # 多周期共振
+    resonance = '无明显共振'; resonance_level = 0
+    if '多头' in weekly_trend and '多头' in monthly_trend: resonance = '周月线多头共振'; resonance_level = 2
+    elif '空头' in weekly_trend and '空头' in monthly_trend: resonance = '周月线空头共振'; resonance_level = -2
+    elif '多头' in weekly_trend or '多头' in monthly_trend: resonance = '偏多'; resonance_level = 1
+    elif '空头' in weekly_trend or '空头' in monthly_trend: resonance = '偏空'; resonance_level = -1
+
+    return {
+        'score': score, 'stage': stage, 'trend': trend,
+        'advice': advice, 'impact': impact,
+        'breakdown': breakdown,
+        'price': f'{cur_price:.2f}',
+        'change20': f'{change20:.2f}',
+        'change5': f'{change5:.2f}', 'change60': f'{change60:.2f}',
+        'change120': f'{change120:.2f}', 'change250': f'{change250:.2f}',
+        'ma20': f'{ma20:.2f}', 'ma60': f'{ma60:.2f}',
+        'volatility': f'{volatility:.1f}',
+        'aboveMa20': above_ma20, 'aboveMa60': above_ma60,
+        'maBull': ma_bull, 'maBear': ma_bear,
+        'weeklyTrend': weekly_trend, 'weeklyChange4': f'{weekly_change4:.2f}',
+        'monthlyTrend': monthly_trend, 'monthlyChange3': f'{monthly_change3:.2f}',
+        'resonance': resonance, 'resonanceLevel': resonance_level,
+        'dataLength': n,
+        'lastDate': data[last]['day'][:10]
+    }
 
 
 # ============ 指标计算（与网页端calcIndicators一致）============
@@ -546,7 +570,9 @@ def match_patterns(data, ind):
         right_low = min(right_lows) if right_lows else min_low
         right_idx = min_idx + 3 + (right_lows.index(right_low) if right_lows else 0)
         neckline = max(highs[:min_idx])
-        second_higher = right_low >= min_low * 0.97
+        # 两个底价格相似度：差距≤5%才算标准双底（既有下限也有上限）
+        bottom_diff_pct = abs(right_low - min_low) / min_low * 100
+        second_higher = right_low >= min_low * 0.97 and bottom_diff_pct <= 5.0
         break_neck = cur_price > neckline
         near_neck = abs(cur_price - neckline) / neckline < 0.03
         vol_confirm = (ind['vma5'][last] or 0) > (ind['vma20'][last] or 0) * 1.1
@@ -1018,6 +1044,81 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
     }
 
 
+def calc_fake_signal_risk(data, ind, best_type, best_score, market_env, macd_div, vol):
+    """假信号风险评估（与网页端calcFakeSignalRisk一致）"""
+    risks = []
+    risk_score = 0
+    n = len(data)
+    last = n - 1
+    cur_price = data[last]['close']
+    ma60 = ind['ma60'][last] or cur_price
+    dist_from_ma60 = abs(cur_price - ma60) / ma60 * 100
+
+    # 1. 成交量配合度
+    vma5 = ind.get('vma5', [None]*n)[last] or 0
+    vma20 = ind.get('vma20', [None]*n)[last] or 0
+    vol_ratio = vma5 / vma20 if vma20 > 0 else 1
+    if best_type == 'bull' and vol_ratio < 1.0:
+        risks.append({'label': '缩量突破', 'detail': f'5日均量/20日均量={vol_ratio:.2f}<1，突破时无量能配合。真突破需放量1.5倍以上，缩量突破70%是假的，主力可能在拉高出货。应对：等放量确认再进', 'weight': 20})
+        risk_score += 20
+    if best_type == 'bear' and vol_ratio < 1.0:
+        risks.append({'label': '缩量破位', 'detail': f'5日均量/20日均量={vol_ratio:.2f}<1，破位时无量能配合。真破位需放量下跌释放恐慌盘，缩量破位多为主力洗盘（空头陷阱），洗出散户后快速拉回。应对：等3天确认，不急于割肉', 'weight': 25})
+        risk_score += 25
+
+    # 2. 大盘环境适配度
+    if market_env:
+        env_score = market_env['score']
+        if best_type == 'bull' and env_score < 45:
+            risks.append({'label': '逆大盘买入', 'detail': f"大盘{market_env['stage']}({env_score}分)，熊市/弱势环境中个股突破成功率仅25-30%。大盘下跌时90%的股票会跟跌，逆势突破往往是诱多。应对：降低仓位或放弃，等大盘转好", 'weight': 20})
+            risk_score += 20
+        if best_type == 'bear' and env_score >= 60:
+            risks.append({'label': '逆大盘卖出', 'detail': f"大盘{market_env['stage']}({env_score}分)，牛市/偏强环境中个股破位可能是洗盘。大盘上涨时多数股票会跟涨，逆势破位往往是主力打压吸筹。应对：等3天确认，不急于卖出", 'weight': 20})
+            risk_score += 20
+
+    # 3. MACD背离
+    if best_type == 'bull' and macd_div and macd_div.get('topDivergence', 0) > 30:
+        risks.append({'label': 'MACD顶背离', 'detail': f"价格创新高但MACD未创新高（背离度{macd_div['topDivergence']}%），说明上涨动能在衰减，主力可能在边拉边出货。顶背离后下跌概率约70%。应对：减仓或等回踩确认", 'weight': 15})
+        risk_score += 15
+    if best_type == 'bear' and macd_div and macd_div.get('bottomDivergence', 0) > 30:
+        risks.append({'label': 'MACD底背离', 'detail': f"价格创新低但MACD未创新低（背离度{macd_div['bottomDivergence']}%），说明下跌动能在衰竭，卖盘已接近枯竭。底背离后反弹概率约65%。应对：不急于割肉，等反弹确认", 'weight': 20})
+        risk_score += 20
+
+    # 4. 远离均线
+    if dist_from_ma60 > 30:
+        risks.append({'label': '远离MA60', 'detail': f'当前价偏离MA60达{dist_from_ma60:.1f}%（>30%为极端）。股价像橡皮筋，偏离均线越远回归拉力越大，短期回调概率超80%。应对：等回踩均线再进，不追高', 'weight': 10})
+        risk_score += 10
+
+    # 5. 量价背离
+    if vol and vol.get('relation'):
+        if best_type == 'bull' and '价涨量缩' in vol['relation']:
+            risks.append({'label': '价涨量缩', 'detail': '价格上涨但成交量持续萎缩，说明买盘力量在减弱，上涨缺乏资金支撑。价涨量缩是典型的见顶前兆，后续大概率回调。应对：减仓锁定利润', 'weight': 10})
+            risk_score += 10
+        if best_type == 'bear' and '价跌量缩' in vol['relation']:
+            risks.append({'label': '价跌量缩', 'detail': '价格下跌但成交量萎缩，说明卖盘力量在减弱，下跌缺乏恐慌盘。价跌量缩往往是下跌末期，主力可能在悄悄吸筹。应对：不急于割肉，观察是否企稳', 'weight': 15})
+            risk_score += 15
+
+    # 6. 形态匹配度低
+    if best_score < 50:
+        risks.append({'label': '形态匹配度低', 'detail': f'最佳形态匹配度仅{best_score}分（<50分为不标准）。形态不标准意味着颈线/肩部/底部等关键点位不清晰，主力可能没有完成做图，后续走势不确定性大。应对：等形态更清晰再操作', 'weight': 10})
+        risk_score += 10
+
+    risk_score = min(100, risk_score)
+    if risk_score >= 50:
+        level = '高风险'; color = '#e74c3c'
+        advice = '⚠️ 疑似假信号！建议等待3天确认，或放弃此信号'
+    elif risk_score >= 30:
+        level = '中风险'; color = '#f39c12'
+        advice = '⚡ 有假信号嫌疑，建议轻仓试探，严格止损'
+    else:
+        level = '低风险'; color = '#2ecc71'
+        advice = '✅ 信号质量较高，可按计划操作，但仍需止损保护'
+
+    return {
+        'risk_score': risk_score, 'level': level, 'color': color, 'advice': advice,
+        'risks': risks, 'dist_from_ma60': f'{dist_from_ma60:.1f}', 'vol_ratio': f'{vol_ratio:.2f}'
+    }
+
+
 # ============ 推荐度评分（与网页端calcAttentionScore一致）============
 def calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_div, neck_confirm):
     n = len(data)
@@ -1171,8 +1272,10 @@ def calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_di
 
 
 # ============ 主分析函数 ============
-def analyze(code, name=None, market_env=None):
-    kline = fetch_kline(code)
+def analyze(code, name=None, market_env=None, backtest_date=None):
+    # 回测模式下拉取500天数据
+    datalen = 500 if backtest_date else 250
+    kline = fetch_kline(code, datalen=datalen)
     if not kline or len(kline) < 60:
         return {'error': f'K线数据不足（{len(kline) if kline else 0}根），无法分析'}
 
@@ -1186,12 +1289,60 @@ def analyze(code, name=None, market_env=None):
             'close': float(d['close']),
             'volume': float(d['volume'])
         })
+
+    # 回测模式：截取到回测日期为止的250天数据
+    backtest_info = None
+    if backtest_date:
+        cutoff = backtest_date
+        analysis_data = [d for d in data if d['day'][:10] <= cutoff]
+        if len(analysis_data) > 250:
+            analysis_data = analysis_data[-250:]
+        if len(analysis_data) < 60:
+            return {'error': f'回测日期{cutoff}数据不足（{len(analysis_data)}根），请选择更近的日期'}
+        # 后续走势验证数据
+        after_data = [d for d in data if d['day'][:10] > cutoff]
+        if after_data:
+            bt_close = analysis_data[-1]['close']
+            latest_close = after_data[-1]['close']
+            max_price = max(d['high'] for d in after_data)
+            min_price = min(d['low'] for d in after_data)
+            backtest_info = {
+                'date': cutoff,
+                'bt_close': bt_close,
+                'latest_close': latest_close,
+                'return_pct': round((latest_close - bt_close) / bt_close * 100, 2),
+                'max_price': max_price,
+                'max_pct': round((max_price / bt_close - 1) * 100, 2),
+                'min_price': min_price,
+                'min_pct': round((min_price / bt_close - 1) * 100, 2)
+            }
+        data = analysis_data
+
     n = len(data)
     last = n - 1
 
-    # 大盘环境
+    # 大盘环境（回测模式下也用截取后的数据）
     if market_env is None:
-        market_env = fetch_market_env()
+        if backtest_date:
+            # 直接拉取上证指数sh000001，避免被误判为平安银行
+            market_url = f'https://quotes.sina.cn/cn/api/jsonp_v2.php/callback/CN_MarketDataService.getKLineData?symbol=sh000001&scale=240&ma=no&datalen=500'
+            req = urllib.request.Request(market_url, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urllib.request.urlopen(req, timeout=10)
+            text = resp.read().decode('utf-8')
+            match = re.search(r'\((.*)\)', text, re.DOTALL)
+            market_raw = json.loads(match.group(1)) if match else []
+            market_data = []
+            for d in market_raw:
+                market_data.append({
+                    'day': d['day'], 'open': float(d['open']), 'high': float(d['high']),
+                    'low': float(d['low']), 'close': float(d['close']), 'volume': float(d['volume'])
+                })
+            market_cut = [d for d in market_data if d['day'][:10] <= backtest_date]
+            if len(market_cut) > 250:
+                market_cut = market_cut[-250:]
+            market_env = calc_market_env_from_data(market_cut)
+        else:
+            market_env = fetch_market_env()
 
     # 指标计算
     ind = calc_indicators(data)
@@ -1247,6 +1398,9 @@ def analyze(code, name=None, market_env=None):
     atr_stop = calc_atr_stop_loss(data, ind)
     weekly_data = extract_weekly_data(data)
     weekly_pattern = match_weekly_patterns(weekly_data)
+
+    # 假信号风险评估
+    fake_signal_risk = calc_fake_signal_risk(data, ind, best_type, best_detail['score'], market_env, macd_div, vol)
 
     # 相对强度
     relative_strength = {'score': 0, 'detail': '暂无大盘数据', 'level': '中性'}
@@ -1351,6 +1505,8 @@ def analyze(code, name=None, market_env=None):
         'pattern_completion': round(completion),
         'overall_confidence': overall_confidence,
         'market_env': market_env,
+        'backtest_info': backtest_info,
+        'fake_signal_risk': fake_signal_risk,
         'env_accuracy': env_accuracy,
         'bull_env_accuracy': bull_env_accuracy,
         'bear_env_accuracy': bear_env_accuracy,
@@ -1386,15 +1542,17 @@ def analyze(code, name=None, market_env=None):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('用法: python3 analyze_stock.py <股票代码> [股票名称]')
+        print('用法: python3 analyze_stock.py <股票代码> [股票名称] [回测日期]')
         print('示例: python3 analyze_stock.py 002436 兴森科技')
+        print('回测: python3 analyze_stock.py 688105 诺唯赞 2026-09-07')
         sys.exit(1)
 
     code = sys.argv[1].strip()
     name = sys.argv[2] if len(sys.argv) >= 3 else code
+    backtest_date = sys.argv[3] if len(sys.argv) >= 4 else None
 
     try:
-        result = analyze(code, name)
+        result = analyze(code, name, backtest_date=backtest_date)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         print(json.dumps({'code': code, 'name': name, 'error': str(e)}, ensure_ascii=False))

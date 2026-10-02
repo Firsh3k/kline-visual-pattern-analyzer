@@ -1438,6 +1438,46 @@ function analyzeVolume(data, ind) {
   return { volRatio: volRatio.toFixed(2), relation, volStatus, v5: Math.round(v5), v20: Math.round(v20) };
 }
 
+// ============ 周线/月线聚合（与Python端extract_weekly_data一致） ============
+// 重要：每根日K线只能属于一个周K线，新周第一天只进入新周，不会先写入旧周
+function extractWeeklyData(data) {
+  const weeklyData = [];
+  const n = data.length;
+  // 从最后一天开始，向前每5天聚合为一周
+  // i是当前周的最后一天索引，i每次减5，确保每根K线只属于一个周
+  for (let i = n - 1; i >= 4; i -= 5) {
+    const startIdx = Math.max(0, i - 4);
+    const week = data.slice(startIdx, i + 1);
+    weeklyData.unshift({
+      date: week[week.length - 1].date,
+      open: week[0].open,
+      high: Math.max(...week.map(d => d.high)),
+      low: Math.min(...week.map(d => d.low)),
+      close: week[week.length - 1].close,
+      volume: week.reduce((s, d) => s + d.volume, 0)
+    });
+  }
+  return weeklyData;
+}
+
+function extractMonthlyData(data) {
+  const monthlyData = [];
+  const n = data.length;
+  for (let i = n - 1; i >= 19; i -= 20) {
+    const startIdx = Math.max(0, i - 19);
+    const month = data.slice(startIdx, i + 1);
+    monthlyData.unshift({
+      date: month[month.length - 1].date,
+      open: month[0].open,
+      high: Math.max(...month.map(d => d.high)),
+      low: Math.min(...month.map(d => d.low)),
+      close: month[month.length - 1].close,
+      volume: month.reduce((s, d) => s + d.volume, 0)
+    });
+  }
+  return monthlyData;
+}
+
 // ============ 大盘环境判断 ============
 function analyzeMarketEnv(data) {
   if (!data || data.length < 60) return { score: 50, stage: '数据不足', trend: 'neutral', advice: '大盘数据不足，暂不评估', impact: 0 };
@@ -1515,19 +1555,8 @@ function analyzeMarketEnv(data) {
   const change120 = n >= 121 ? ((curPrice - data[last-120].close) / data[last-120].close * 100) : 0;
   const change250 = n >= 250 ? ((curPrice - data[0].close) / data[0].close * 100) : 0;
 
-  // 周线聚合（每5个交易日为一周）
-  const weeklyData = [];
-  for (let i = n - 1; i >= 4; i -= 5) {
-    const week = data.slice(Math.max(0, i-4), i+1);
-    weeklyData.unshift({
-      date: week[week.length-1].date,
-      open: week[0].open,
-      high: Math.max(...week.map(d => d.high)),
-      low: Math.min(...week.map(d => d.low)),
-      close: week[week.length-1].close,
-      volume: week.reduce((s, d) => s + d.volume, 0)
-    });
-  }
+  // 周线聚合（每5个交易日为一周，每根K线只属于一个周）
+  const weeklyData = extractWeeklyData(data);
   // 周线均线和趋势
   let weeklyTrend = '数据不足', weeklyMa5 = null, weeklyMa10 = null, weeklyChange4 = 0;
   if (weeklyData.length >= 10) {
@@ -1541,18 +1570,7 @@ function analyzeMarketEnv(data) {
   }
 
   // 月线聚合（每20个交易日为一月）
-  const monthlyData = [];
-  for (let i = n - 1; i >= 19; i -= 20) {
-    const month = data.slice(Math.max(0, i-19), i+1);
-    monthlyData.unshift({
-      date: month[month.length-1].date,
-      open: month[0].open,
-      high: Math.max(...month.map(d => d.high)),
-      low: Math.min(...month.map(d => d.low)),
-      close: month[month.length-1].close,
-      volume: month.reduce((s, d) => s + d.volume, 0)
-    });
-  }
+  const monthlyData = extractMonthlyData(data);
   // 月线均线和趋势
   let monthlyTrend = '数据不足', monthlyMa3 = null, monthlyMa6 = null, monthlyChange3 = 0;
   if (monthlyData.length >= 6) {
@@ -1700,12 +1718,12 @@ function calcFakeSignalRisk(data, ind, bestType, bestScore, marketEnv, macdDiv, 
   }
 
   // 5. 量价背离
-  if (vol && vol.signal) {
-    if (bestType === 'bull' && vol.signal.includes('价涨量缩')) {
+  if (vol && vol.relation) {
+    if (bestType === 'bull' && vol.relation.includes('价涨量缩')) {
       risks.push({ label: '价涨量缩', detail: '价格上涨但成交量持续萎缩，说明买盘力量在减弱，上涨缺乏资金支撑。价涨量缩是典型的见顶前兆，后续大概率回调。应对：减仓锁定利润', weight: 10 });
       riskScore += 10;
     }
-    if (bestType === 'bear' && vol.signal.includes('价跌量缩')) {
+    if (bestType === 'bear' && vol.relation.includes('价跌量缩')) {
       risks.push({ label: '价跌量缩', detail: '价格下跌但成交量萎缩，说明卖盘力量在减弱，下跌缺乏恐慌盘。价跌量缩往往是下跌末期，主力可能在悄悄吸筹。应对：不急于割肉，观察是否企稳', weight: 15 });
       riskScore += 15;
     }

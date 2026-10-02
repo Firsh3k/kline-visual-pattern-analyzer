@@ -172,6 +172,7 @@ def detect_double_bottom(df):
             continue
         closes = segment['close'].values
         lows = segment['low'].values
+        highs = segment['high'].values
 
         # 找局部最低点（用5日窗口）
         min_idx = np.argmin(lows)
@@ -189,15 +190,18 @@ def detect_double_bottom(df):
         second_low_idx = first_low_idx + 5 + second_low_idx_rel
         second_low = lows[second_low_idx]
 
-        # 第二个低点不低于第一个低点的97%（允许3%误差）
+        # 第二个低点不低于第一个低点的97%（允许3%误差），且两底差异不超过5%
         if second_low < first_low * 0.97:
+            continue
+        bottom_diff_pct = abs(second_low - first_low) / first_low * 100
+        if bottom_diff_pct > 5.0:
             continue
         # 两个低点之间至少间隔10天
         if second_low_idx - first_low_idx < 10:
             continue
 
-        # 颈线 = 两个低点之间的最高点
-        neckline = np.max(lows[first_low_idx:second_low_idx + 1])
+        # 颈线 = 两个低点之间的最高点（用highs而非lows）
+        neckline = np.max(highs[first_low_idx:second_low_idx + 1])
 
         # 当前价格突破颈线
         current_close = closes[-1]

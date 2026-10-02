@@ -61,6 +61,49 @@ def fetch_market_env():
         return None
 
 
+def extract_weekly_data(data):
+    """从日线数据聚合周线（每5个交易日为一周）
+    重要：每根日K线只能属于一个周K线，新周第一天只进入新周，不会先写入旧周
+    """
+    weekly_data = []
+    n = len(data)
+    # 从最后一天开始，向前每5天聚合为一周
+    # i是当前周的最后一天索引，week = data[i-4:i+1]
+    # i每次减5，确保每根K线只属于一个周
+    for i in range(n - 1, 3, -5):
+        start_idx = max(0, i - 4)
+        week = data[start_idx:i + 1]
+        weekly_data.insert(0, {
+            'date': week[-1]['day'],
+            'open': week[0]['open'],
+            'high': max(d['high'] for d in week),
+            'low': min(d['low'] for d in week),
+            'close': week[-1]['close'],
+            'volume': sum(d['volume'] for d in week)
+        })
+    return weekly_data
+
+
+def extract_monthly_data(data):
+    """从日线数据聚合月线（每20个交易日为一月）
+    每根日K线只能属于一个月K线
+    """
+    monthly_data = []
+    n = len(data)
+    for i in range(n - 1, 19, -20):
+        start_idx = max(0, i - 19)
+        month = data[start_idx:i + 1]
+        monthly_data.insert(0, {
+            'date': month[-1]['day'],
+            'open': month[0]['open'],
+            'high': max(d['high'] for d in month),
+            'low': min(d['low'] for d in month),
+            'close': month[-1]['close'],
+            'volume': sum(d['volume'] for d in month)
+        })
+    return monthly_data
+
+
 def calc_market_env_from_data(data):
     """从已有K线数据计算大盘环境（回测模式用，与fetch_market_env逻辑一致）"""
     if not data or len(data) < 60:
@@ -117,14 +160,8 @@ def calc_market_env_from_data(data):
     change120 = ((cur_price - data[max(0, last-120)]['close']) / data[max(0, last-120)]['close'] * 100) if n >= 121 else 0
     change250 = ((cur_price - data[0]['close']) / data[0]['close'] * 100) if n >= 250 else 0
 
-    # 周线聚合（每5个交易日为一周）
-    weekly_data = []
-    for i in range(n - 1, 3, -5):
-        week = data[max(0, i-4):i+1]
-        weekly_data.insert(0, {
-            'date': week[-1]['day'], 'close': week[-1]['close'],
-            'high': max(d['high'] for d in week), 'low': min(d['low'] for d in week)
-        })
+    # 周线聚合（每5个交易日为一周，每根K线只属于一个周）
+    weekly_data = extract_weekly_data(data)
     weekly_trend = '数据不足'; weekly_change4 = 0
     if len(weekly_data) >= 10:
         w_last = len(weekly_data) - 1
@@ -136,13 +173,7 @@ def calc_market_env_from_data(data):
         else: weekly_trend = '周线震荡'
 
     # 月线聚合（每20个交易日为一月）
-    monthly_data = []
-    for i in range(n - 1, 19, -20):
-        month = data[max(0, i-19):i+1]
-        monthly_data.insert(0, {
-            'date': month[-1]['day'], 'close': month[-1]['close'],
-            'high': max(d['high'] for d in month), 'low': min(d['low'] for d in month)
-        })
+    monthly_data = extract_monthly_data(data)
     monthly_trend = '数据不足'; monthly_change3 = 0
     if len(monthly_data) >= 6:
         m_last = len(monthly_data) - 1
@@ -319,11 +350,11 @@ def analyze_volume(data, ind):
     if price_up and vol_up:
         relation = '量价齐升'
     elif price_up and not vol_up:
-        relation = '价涨量缩'
+        relation = '价涨量缩（上涨乏力，警惕）'
     elif not price_up and vol_up:
-        relation = '价跌量增'
+        relation = '价跌量增（抛压较重）'
     else:
-        relation = '量价齐缩'
+        relation = '价跌量缩（正常回调）'
 
     return {
         'volStatus': vol_status, 'relation': relation,

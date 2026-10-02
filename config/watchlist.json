@@ -1,19 +1,10 @@
 {
   "version": "1.0",
   "exportDate": "2026-10-02",
-  "exportTime": "2026-10-02 18:00:00",
-  "description": "K线形态分析工具 - 自选股云配置。在此文件中维护自选股列表，其他设备通过raw链接导入即可同步。开启页面自动同步后，增减个股会自动更新此文件。",
+  "exportTime": "2026/10/2 12:51:02",
+  "description": "K线形态分析工具 - 自选股云配置（自动同步）",
   "watchlist": [
-    "002436",
-    "688105",
-    "603127",
-    "301080",
-    "688099",
-    "600383",
-    "002487",
-    "301047",
-    "300725",
-    "603538"
+    "603068"
   ],
   "customSectors": [],
   "settings": {
@@ -21,7 +12,7 @@
     "scanSignalType": "bull"
   },
   "stats": {
-    "watchlistCount": 10,
+    "watchlistCount": 1,
     "customSectorsCount": 0
   }
 }

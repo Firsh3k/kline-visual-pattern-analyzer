@@ -1449,14 +1449,89 @@ function analyzeMarketEnv(data) {
     impact = -15;
   }
   
+  // 多周期涨跌幅
+  const change5 = n >= 6 ? ((curPrice - data[last-5].close) / data[last-5].close * 100) : 0;
+  const change60 = n >= 61 ? ((curPrice - data[last-60].close) / data[last-60].close * 100) : 0;
+  const change120 = n >= 121 ? ((curPrice - data[last-120].close) / data[last-120].close * 100) : 0;
+  const change250 = n >= 250 ? ((curPrice - data[0].close) / data[0].close * 100) : 0;
+
+  // 周线聚合（每5个交易日为一周）
+  const weeklyData = [];
+  for (let i = n - 1; i >= 4; i -= 5) {
+    const week = data.slice(Math.max(0, i-4), i+1);
+    weeklyData.unshift({
+      date: week[week.length-1].date,
+      open: week[0].open,
+      high: Math.max(...week.map(d => d.high)),
+      low: Math.min(...week.map(d => d.low)),
+      close: week[week.length-1].close,
+      volume: week.reduce((s, d) => s + d.volume, 0)
+    });
+  }
+  // 周线均线和趋势
+  let weeklyTrend = '数据不足', weeklyMa5 = null, weeklyMa10 = null, weeklyChange4 = 0;
+  if (weeklyData.length >= 10) {
+    const wLast = weeklyData.length - 1;
+    weeklyMa5 = weeklyData.slice(wLast-4, wLast+1).reduce((s, d) => s + d.close, 0) / 5;
+    weeklyMa10 = weeklyData.slice(wLast-9, wLast+1).reduce((s, d) => s + d.close, 0) / 10;
+    weeklyChange4 = ((weeklyData[wLast].close - weeklyData[wLast-4].close) / weeklyData[wLast-4].close * 100);
+    if (weeklyMa5 > weeklyMa10 && weeklyData[wLast].close > weeklyMa5) weeklyTrend = '周线多头';
+    else if (weeklyMa5 < weeklyMa10 && weeklyData[wLast].close < weeklyMa5) weeklyTrend = '周线空头';
+    else weeklyTrend = '周线震荡';
+  }
+
+  // 月线聚合（每20个交易日为一月）
+  const monthlyData = [];
+  for (let i = n - 1; i >= 19; i -= 20) {
+    const month = data.slice(Math.max(0, i-19), i+1);
+    monthlyData.unshift({
+      date: month[month.length-1].date,
+      open: month[0].open,
+      high: Math.max(...month.map(d => d.high)),
+      low: Math.min(...month.map(d => d.low)),
+      close: month[month.length-1].close,
+      volume: month.reduce((s, d) => s + d.volume, 0)
+    });
+  }
+  // 月线均线和趋势
+  let monthlyTrend = '数据不足', monthlyMa3 = null, monthlyMa6 = null, monthlyChange3 = 0;
+  if (monthlyData.length >= 6) {
+    const mLast = monthlyData.length - 1;
+    monthlyMa3 = monthlyData.slice(mLast-2, mLast+1).reduce((s, d) => s + d.close, 0) / 3;
+    monthlyMa6 = monthlyData.slice(mLast-5, mLast+1).reduce((s, d) => s + d.close, 0) / 6;
+    monthlyChange3 = ((monthlyData[mLast].close - monthlyData[mLast-3].close) / monthlyData[mLast-3].close * 100);
+    if (monthlyMa3 > monthlyMa6 && monthlyData[mLast].close > monthlyMa3) monthlyTrend = '月线多头';
+    else if (monthlyMa3 < monthlyMa6 && monthlyData[mLast].close < monthlyMa3) monthlyTrend = '月线空头';
+    else monthlyTrend = '月线震荡';
+  }
+
+  // 多周期共振判断
+  let resonance = '无明显共振', resonanceLevel = 0;
+  if (weeklyTrend.includes('多头') && monthlyTrend.includes('多头')) {
+    resonance = '周月线多头共振'; resonanceLevel = 2;
+  } else if (weeklyTrend.includes('空头') && monthlyTrend.includes('空头')) {
+    resonance = '周月线空头共振'; resonanceLevel = -2;
+  } else if (weeklyTrend.includes('多头') || monthlyTrend.includes('多头')) {
+    resonance = '偏多'; resonanceLevel = 1;
+  } else if (weeklyTrend.includes('空头') || monthlyTrend.includes('空头')) {
+    resonance = '偏空'; resonanceLevel = -1;
+  }
+
   return {
     score, stage, trend, advice, impact, breakdown,
     price: curPrice.toFixed(2),
     change20: change20.toFixed(2),
+    change5: change5.toFixed(2),
+    change60: change60.toFixed(2),
+    change120: change120.toFixed(2),
+    change250: change250.toFixed(2),
     ma20: ma20.toFixed(2),
     ma60: ma60.toFixed(2),
     volatility: volatility.toFixed(1),
     aboveMa20, aboveMa60, maBull, maBear,
+    weeklyTrend, weeklyChange4: weeklyChange4.toFixed(2),
+    monthlyTrend, monthlyChange3: monthlyChange3.toFixed(2),
+    resonance, resonanceLevel,
     dataLength: data.length,
     lastDate: data[last].date
   };
@@ -2013,15 +2088,16 @@ async function doAnalyze() {
     let backtestInfo = null;
     if (isBacktest && backtestDate) {
       const cutoff = backtestDate;
-      analysisData = result.data.filter(d => d.date <= cutoff);
+      // 确保只比较日期部分（前10个字符），避免时间格式差异导致过滤错误
+      analysisData = result.data.filter(d => (d.date || '').substring(0, 10) <= cutoff);
       if (analysisData.length > 250) analysisData = analysisData.slice(-250);
       if (marketData) {
-        marketAnalysisData = marketData.filter(d => d.date <= cutoff);
+        marketAnalysisData = marketData.filter(d => (d.date || '').substring(0, 10) <= cutoff);
         if (marketAnalysisData.length > 250) marketAnalysisData = marketAnalysisData.slice(-250);
       }
       if (analysisData.length < 60) throw new Error('回测日期数据不足，请选择更近的日期');
       // 后续走势验证数据
-      const afterData = result.data.filter(d => d.date > cutoff);
+      const afterData = result.data.filter(d => (d.date || '').substring(0, 10) > cutoff);
       if (afterData.length > 0) {
         const btClose = analysisData[analysisData.length - 1].close;
         const latestClose = afterData[afterData.length - 1].close;
@@ -2456,7 +2532,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
           ${marketEnv ? `<span style="font-size:20px;font-weight:800;color:${marketEnv.score>=60?'#e74c3c':marketEnv.score>=45?'#f39c12':'#2ecc71'}">${marketEnv.score}分</span>` : '<span style="font-size:13px;color:#556677;">暂无</span>'}
         </div>
         ${marketEnv ? `
-          <div style="font-size:15px;font-weight:700;color:${marketEnv.trend==='bull'?'#e74c3c':marketEnv.trend==='bear'?'#2ecc71':'#f39c12'};margin-bottom:6px;">${marketEnv.stage}</div>
+          <div style="font-size:15px;font-weight:700;color:${marketEnv.trend==='bull'?'#e74c3c':marketEnv.trend==='bear'?'#2ecc71':'#f39c12'};margin-bottom:6px;">${marketEnv.stage} ${backtestInfo ? '<span style="font-size:11px;background:#f39c12;color:#000;padding:1px 6px;border-radius:8px;margin-left:6px;">回测 '+backtestInfo.date+'</span>' : ''}</div>
           <div style="font-size:12px;color:#aabbcc;line-height:1.6;margin-bottom:8px;">${marketEnv.advice}</div>
           <div style="display:flex;gap:10px;font-size:11px;color:#8899aa;flex-wrap:wrap;">
             <span>上证: <b style="color:#f0f0f0">${marketEnv.price}</b></span>
@@ -2464,6 +2540,44 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
             <span>MA20: <b style="color:#f0f0f0">${marketEnv.ma20}</b></span>
             <span>MA60: <b style="color:#f0f0f0">${marketEnv.ma60}</b></span>
           </div>
+          <!-- 多周期涨跌幅 -->
+          <div style="margin-top:8px;display:grid;grid-template-columns:repeat(5,1fr);gap:4px;text-align:center;">
+            <div style="background:#1a2332;border-radius:4px;padding:4px;">
+              <div style="font-size:9px;color:#556677;">5日</div>
+              <div style="font-size:12px;font-weight:700;color:${parseFloat(marketEnv.change5)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(marketEnv.change5)>=0?'+':''}${marketEnv.change5}%</div>
+            </div>
+            <div style="background:#1a2332;border-radius:4px;padding:4px;">
+              <div style="font-size:9px;color:#556677;">20日</div>
+              <div style="font-size:12px;font-weight:700;color:${parseFloat(marketEnv.change20)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(marketEnv.change20)>=0?'+':''}${marketEnv.change20}%</div>
+            </div>
+            <div style="background:#1a2332;border-radius:4px;padding:4px;">
+              <div style="font-size:9px;color:#556677;">60日</div>
+              <div style="font-size:12px;font-weight:700;color:${parseFloat(marketEnv.change60)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(marketEnv.change60)>=0?'+':''}${marketEnv.change60}%</div>
+            </div>
+            <div style="background:#1a2332;border-radius:4px;padding:4px;">
+              <div style="font-size:9px;color:#556677;">120日</div>
+              <div style="font-size:12px;font-weight:700;color:${parseFloat(marketEnv.change120)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(marketEnv.change120)>=0?'+':''}${marketEnv.change120}%</div>
+            </div>
+            <div style="background:#1a2332;border-radius:4px;padding:4px;">
+              <div style="font-size:9px;color:#556677;">250日</div>
+              <div style="font-size:12px;font-weight:700;color:${parseFloat(marketEnv.change250)>=0?'#e74c3c':'#2ecc71'};">${parseFloat(marketEnv.change250)>=0?'+':''}${marketEnv.change250}%</div>
+            </div>
+          </div>
+          <!-- 周线/月线趋势 -->
+          <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <div style="background:#1a2332;border-radius:6px;padding:6px 8px;">
+              <div style="font-size:10px;color:#556677;">周线趋势</div>
+              <div style="font-size:12px;font-weight:700;color:${marketEnv.weeklyTrend.includes('多头')?'#e74c3c':marketEnv.weeklyTrend.includes('空头')?'#2ecc71':'#f39c12'};">${marketEnv.weeklyTrend}</div>
+              <div style="font-size:10px;color:#8899aa;">近4周: ${parseFloat(marketEnv.weeklyChange4)>=0?'+':''}${marketEnv.weeklyChange4}%</div>
+            </div>
+            <div style="background:#1a2332;border-radius:6px;padding:6px 8px;">
+              <div style="font-size:10px;color:#556677;">月线趋势</div>
+              <div style="font-size:12px;font-weight:700;color:${marketEnv.monthlyTrend.includes('多头')?'#e74c3c':marketEnv.monthlyTrend.includes('空头')?'#2ecc71':'#f39c12'};">${marketEnv.monthlyTrend}</div>
+              <div style="font-size:10px;color:#8899aa;">近3月: ${parseFloat(marketEnv.monthlyChange3)>=0?'+':''}${marketEnv.monthlyChange3}%</div>
+            </div>
+          </div>
+          <!-- 多周期共振 -->
+          ${marketEnv.resonanceLevel !== 0 ? `<div style="margin-top:6px;font-size:11px;padding:4px 8px;border-radius:4px;background:${marketEnv.resonanceLevel>0?'rgba(231,76,60,0.1)':'rgba(46,204,113,0.1)'};color:${marketEnv.resonanceLevel>0?'#e74c3c':'#2ecc71'};">🔗 多周期共振：${marketEnv.resonance}</div>` : ''}
           <div style="margin-top:8px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${marketEnv.score}%;background:${marketEnv.score>=60?'#e74c3c':marketEnv.score>=45?'#f39c12':'#2ecc71'};border-radius:2px;"></div></div>
           ${marketEnv.breakdown ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;">${marketEnv.breakdown.map(b => `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#1a2332;color:${String(b.value).startsWith('+')?'#e74c3c':String(b.value).startsWith('-')?'#2ecc71':'#8899aa'};">${b.label} ${b.value}</span>`).join('')}</div>` : ''}
           ${marketEnv.dataLength ? `<div style="margin-top:6px;font-size:10px;color:#556677;">数据: ${marketEnv.dataLength}根K线, 最新: ${marketEnv.lastDate}</div>` : ''}

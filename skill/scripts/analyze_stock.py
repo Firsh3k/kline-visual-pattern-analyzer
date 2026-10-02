@@ -56,102 +56,7 @@ def fetch_market_env():
                 'day': d['day'], 'open': float(d['open']), 'high': float(d['high']),
                 'low': float(d['low']), 'close': float(d['close']), 'volume': float(d['volume'])
             })
-        n = len(data)
-        last = n - 1
-        ind = calc_indicators(data)
-        cur_price = data[last]['close']
-        ma20 = ind['ma20'][last] or cur_price
-        ma60 = ind['ma60'][last] or cur_price
-
-        # 20日涨跌幅
-        price20ago = data[max(0, last - 20)]['close']
-        change20 = (cur_price - price20ago) / price20ago * 100
-
-        # 均线状态
-        above_ma20 = cur_price > ma20
-        above_ma60 = cur_price > ma60
-        ma20_up = ma20 > (ind['ma20'][max(0, last - 5)] or ma20)
-        ma60_up = ma60 > (ind['ma60'][max(0, last - 10)] or ma60)
-        ma_bull = (ind['ma5'][last] and ind['ma10'][last] and
-                   ind['ma5'][last] > ind['ma10'][last] > ma20 > ma60)
-        ma_bear = (ind['ma5'][last] and ind['ma10'][last] and
-                   ind['ma5'][last] < ind['ma10'][last] < ma20 < ma60)
-
-        # 波动率（20日振幅）
-        recent20 = data[n-20:]
-        high20 = max(d['high'] for d in recent20)
-        low20 = min(d['low'] for d in recent20)
-        volatility = (high20 - low20) / low20 * 100
-
-        # 评分（基础50，带明细）
-        score = 50
-        breakdown = [{'label': '基准分', 'value': '50'}]
-        if ma_bull:
-            score += 25; breakdown.append({'label': '均线多头', 'value': '+25'})
-        if ma_bear:
-            score -= 25; breakdown.append({'label': '均线空头', 'value': '-25'})
-        if above_ma20:
-            score += 8; breakdown.append({'label': '价格>MA20', 'value': '+8'})
-        else:
-            score -= 8; breakdown.append({'label': '价格<MA20', 'value': '-8'})
-        if above_ma60:
-            score += 8; breakdown.append({'label': '价格>MA60', 'value': '+8'})
-        else:
-            score -= 8; breakdown.append({'label': '价格<MA60', 'value': '-8'})
-        if ma20_up:
-            score += 5; breakdown.append({'label': 'MA20向上', 'value': '+5'})
-        else:
-            score -= 5; breakdown.append({'label': 'MA20向下', 'value': '-5'})
-        if ma60_up:
-            score += 4; breakdown.append({'label': 'MA60向上', 'value': '+4'})
-        else:
-            score -= 4; breakdown.append({'label': 'MA60向下', 'value': '-4'})
-        if change20 > 5:
-            score += 5; breakdown.append({'label': '20日涨>5%', 'value': '+5'})
-        if change20 < -5:
-            score -= 5; breakdown.append({'label': '20日跌>5%', 'value': '-5'})
-        score = max(0, min(100, score))
-
-        # 阶段判断
-        if score >= 75:
-            stage = '强势上升'
-            trend = 'bull'
-            advice = '大盘强势，个股突破形态成功率高，可积极操作'
-            impact = 10
-        elif score >= 60:
-            stage = '震荡偏强'
-            trend = 'bull'
-            advice = '大盘偏强，个股机会较多，注意选股质量'
-            impact = 5
-        elif score >= 45:
-            stage = '震荡整理'
-            trend = 'neutral'
-            advice = '大盘震荡，个股分化严重，精选个股，控制仓位'
-            impact = 0
-        elif score >= 30:
-            stage = '震荡偏弱'
-            trend = 'bear'
-            advice = '大盘偏弱，注意假突破，降低仓位，快进快出'
-            impact = -8
-        else:
-            stage = '弱势下降'
-            trend = 'bear'
-            advice = '大盘弱势，个股普跌，建议空仓或轻仓，不要抄底'
-            impact = -15
-
-        return {
-            'score': score, 'stage': stage, 'trend': trend,
-            'advice': advice, 'impact': impact,
-            'breakdown': breakdown,
-            'price': f'{cur_price:.2f}',
-            'change20': f'{change20:.2f}',
-            'ma20': f'{ma20:.2f}', 'ma60': f'{ma60:.2f}',
-            'volatility': f'{volatility:.1f}',
-            'aboveMa20': above_ma20, 'aboveMa60': above_ma60,
-            'maBull': ma_bull, 'maBear': ma_bear,
-            'dataLength': n,
-            'lastDate': data[last]['day'][:10]
-        }
+        return calc_market_env_from_data(data)
     except Exception:
         return None
 
@@ -205,16 +110,71 @@ def calc_market_env_from_data(data):
         stage = '震荡偏弱'; trend = 'bear'; advice = '大盘偏弱，注意假突破，降低仓位，快进快出'; impact = -8
     else:
         stage = '弱势下降'; trend = 'bear'; advice = '大盘弱势，个股普跌，建议空仓或轻仓，不要抄底'; impact = -15
+
+    # 多周期涨跌幅
+    change5 = ((cur_price - data[max(0, last-5)]['close']) / data[max(0, last-5)]['close'] * 100) if n >= 6 else 0
+    change60 = ((cur_price - data[max(0, last-60)]['close']) / data[max(0, last-60)]['close'] * 100) if n >= 61 else 0
+    change120 = ((cur_price - data[max(0, last-120)]['close']) / data[max(0, last-120)]['close'] * 100) if n >= 121 else 0
+    change250 = ((cur_price - data[0]['close']) / data[0]['close'] * 100) if n >= 250 else 0
+
+    # 周线聚合（每5个交易日为一周）
+    weekly_data = []
+    for i in range(n - 1, 3, -5):
+        week = data[max(0, i-4):i+1]
+        weekly_data.insert(0, {
+            'date': week[-1]['day'], 'close': week[-1]['close'],
+            'high': max(d['high'] for d in week), 'low': min(d['low'] for d in week)
+        })
+    weekly_trend = '数据不足'; weekly_change4 = 0
+    if len(weekly_data) >= 10:
+        w_last = len(weekly_data) - 1
+        w_ma5 = sum(d['close'] for d in weekly_data[w_last-4:w_last+1]) / 5
+        w_ma10 = sum(d['close'] for d in weekly_data[w_last-9:w_last+1]) / 10
+        weekly_change4 = (weekly_data[w_last]['close'] - weekly_data[w_last-4]['close']) / weekly_data[w_last-4]['close'] * 100
+        if w_ma5 > w_ma10 and weekly_data[w_last]['close'] > w_ma5: weekly_trend = '周线多头'
+        elif w_ma5 < w_ma10 and weekly_data[w_last]['close'] < w_ma5: weekly_trend = '周线空头'
+        else: weekly_trend = '周线震荡'
+
+    # 月线聚合（每20个交易日为一月）
+    monthly_data = []
+    for i in range(n - 1, 19, -20):
+        month = data[max(0, i-19):i+1]
+        monthly_data.insert(0, {
+            'date': month[-1]['day'], 'close': month[-1]['close'],
+            'high': max(d['high'] for d in month), 'low': min(d['low'] for d in month)
+        })
+    monthly_trend = '数据不足'; monthly_change3 = 0
+    if len(monthly_data) >= 6:
+        m_last = len(monthly_data) - 1
+        m_ma3 = sum(d['close'] for d in monthly_data[m_last-2:m_last+1]) / 3
+        m_ma6 = sum(d['close'] for d in monthly_data[m_last-5:m_last+1]) / 6
+        monthly_change3 = (monthly_data[m_last]['close'] - monthly_data[m_last-3]['close']) / monthly_data[m_last-3]['close'] * 100
+        if m_ma3 > m_ma6 and monthly_data[m_last]['close'] > m_ma3: monthly_trend = '月线多头'
+        elif m_ma3 < m_ma6 and monthly_data[m_last]['close'] < m_ma3: monthly_trend = '月线空头'
+        else: monthly_trend = '月线震荡'
+
+    # 多周期共振
+    resonance = '无明显共振'; resonance_level = 0
+    if '多头' in weekly_trend and '多头' in monthly_trend: resonance = '周月线多头共振'; resonance_level = 2
+    elif '空头' in weekly_trend and '空头' in monthly_trend: resonance = '周月线空头共振'; resonance_level = -2
+    elif '多头' in weekly_trend or '多头' in monthly_trend: resonance = '偏多'; resonance_level = 1
+    elif '空头' in weekly_trend or '空头' in monthly_trend: resonance = '偏空'; resonance_level = -1
+
     return {
         'score': score, 'stage': stage, 'trend': trend,
         'advice': advice, 'impact': impact,
         'breakdown': breakdown,
         'price': f'{cur_price:.2f}',
         'change20': f'{change20:.2f}',
+        'change5': f'{change5:.2f}', 'change60': f'{change60:.2f}',
+        'change120': f'{change120:.2f}', 'change250': f'{change250:.2f}',
         'ma20': f'{ma20:.2f}', 'ma60': f'{ma60:.2f}',
         'volatility': f'{volatility:.1f}',
         'aboveMa20': above_ma20, 'aboveMa60': above_ma60,
         'maBull': ma_bull, 'maBear': ma_bear,
+        'weeklyTrend': weekly_trend, 'weeklyChange4': f'{weekly_change4:.2f}',
+        'monthlyTrend': monthly_trend, 'monthlyChange3': f'{monthly_change3:.2f}',
+        'resonance': resonance, 'resonanceLevel': resonance_level,
         'dataLength': n,
         'lastDate': data[last]['day'][:10]
     }

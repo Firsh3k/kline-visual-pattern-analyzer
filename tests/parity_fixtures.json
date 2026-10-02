@@ -88,6 +88,51 @@
         "m_top_neckline_equals": 15.0,
         "m_top_stage_contains": "跌破"
       }
+    },
+    {
+      "id": "hs_bottom_sloped_neckline",
+      "name": "头肩底倾斜颈线（向上倾斜）",
+      "description": "BUG-011/#13专项：构造头肩底，左颈线点价格低于右颈线点（向上倾斜颈线），验证动态颈线值基于全局索引斜率计算正确",
+      "data_generator": "hs_bottom_sloped",
+      "params": {
+        "start_price": 15.0,
+        "left_shoulder": 12.0,
+        "head": 8.0,
+        "right_shoulder": 11.5,
+        "neck_left_price": 13.0,
+        "neck_right_price": 14.0,
+        "breakout_price": 14.5,
+        "days": 100
+      },
+      "expected": {
+        "hs_bottom_score_min": 50,
+        "hs_bottom_neckline_sloped": true,
+        "hs_bottom_breakout_state_in": ["BREAKOUT_DAY", "POST_BREAK", "RETEST"],
+        "note": "倾斜颈线：左颈线13.0 < 右颈线14.0，动态颈线值应随时间递增，验证local/global index无混用"
+      }
+    },
+    {
+      "id": "hs_bottom_failed_break",
+      "name": "头肩底突破失败（FAILED_BREAK）",
+      "description": "BUG-014专项：构造头肩底突破后又跌破颈线超过3日，验证FAILED_BREAK状态识别和扣分逻辑",
+      "data_generator": "hs_bottom_failed",
+      "params": {
+        "start_price": 15.0,
+        "left_shoulder": 12.0,
+        "head": 8.0,
+        "right_shoulder": 11.5,
+        "neckline": 13.0,
+        "breakout_price": 13.5,
+        "fail_price": 12.0,
+        "fail_days": 5,
+        "days": 100
+      },
+      "expected": {
+        "hs_bottom_breakout_state": "FAILED_BREAK",
+        "hs_bottom_score_penalty": true,
+        "hs_bottom_stage_contains": "突破失败",
+        "note": "突破后跌破颈线超过3日，应识别为FAILED_BREAK，扣30分，stage包含'突破失败'"
+      }
     }
   ],
   "comparison_fields": [

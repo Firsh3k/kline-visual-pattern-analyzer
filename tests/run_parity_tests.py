@@ -142,7 +142,97 @@ GENERATORS = {
     'linear_downtrend': generate_linear_downtrend,
     'w_bottom_pattern': generate_w_bottom,
     'm_top_pattern': generate_m_top,
+    'hs_bottom_sloped': 'hs_bottom_sloped',  # 占位，下面定义
+    'hs_bottom_failed': 'hs_bottom_failed',  # 占位，下面定义
 }
+
+
+def generate_hs_bottom_sloped(params):
+    """生成头肩底倾斜颈线数据（向上倾斜）"""
+    days = params['days']
+    data = []
+    # 阶段1: 下跌到左肩 (0-20%)
+    p1 = int(days * 0.20)
+    for i in range(p1):
+        t = i / p1
+        close_p = params['start_price'] + (params['left_shoulder'] - params['start_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段2: 下跌到头部 (20%-40%)
+    p2 = int(days * 0.20)
+    for i in range(p2):
+        t = i / p2
+        close_p = params['left_shoulder'] + (params['head'] - params['left_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段3: 反弹到左颈线点 (40%-50%)
+    p3 = int(days * 0.10)
+    for i in range(p3):
+        t = i / p3
+        close_p = params['head'] + (params['neck_left_price'] - params['head']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段4: 下跌到右肩 (50%-70%)
+    p4 = int(days * 0.20)
+    for i in range(p4):
+        t = i / p4
+        close_p = params['neck_left_price'] + (params['right_shoulder'] - params['neck_left_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段5: 上涨到右颈线点（更高，形成向上倾斜颈线）(70%-80%)
+    p5 = int(days * 0.10)
+    for i in range(p5):
+        t = i / p5
+        close_p = params['right_shoulder'] + (params['neck_right_price'] - params['right_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段6: 突破 (80%-100%)
+    p6 = days - len(data)
+    for i in range(p6):
+        t = i / p6
+        close_p = params['neck_right_price'] + (params['breakout_price'] - params['neck_right_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    return data
+
+
+def generate_hs_bottom_failed(params):
+    """生成头肩底突破失败数据（突破后又跌破颈线超过3日）"""
+    days = params['days']
+    data = []
+    # 阶段1-4: 标准头肩底构建 (0-70%)
+    p1 = int(days * 0.15)
+    for i in range(p1):
+        t = i / p1
+        close_p = params['start_price'] + (params['left_shoulder'] - params['start_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p2 = int(days * 0.15)
+    for i in range(p2):
+        t = i / p2
+        close_p = params['left_shoulder'] + (params['head'] - params['left_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p3 = int(days * 0.10)
+    for i in range(p3):
+        t = i / p3
+        close_p = params['head'] + (params['neckline'] - params['head']) * t
+        data.append(_make_bar(close_p, len(data)))
+    p4 = int(days * 0.15)
+    for i in range(p4):
+        t = i / p4
+        close_p = params['neckline'] + (params['right_shoulder'] - params['neckline']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段5: 突破 (70%-80%)
+    p5 = int(days * 0.10)
+    for i in range(p5):
+        t = i / p5
+        close_p = params['right_shoulder'] + (params['breakout_price'] - params['right_shoulder']) * t
+        data.append(_make_bar(close_p, len(data)))
+    # 阶段6: 跌破颈线（失败）(80%-100%)
+    p6 = days - len(data)
+    for i in range(p6):
+        t = i / p6
+        close_p = params['breakout_price'] + (params['fail_price'] - params['breakout_price']) * t
+        data.append(_make_bar(close_p, len(data)))
+    return data
+
+
+# 更新GENERATORS字典
+GENERATORS['hs_bottom_sloped'] = generate_hs_bottom_sloped
+GENERATORS['hs_bottom_failed'] = generate_hs_bottom_failed
 
 
 def run_fixture(fixture):

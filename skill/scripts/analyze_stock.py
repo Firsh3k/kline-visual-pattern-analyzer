@@ -1166,7 +1166,7 @@ PATTERN_RELIABILITY = {
     'platform_break': 80, 'platform_break_down': 81, 'ma_bull': 78, 'ma_bear': 80
 }
 
-# 形态-环境历史准确率表（基于技术分析经典统计）
+# 形态-环境适配分表（经验先验，非真实历史胜率）（基于技术分析经典统计）
 # 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
 PATTERN_ENV_ACCURACY = {
     # 上升形态
@@ -1183,8 +1183,8 @@ PATTERN_ENV_ACCURACY = {
 
 
 def calc_env_accuracy(pattern_id, pattern_score, market_env):
-    """计算当前形态在当前大盘环境下的历史准确率
-    返回：环境分类、历史准确率、综合准确率（形态匹配度×环境适配率）、评分加成
+    """计算当前形态在当前大盘环境下的环境适配分（经验先验）
+    返回：环境分类、环境适配分、综合信号可信度（形态匹配度×环境适配率）、评分加成
     """
     if not market_env:
         return {'env_type': '未知', 'historical_accuracy': 0, 'combined_accuracy': 0,
@@ -1202,11 +1202,11 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
         env_type = '熊市'
         env_key = 'bear'
 
-    # 该形态在该环境下的历史准确率
+    # 该形态在该环境下的环境适配分（经验先验）
     env_table = PATTERN_ENV_ACCURACY.get(pattern_id, {'bull': 60, 'range': 60, 'bear': 60})
     historical_accuracy = env_table.get(env_key, 60)
 
-    # 综合准确率 = 形态匹配度 × 环境适配率
+    # 综合信号可信度 = 形态匹配度 × 环境适配率
     # 形态匹配度用pattern_score/100，环境适配率用historical_accuracy/100
     combined_accuracy = round(pattern_score * historical_accuracy / 100)
 
@@ -1233,7 +1233,7 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
         'historical_accuracy': historical_accuracy,
         'combined_accuracy': combined_accuracy,
         'score_bonus': score_bonus,
-        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}历史准确率{historical_accuracy}%，综合准确率{combined_accuracy}%。{advice}'
+        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}环境适配分{historical_accuracy}%（经验先验），综合信号可信度{combined_accuracy}%。{advice}'
     }
 
 
@@ -1589,7 +1589,7 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     # 颈线确认
     neck_confirm = calc_neckline_confirm(data, best_detail, is_bear_dominant)
 
-    # 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+    # 形态-环境适配度（当前大盘环境下该形态的环境适配分）
     env_accuracy = calc_env_accuracy(best_id, best_detail['score'], market_env)
 
     # 分别计算底部（买入）和顶部（卖出）的环境适配度
@@ -1597,7 +1597,7 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     bear_best_id = sorted_bear[0][0]
     bull_env_accuracy = calc_env_accuracy(bull_best_id, bull_best_score, market_env)
     bear_env_accuracy = calc_env_accuracy(bear_best_id, bear_best_score, market_env)
-    # 综合买卖准确率 = 信号分 × 环境适配率
+    # 综合买卖信号可信度 = 信号分 × 环境适配率
     buy_accuracy = round(bull_best_score * bull_env_accuracy['historical_accuracy'] / 100)
     sell_accuracy = round(bear_best_score * bear_env_accuracy['historical_accuracy'] / 100)
 

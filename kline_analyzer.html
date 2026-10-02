@@ -1429,24 +1429,51 @@ function matchBearPatterns(data, ind) {
         hsTop.stage = '右肩高于头部：头肩顶形态可能失败';
         hsTop.outlook = '右肩创新高，上升趋势可能延续';
         hsTop.action = '观望或继续持股';
-      } else if (!broken) {
-        hsTop.stage = '右肩已完成，向颈线下行：破位前夜';
-        hsTop.outlook = '放量跌破颈线则头肩顶确认，最小跌幅=头部到颈线距离';
-        hsTop.action = '可减仓，跌破颈线清仓';
-      } else if (breakdownEvent) {
-        hsTop.stage = `头肩顶跌破颈线（${breakdownDayIdx - last + 1}日前破位事件）：顶部确认`;
-        hsTop.outlook = '破位事件已确认，目标价=颈线-(头部-颈线)，沿均线持币';
-        hsTop.action = '止损离场，不要抄底';
       } else {
-        const pullback = curPrice > neckline * 0.95 && data[last].high > neckline;
-        if (pullback) {
-          hsTop.stage = '头肩顶破位后回抽颈线确认中';
+        // BUG-014：完整破位状态机
+        let breakdownState = 'PRE_BREAKDOWN';
+        if (broken && breakdownEvent) {
+          const daysSince = last - breakdownDayIdx;
+          if (daysSince === 0) {
+            breakdownState = 'BREAKDOWN_DAY';
+          } else {
+            const recentHigh = Math.max(...data.slice(breakdownDayIdx, last+1).map(d => d.high));
+            const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+            let aboveCount = 0;
+            for (let i = breakdownDayIdx+1; i <= last; i++) if (data[i].close > neckline) aboveCount++;
+            const isFailed = aboveCount >= 3 && curPrice > neckline;
+            if (isFailed) breakdownState = 'FAILED_BREAKDOWN';
+            else if (isRetest) breakdownState = 'RETEST';
+            else breakdownState = 'POST_BREAKDOWN';
+          }
+        } else if (!broken && breakdownEvent) {
+          let aboveCount = 0;
+          for (let i = breakdownDayIdx+1; i <= last; i++) if (data[i].close > neckline) aboveCount++;
+          breakdownState = aboveCount >= 3 ? 'FAILED_BREAKDOWN' : 'RETEST';
+        }
+        hsTop.breakdownState = breakdownState;
+        if (breakdownState === 'FAILED_BREAKDOWN') hsTop.score = Math.max(10, hsTop.score - 30);
+
+        if (breakdownState === 'PRE_BREAKDOWN') {
+          hsTop.stage = '右肩已完成，向颈线下行：破位前夜（PRE_BREAKDOWN）';
+          hsTop.outlook = '放量跌破颈线则头肩顶确认，最小跌幅=头部到颈线距离';
+          hsTop.action = '可减仓，跌破颈线清仓';
+        } else if (breakdownState === 'BREAKDOWN_DAY') {
+          hsTop.stage = '头肩顶跌破颈线当日：顶部确认（BREAKDOWN_DAY）';
+          hsTop.outlook = '破位事件已确认，目标价=颈线-(头部-颈线)，沿均线持币';
+          hsTop.action = '止损离场，不要抄底';
+        } else if (breakdownState === 'POST_BREAKDOWN') {
+          hsTop.stage = `头肩顶破位后运行中（第${last - breakdownDayIdx}日）：顶部确认（POST_BREAKDOWN）`;
+          hsTop.outlook = '目标价=颈线-(头部-颈线)，沿均线持币';
+          hsTop.action = '持币观望，不要抄底';
+        } else if (breakdownState === 'RETEST') {
+          hsTop.stage = '头肩顶破位后回抽颈线确认中（RETEST）：关注颈线压力';
           hsTop.outlook = '回抽不过颈线则确认有效，开启下跌';
           hsTop.action = '回抽是最后离场机会，不过颈线清仓';
-        } else {
-          hsTop.stage = '头肩顶已跌破颈线：顶部确认（破位后离场）';
-          hsTop.outlook = '目标价=颈线-(头部-颈线)，沿均线持币';
-          hsTop.action = '止损离场，不要抄底';
+        } else if (breakdownState === 'FAILED_BREAKDOWN') {
+          hsTop.stage = '⚠️ 头肩顶破位失败：涨回颈线上方超过3日，形态失效（FAILED_BREAKDOWN）';
+          hsTop.outlook = '破位失败，上升趋势可能延续';
+          hsTop.action = '重新评估，可考虑回补';
         }
       }
     }
@@ -1733,7 +1760,7 @@ function analyzeMarketEnv(data) {
   };
 }
 
-// ============ 形态-环境历史准确率表 ============
+// ============ 形态-环境适配分表（经验先验，非真实历史胜率） ============
 // 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
 const PATTERN_ENV_ACCURACY = {
   // 上升形态
@@ -1779,7 +1806,7 @@ function calcEnvAccuracy(patternId, patternScore, marketEnv) {
   const patternName = PATTERN_NAMES[patternId] || patternId;
   return {
     envType, envScore, historicalAccuracy, combinedAccuracy, scoreBonus,
-    detail: `${envType}环境下，${patternName}历史准确率${historicalAccuracy}%，综合准确率${combinedAccuracy}%。${advice}`
+    detail: `${envType}环境下，${patternName}环境适配分${historicalAccuracy}%（经验先验），综合信号可信度${combinedAccuracy}%。${advice}`
   };
 }
 
@@ -2491,7 +2518,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const neckConfirm = calcNecklineConfirm(data, bestDetail, bestType === 'bear');
   const attention = calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm);
 
-  // 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+  // 形态-环境适配度（当前大盘环境下该形态的环境适配分）
   const envAccuracy = calcEnvAccuracy(best.id, bestScore, marketEnv);
   // 将环境适配度加成纳入推荐度评分
   if (envAccuracy.scoreBonus !== 0) {
@@ -2513,7 +2540,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const bearBestPattern = BEAR_PATTERNS.find(p => p.id === bearBestId);
   const bullEnvAccuracy = calcEnvAccuracy(bullBestId, bullBestScore, marketEnv);
   const bearEnvAccuracy = calcEnvAccuracy(bearBestId, bearBestScore, marketEnv);
-  // 综合买卖准确率 = 信号分 × 环境适配率
+  // 综合买卖信号可信度 = 信号分 × 环境适配率
   const buyAccuracy = Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100);
   const sellAccuracy = Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100);
 
@@ -2772,7 +2799,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
     <!-- ===== 形态-环境适配度（多空双侧） ===== -->
     <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">买卖信号准确率 <span style="font-size:11px;color:#8899aa;font-weight:400;">（信号强度 × 环境适配率 = 综合准确率）</span></span>
+        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">买卖信号可信度 <span style="font-size:11px;color:#8899aa;font-weight:400;">（信号强度 × 环境适配率 = 综合信号可信度，经验先验非真实胜率）</span></span>
         <span style="font-size:12px;padding:3px 10px;border-radius:10px;background:${envAccuracy.envType==='牛市'?'rgba(231,76,60,0.2)':envAccuracy.envType==='熊市'?'rgba(46,204,113,0.2)':'rgba(243,156,18,0.2)'};color:${envAccuracy.envType==='牛市'?'#e74c3c':envAccuracy.envType==='熊市'?'#2ecc71':'#f39c12'};">当前环境：${envAccuracy.envType}（大盘${marketEnv?marketEnv.score:'-'}分）</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -2783,7 +2810,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
             <span style="font-size:11px;color:#8899aa;">匹配度 ${bullBestScore}分</span>
           </div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bullBestPattern?bullBestPattern.name:bullBestId}</b></div>
-          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态环境适配分，经验先验）</div>
           <div style="text-align:center;padding:8px;background:rgba(231,76,60,0.15);border-radius:6px;">
             <div style="font-size:11px;color:#8899aa;">买入信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${buyAccuracy>=60?'#e74c3c':buyAccuracy>=40?'#f39c12':'#556677'};">${buyAccuracy}%</div>
@@ -2797,7 +2824,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
             <span style="font-size:11px;color:#8899aa;">匹配度 ${bearBestScore}分</span>
           </div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bearBestPattern?bearBestPattern.name:bearBestId}</b></div>
-          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态环境适配分，经验先验）</div>
           <div style="text-align:center;padding:8px;background:rgba(46,204,113,0.15);border-radius:6px;">
             <div style="font-size:11px;color:#8899aa;">卖出信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${sellAccuracy>=60?'#2ecc71':sellAccuracy>=40?'#f39c12':'#556677'};">${sellAccuracy}%</div>
@@ -3844,7 +3871,7 @@ function calculateStockResult(result, marketEnv = null) {
   const prev = result.data[result.data.length - 2];
   const pct = ((last.close - prev.close) / prev.close * 100).toFixed(2);
 
-  // 买卖信号准确率（需要大盘环境）
+  // 买卖信号可信度（需要大盘环境）
   let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
   if (marketEnv) {
     const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
@@ -3913,8 +3940,8 @@ function renderWatchlistTable() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
-            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入信号可信度</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出信号可信度</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
             <th style="padding:10px 8px;width:40px;">操作</th>
@@ -4120,8 +4147,8 @@ function renderScanResults() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
-            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入信号可信度</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出信号可信度</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
           </tr>

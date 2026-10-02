@@ -39,6 +39,25 @@ jobs:
         cd tests
         python test_batch2_4_regression.py
 
+    - name: Run JS/Python parity fixtures (#22)
+      run: |
+        cd tests
+        python run_parity_tests.py --output /tmp/parity_results.json
+        # 验证所有fixtures都成功运行
+        python -c "
+        import json
+        with open('/tmp/parity_results.json') as f:
+            data = json.load(f)
+        results = data['results']
+        print(f'Parity fixtures: {len(results)} groups')
+        for r in results:
+            if 'error' in r:
+                print(f'  ERROR: {r[\"fixture_id\"]}: {r[\"error\"]}')
+                exit(1)
+            print(f'  OK: {r[\"fixture_id\"]} (data_length={r[\"data_length\"]})')
+        print('All parity fixtures passed')
+        "
+
   js-syntax-check:
     runs-on: ubuntu-latest
     steps:

@@ -3676,14 +3676,13 @@ async function syncToGithub() {
     alert('请先在设置中填写GitHub信息');
     return;
   }
-  showSyncStatus('⏳ 正在同步到GitHub...', '#f39c12');
-  
+  showSyncStatus('⏳ 正在从GitHub拉取最新配置...', '#f39c12');
+
   try {
-    const config = buildConfigObject();
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
     const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}`;
-    
-    // 获取当前文件的sha
+
+    // ========== 步骤1: 从GitHub拉取最新配置（用于多设备合并） ==========
+    let remoteConfig = null;
     let sha = null;
     try {
       const getResp = await fetch(apiUrl, {
@@ -3692,24 +3691,116 @@ async function syncToGithub() {
       if (getResp.ok) {
         const fileData = await getResp.json();
         sha = fileData.sha;
+        // 解码base64内容
+        try {
+          const decoded = decodeURIComponent(escape(atob(fileData.content)));
+          remoteConfig = JSON.parse(decoded);
+        } catch(e) {
+          console.warn('远程配置解析失败，将使用本地配置', e);
+        }
       }
+    } catch(e) {
+      console.warn('拉取远程配置失败，将使用本地配置', e);
+    }
+
+    // ========== 步骤2: 合并远程与本地自选股（取并集去重） ==========
+    const localWatchlist = getWatchlist();
+    const remoteWatchlist = (remoteConfig && remoteConfig.watchlist) ? remoteConfig.watchlist : [];
+
+    // 合并：远程 + 本地，去重（保留顺序，远程在前，本地追加新的）
+    const mergedSet = new Set();
+    const mergedWatchlist = [];
+    // 先加远程（保留其他设备添加的股票）
+    for (const code of remoteWatchlist) {
+      if (code && !mergedSet.has(code)) {
+        mergedSet.add(code);
+        mergedWatchlist.push(code);
+      }
+    }
+    // 再加本地（保留本地新增的股票）
+    for (const code of localWatchlist) {
+      if (code && !mergedSet.has(code)) {
+        mergedSet.add(code);
+        mergedWatchlist.push(code);
+      }
+    }
+
+    // 合并自定义板块
+    let customSectors = [];
+    try {
+      const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
+      customSectors = data ? JSON.parse(data) : [];
     } catch(e) {}
-    
-    // 创建或更新文件
+    const remoteSectors = (remoteConfig && remoteConfig.customSectors) ? remoteConfig.customSectors : [];
+    const mergedSectors = [];
+    const sectorSet = new Set();
+    for (const s of [...remoteSectors, ...customSectors]) {
+      const key = s.code || s.name || JSON.stringify(s);
+      if (key && !sectorSet.has(key)) {
+        sectorSet.add(key);
+        mergedSectors.push(s);
+      }
+    }
+
+    // 统计合并结果
+    const onlyRemote = remoteWatchlist.filter(c => !localWatchlist.includes(c));
+    const onlyLocal = localWatchlist.filter(c => !remoteWatchlist.includes(c));
+    const mergeInfo = `本地${localWatchlist.length}只 + 远程${remoteWatchlist.length}只 → 合并${mergedWatchlist.length}只` +
+      (onlyRemote.length > 0 ? `（从远程新增${onlyRemote.length}只）` : '') +
+      (onlyLocal.length > 0 ? `（本地新增${onlyLocal.length}只）` : '');
+
+    showSyncStatus(`⏳ 合并完成：${mergeInfo}，正在上传...`, '#f39c12');
+
+    // ========== 步骤3: 用合并后的数据构建配置对象 ==========
+    const config = {
+      version: '1.0',
+      exportDate: new Date().toISOString().split('T')[0],
+      exportTime: new Date().toLocaleString('zh-CN'),
+      description: 'K线形态分析工具 - 自选股云配置（多设备合并同步）',
+      watchlist: mergedWatchlist,
+      customSectors: mergedSectors,
+      settings: {
+        scanMinScore: document.getElementById('scanMinScore')?.value || '60',
+        scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
+      },
+      stats: {
+        watchlistCount: mergedWatchlist.length,
+        customSectorsCount: mergedSectors.length
+      },
+      syncMeta: {
+        mergedFromRemote: remoteWatchlist.length > 0,
+        remoteCount: remoteWatchlist.length,
+        localCount: localWatchlist.length,
+        mergedCount: mergedWatchlist.length,
+        onlyRemote: onlyRemote,
+        onlyLocal: onlyLocal,
+        mergedAt: new Date().toISOString()
+      }
+    };
+
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
+
+    // ========== 步骤4: 上传到GitHub ==========
     const resp = await fetch(apiUrl, {
       method: 'PUT',
       headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: `auto-sync: 更新自选股配置 (${config.watchlist.length}只)`,
+        message: `auto-sync: 合并自选股配置 (本地${localWatchlist.length}+远程${remoteWatchlist.length}=${mergedWatchlist.length}只)`,
         content: content,
         sha: sha,
         branch: settings.branch
       })
     });
-    
+
     if (resp.ok) {
+      // ========== 步骤5: 同步更新本地自选股为合并后的结果 ==========
+      saveWatchlist(mergedWatchlist);
+      // 刷新自选股页面显示
+      if (typeof renderWatchlistTags === 'function') renderWatchlistTags();
+      if (typeof renderWatchlistTable === 'function') renderWatchlistTable();
+
       const rawUrl = `https://raw.githubusercontent.com/${settings.username}/${settings.repo}/${settings.branch}/${settings.path}`;
-      showSyncStatus(`✅ 同步成功！Raw链接: ${rawUrl}`, '#27ae60');
+      showSyncStatus(`✅ 同步成功！${mergeInfo}。Raw链接已复制到导入框`, '#27ae60');
       // 自动填充到导入框
       document.getElementById('githubConfigUrl').value = rawUrl;
     } else {

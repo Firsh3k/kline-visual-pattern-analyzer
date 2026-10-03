@@ -99,6 +99,11 @@ jobs:
         cd tests
         node test_fir19_sync.js
 
+    - name: Run FIR-20 delete resurrection regression tests
+      run: |
+        cd tests
+        node test_fir20_delete.js
+
   cross-runtime-parity:
     runs-on: ubuntu-latest
     needs: [python-tests, js-syntax-check]

@@ -94,6 +94,11 @@ jobs:
         catch(e) { console.error('JS syntax error:', e.message); process.exit(1); }
         "
 
+    - name: Run FIR-19 multi-device sync regression tests
+      run: |
+        cd tests
+        node test_fir19_sync.js
+
   cross-runtime-parity:
     runs-on: ubuntu-latest
     needs: [python-tests, js-syntax-check]

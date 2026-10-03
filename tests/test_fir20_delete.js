@@ -35,6 +35,9 @@ const prod = loadProductionCode(env.sandbox);
 assert(typeof prod.syncToGithub === 'function', '生产函数 syncToGithub 已加载');
 assert(typeof prod.mergeWatchlistsWithTombstones === 'function', '生产函数 mergeWatchlistsWithTombstones 已加载');
 
+// Mock showConfirm（自定义确认对话框，直接返回true）
+env.sandbox.showConfirm = async () => true;
+
 // ========== 异步测试主函数 ==========
 async function runTests() {
 
@@ -43,9 +46,9 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
-    runInSandbox('removeStock("A2")');
+    await runInSandbox('removeStock("A2")');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 1, '应创建1条tombstone');
@@ -61,10 +64,10 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     // 先删除A2（创建tombstone）
-    runInSandbox('removeStock("A2")');
+    await runInSandbox('removeStock("A2")');
 
     // mock fetch：远程有[A1,A2,A3]（A2还在远程）
     let putCount = 0, putBody = null;
@@ -141,7 +144,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putCount = 0, putBody = null;
     setMockFetch(async (url, options) => {
@@ -171,7 +174,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['B1','B2','B3']) });
-    env.sandbox.confirm = () => false;
+    env.sandbox.showConfirm = async () => false;
 
     await runInSandbox('clearAllWatchlist()');
 
@@ -186,9 +189,9 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['C1','C2','C3']) });
-    env.sandbox.confirm = () => false;
+    env.sandbox.showConfirm = async () => false;
 
-    runInSandbox('removeStock("C2")');
+    await runInSandbox('removeStock("C2")');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 0, '取消删除不应创建tombstone');
@@ -201,7 +204,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B','C']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putCount = 0, putBody = null;
     setMockFetch(async (url, options) => {
@@ -236,7 +239,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let getCount = 0, putCount = 0, putBody = null;
     setMockFetch(async (url, options) => {
@@ -297,7 +300,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['X','Y','Z']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let getCount = 0, putCount = 0;
     setMockFetch(async (url, options) => {
@@ -336,7 +339,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putBody = null;
     setMockFetch(async (url, options) => {
@@ -381,7 +384,7 @@ async function runTests() {
       'kline_watchlist_v1': JSON.stringify(['A']),
       'kline_custom_sectors_v1': JSON.stringify([{ code: 'L', name: '本地板块' }]),
     });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putBody = null;
     setMockFetch(async (url, options) => {
@@ -419,7 +422,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putBody = null;
     setMockFetch(async (url, options) => {
@@ -457,7 +460,7 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A']) });
-    env.sandbox.confirm = () => true;
+    env.sandbox.showConfirm = async () => true;
 
     let putBody = null;
     setMockFetch(async (url, options) => {

@@ -108,8 +108,14 @@ Python 是所有算法的规范参考实现（canonical reference implementation
 当前架构选择"canonical reference + parity"而非"single implementation consumed by all runtimes"，原因：
 1. Web 端是纯前端 jspage，无法直接调用 Python（需要后端/API/WASM，属于 V5+ 架构升级）
 2. Skill 端运行在 Agent 环境，可以直接调用 Python
-3. Parity 测试已经验证了 100% 字段一致性，实际效果等同于单实现
-4. 未来如果需要真正的单实现，可以通过 WASM 或后端 API 迁移，当前契约测试为迁移提供了稳定性保障
+3. **Canonical Schema Cross-Runtime Parity**（`tests/v5/run_canonical_parity.py`）已验证新 `core/types.py` 契约的 100% 字段一致性：
+   - 4 个枚举（19 个枚举值）完全一致
+   - 11 个数据类（90 个字段）完全一致
+   - null 语义（nullable）逐字段验证
+   - 嵌套结构（List[X] / Optional[X]）验证
+   - 该测试已接入 CI，任何 schema 漂移都会被阻断
+4. 现有 `run_cross_parity.py` 验证的是 legacy production outputs（V4 业务逻辑），与 canonical schema parity 是两层独立的一致性保障
+5. 未来如果需要真正的单实现，可以通过 WASM 或后端 API 迁移，当前契约测试为迁移提供了稳定性保障
 
 ## 算法注册与调用
 

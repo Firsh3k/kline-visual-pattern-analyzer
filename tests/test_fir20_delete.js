@@ -136,28 +136,34 @@ async function runTests() {
     console.log(`  📊 过期设备有A2，同步后A2被远程tombstone过滤: ${!localWatchlist.includes('A2')}`);
   }
 
-  // 场景D: 全局清空 → 所有股票创建tombstone
-  console.log('\n【场景D】全局清空 → 所有股票创建tombstone（QA场景D）');
+  // 场景D: 全局清空（远程404首次创建）→ 原子事务PUT成功
+  console.log('\n【场景D】全局清空（远程404）→ 原子事务PUT，本地清空');
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
     env.sandbox.confirm = () => true;
 
-    // mock fetch：远程无配置（404）
+    let putCount = 0, putBody = null;
     setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putCount++;
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 201, json: async () => ({}) };
+      }
       return { ok: false, status: 404, json: async () => ({ message: 'Not Found' }) };
     });
 
     await runInSandbox('clearAllWatchlist()');
 
+    assertEqual(putCount, 1, '应执行1次PUT（原子事务）');
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 3, '应为3只股票创建tombstone');
-    assert(tombstones.find(t => t.code === 'A1'), 'A1应有tombstone');
-    assert(tombstones.find(t => t.code === 'A2'), 'A2应有tombstone');
-    assert(tombstones.find(t => t.code === 'A3'), 'A3应有tombstone');
-
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
-    assertEqual(watchlist, [], '本地watchlist应为空');
+    assertEqual(watchlist, [], '本地watchlist应为空（PUT成功后才清空）');
+
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    assertEqual(decoded.watchlist, [], 'PUT内容watchlist应为空');
+    assertEqual(decoded.tombstones.length, 3, 'PUT内容应包含3条tombstone');
   }
 
   // 场景E: 取消清空 → 不做任何操作（股票保留）
@@ -165,15 +171,14 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['B1','B2','B3']) });
-    env.sandbox.confirm = () => false; // 用户取消
+    env.sandbox.confirm = () => false;
 
     await runInSandbox('clearAllWatchlist()');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 0, '取消清空不应创建tombstone');
-
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
-    assertEqual(watchlist, ['B1','B2','B3'], '取消清空后股票应保留（不做任何操作）');
+    assertEqual(watchlist, ['B1','B2','B3'], '取消清空后股票应保留');
   }
 
   // 场景F: 取消删除（单只）→ 不创建tombstone，股票保留
@@ -181,26 +186,23 @@ async function runTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['C1','C2','C3']) });
-    env.sandbox.confirm = () => false; // 用户取消
+    env.sandbox.confirm = () => false;
 
     runInSandbox('removeStock("C2")');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 0, '取消删除不应创建tombstone');
-
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
     assertEqual(watchlist, ['C1','C2','C3'], '取消删除后股票应保留');
   }
 
-  // 场景G: 全局清空（远程有独有股票）→ 为remote ∪ local创建tombstone（Blocker 2修复）
+  // 场景G: 全局清空（远程有独有股票）→ 为remote ∪ local创建tombstone
   console.log('\n【场景G】全局清空（远程有独有股票）→ 为remote∪local创建tombstone（Blocker 2）');
   {
     resetMocks();
-    // 本地有[A,B,C]，远程有[A,B,C,D]（D是远程独有）
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B','C']) });
     env.sandbox.confirm = () => true;
 
-    // mock fetch：GET返回远程配置（包含D），PUT成功
     let putCount = 0, putBody = null;
     setMockFetch(async (url, options) => {
       if (options?.method === 'PUT') {
@@ -208,7 +210,6 @@ async function runTests() {
         putBody = JSON.parse(options.body);
         return { ok: true, status: 200, json: async () => ({}) };
       }
-      // GET返回远程配置（包含D，远程独有）
       return {
         ok: true, status: 200,
         json: async () => ({
@@ -220,26 +221,114 @@ async function runTests() {
 
     await runInSandbox('clearAllWatchlist()');
 
-    // 验证tombstone包含A/B/C/D（远程独有D也被tombstone）
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
-    assertEqual(tombstones.length, 4, '应为4只股票创建tombstone（远程3+本地3，去重后4）');
-    assert(tombstones.find(t => t.code === 'A'), 'A应有tombstone');
-    assert(tombstones.find(t => t.code === 'B'), 'B应有tombstone');
-    assert(tombstones.find(t => t.code === 'C'), 'C应有tombstone');
-    assert(tombstones.find(t => t.code === 'D'), 'D（远程独有）应有tombstone（Blocker 2核心修复）');
+    assertEqual(tombstones.length, 4, '应为4只股票创建tombstone');
+    assert(tombstones.find(t => t.code === 'D'), 'D（远程独有）应有tombstone');
 
-    // 验证本地已清空
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    assertEqual(decoded.watchlist, [], 'PUT内容watchlist应为空');
+    assert(decoded.tombstones.find(t => t.code === 'D'), 'PUT内容tombstone应包含D');
+    console.log(`  📊 远程有独有D，全局清空后D也被tombstone: YES`);
+  }
+
+  // 场景H: 并发添加期间的全局清空 → stale SHA重试，新代码也被tombstone（Final blocker）
+  console.log('\n【场景H】并发添加期间全局清空 → stale SHA重试，新代码C也被tombstone（Final blocker）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B']) });
+    env.sandbox.confirm = () => true;
+
+    let getCount = 0, putCount = 0, putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putCount++;
+        putBody = JSON.parse(options.body);
+        if (putCount === 1) {
+          // 第一次PUT返回409（另一台设备刚添加了C）
+          return { ok: false, status: 409, json: async () => ({ message: 'SHA mismatch' }) };
+        }
+        // 第二次PUT成功
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // GET
+      getCount++;
+      if (getCount === 1) {
+        // 第一次GET：远程[A,B]
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            sha: 'oldsha111',
+            content: Buffer.from(JSON.stringify({ watchlist: ['A','B'] })).toString('base64'),
+          }),
+        };
+      }
+      // 第二次GET（重试时）：远程已变成[A,B,C]（另一台设备添加了C）
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'newsha222',
+          content: Buffer.from(JSON.stringify({ watchlist: ['A','B','C'] })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    // 验证：GET=2, PUT=2
+    assertEqual(getCount, 2, '应执行2次GET（初始 + 冲突重试时重新拉取）');
+    assertEqual(putCount, 2, '应执行2次PUT（第一次409 + 第二次成功）');
+
+    // 验证：最终PUT内容的tombstone包含A/B/C（C是重试时新发现的）
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    assertEqual(decoded.watchlist, [], '最终PUT内容watchlist应为空');
+    assert(decoded.tombstones.find(t => t.code === 'A'), 'tombstone应包含A');
+    assert(decoded.tombstones.find(t => t.code === 'B'), 'tombstone应包含B');
+    assert(decoded.tombstones.find(t => t.code === 'C'), 'tombstone应包含C（并发添加的新代码，重试时发现）');
+
+    // 验证：本地已清空
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
     assertEqual(watchlist, [], '本地watchlist应为空');
 
-    // 验证同步后远程也不包含D
-    if (putBody) {
-      const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
-      assertEqual(decoded.watchlist, [], '同步后远程watchlist应为空');
-      assert(decoded.tombstones && decoded.tombstones.find(t => t.code === 'D'), 'tombstone应同步到远程，包含D');
-    }
+    console.log(`  📊 GET:${getCount} PUT:${putCount}, 并发添加的C也被tombstone: ${decoded.tombstones.find(t => t.code === 'C') ? 'YES' : 'NO'}`);
+  }
 
-    console.log(`  📊 远程有独有D，全局清空后D也被tombstone: ${tombstones.find(t => t.code === 'D') ? 'YES' : 'NO'}`);
+  // 场景I: 远程不可读（无效JSON）→ 中止，本地不变，PUT=0（Final blocker）
+  console.log('\n【场景I】远程不可读（无效JSON）→ 中止，本地不变，PUT=0（Final blocker）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['X','Y','Z']) });
+    env.sandbox.confirm = () => true;
+
+    let getCount = 0, putCount = 0;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putCount++;
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      getCount++;
+      // 返回200但内容是无效JSON
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'badsha999',
+          content: Buffer.from('this is not valid json {{{').toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    // 验证：GET=1, PUT=0（中止，不上传）
+    assertEqual(getCount, 1, '应执行1次GET');
+    assertEqual(putCount, 0, 'PUT次数应为0（远程解析失败后中止，不上传）');
+
+    // 验证：本地状态不变（股票保留，tombstone不创建）
+    const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
+    assertEqual(watchlist, ['X','Y','Z'], '本地watchlist应保持不变（中止操作）');
+    const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
+    assertEqual(tombstones.length, 0, '不应创建tombstone（中止操作）');
+
+    console.log(`  📊 GET:${getCount} PUT:${putCount}, 远程不可读时中止且本地不变: ${watchlist.length === 3 ? 'YES' : 'NO'}`);
   }
 
   // ========== 总结 ==========

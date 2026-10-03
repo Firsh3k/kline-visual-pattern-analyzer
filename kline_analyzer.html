@@ -4099,55 +4099,136 @@ function removeStock(code) {
   triggerAutoSync();
 }
 
-// 清空全部（全局/持久删除：为远程∪本地所有股票创建tombstone，同步后所有设备都会清空）
+// 清空全部（原子事务：GET→tombstone→PUT带SHA→409重试→成功后才改本地）
 async function clearAllWatchlist() {
   if (!confirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。')) return;
 
-  showSyncStatus('⏳ 正在拉取远程配置以确保全局清空...', '#f39c12');
+  const settings = getGithubSettings();
 
-  // 先拉取远程配置，获取完整的remote ∪ local股票列表
-  let remoteWatchlist = [];
-  try {
-    const settings = getGithubSettings();
-    if (settings && settings.token) {
-      const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}?ref=${settings.branch}`;
-      const remoteResult = await fetchRemoteGithubConfig(apiUrl, settings.token);
-      if (remoteResult && remoteResult.exists && remoteResult.config && Array.isArray(remoteResult.config.watchlist)) {
-        remoteWatchlist = remoteResult.config.watchlist;
-      }
-    }
-  } catch(e) {
-    console.warn('拉取远程配置失败，使用本地列表:', e.message);
+  // 未配置GitHub时：只做本地清空（无远程可同步）
+  if (!settings || !settings.token) {
+    saveWatchlist([]);
+    watchlistResults = {};
+    renderWatchlistTags();
+    document.getElementById('batchResults').innerHTML = '';
+    document.getElementById('batchStatus').textContent = '';
+    updateConfigSummary();
+    showSyncStatus('✅ 本地自选股已清空（未配置GitHub同步）', '#27ae60');
+    return;
   }
 
-  // 合并remote ∪ local，去重
-  const localCodes = getWatchlist();
-  const allCodes = [...new Set([...remoteWatchlist, ...localCodes])];
+  const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}?ref=${settings.branch}`;
+  const MAX_RETRIES = 3;
+  let attempt = 0;
 
-  // 为所有股票创建tombstone
-  let tombstones = [];
-  try {
-    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-    tombstones = data ? JSON.parse(data) : [];
-  } catch(e) {}
-  const now = new Date().toISOString();
-  allCodes.forEach(code => {
-    if (!tombstones.find(t => t.code === code)) {
-      tombstones.push({ code, deletedAt: now });
+  while (attempt < MAX_RETRIES) {
+    attempt++;
+    showSyncStatus(`⏳ 正在拉取远程配置（第${attempt}次）...`, '#f39c12');
+
+    // ========== 步骤1: GET最新远程配置+SHA ==========
+    let remoteResult;
+    try {
+      remoteResult = await fetchRemoteGithubConfig(apiUrl, settings.token);
+    } catch(e) {
+      showSyncStatus(`❌ 拉取远程配置失败，已中止（未修改本地）: ${e.message}`, '#e74c3c');
+      return;
     }
-  });
-  try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
 
-  // 清空本地
-  saveWatchlist([]);
-  watchlistResults = {};
-  renderWatchlistTags();
-  document.getElementById('batchResults').innerHTML = '';
-  document.getElementById('batchStatus').textContent = '';
-  updateConfigSummary();
+    // ========== 步骤2: 远程存在但无法解析 → 中止（不修改本地） ==========
+    if (remoteResult.exists && remoteResult.parseError) {
+      showSyncStatus(`❌ 远程配置解析失败，已中止（未修改本地）: ${remoteResult.parseError}`, '#e74c3c');
+      return;
+    }
 
-  showSyncStatus(`✅ 已为 ${allCodes.length} 只股票创建删除标记（远程${remoteWatchlist.length}只+本地${localCodes.length}只），正在同步...`, '#27ae60');
-  triggerAutoSync();
+    // ========== 步骤3: 计算remote ∪ local ==========
+    const remoteWatchlist = (remoteResult.config && remoteResult.config.watchlist) || [];
+    const localWatchlist = getWatchlist();
+    const allCodes = [...new Set([...remoteWatchlist, ...localWatchlist])];
+
+    // ========== 步骤4: 为所有代码创建tombstone（合并现有） ==========
+    let tombstones = [];
+    try {
+      const data = localStorage.getItem('kline_watchlist_tombstones_v1');
+      tombstones = data ? JSON.parse(data) : [];
+    } catch(e) {}
+    const now = new Date().toISOString();
+    allCodes.forEach(code => {
+      if (!tombstones.find(t => t.code === code)) {
+        tombstones.push({ code, deletedAt: now });
+      }
+    });
+
+    // ========== 步骤5: 构建配置（空watchlist + 所有tombstone） ==========
+    const config = {
+      watchlist: [],
+      tombstones: tombstones,
+      customSectors: (remoteResult.config && remoteResult.config.customSectors) || [],
+      settings: { autoSync: settings.autoSync },
+      syncMeta: {
+        mergedFromRemote: true,
+        remoteCount: remoteWatchlist.length,
+        localCount: localWatchlist.length,
+        mergedCount: 0,
+        onlyRemote: [],
+        onlyLocal: [],
+        mergedAt: new Date().toISOString(),
+        operation: 'clear_all',
+      },
+    };
+
+    // ========== 步骤6: PUT使用该SHA ==========
+    const putBody = {
+      message: `auto-sync: 全局清空自选股 (远程${remoteWatchlist.length}+本地${localWatchlist.length}=${allCodes.length}只标记删除)`,
+      content: btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2)))),
+      branch: settings.branch,
+    };
+    if (remoteResult.sha) {
+      putBody.sha = remoteResult.sha;
+    }
+
+    try {
+      const putResp = await fetch(apiUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${settings.token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(putBody),
+      });
+
+      // ========== 步骤7: 409/422 stale SHA → 重试（重新拉取，为新代码创建tombstone） ==========
+      if (putResp.status === 409 || putResp.status === 422) {
+        showSyncStatus(`⚠️ SHA冲突，正在重试（第${attempt}次）...`, '#f39c12');
+        await new Promise(r => setTimeout(r, 500 * attempt));
+        continue;
+      }
+
+      if (!putResp.ok) {
+        const errData = await putResp.json().catch(() => ({}));
+        showSyncStatus(`❌ 上传失败: ${putResp.status} ${errData.message || ''}（未修改本地）`, '#e74c3c');
+        return;
+      }
+
+      // ========== 步骤8: 成功PUT后才修改本地 ==========
+      try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+      saveWatchlist([]);
+      watchlistResults = {};
+      renderWatchlistTags();
+      document.getElementById('batchResults').innerHTML = '';
+      document.getElementById('batchStatus').textContent = '';
+      updateConfigSummary();
+
+      showSyncStatus(`✅ 全局清空成功！已为${allCodes.length}只股票创建删除标记（远程${remoteWatchlist.length}+本地${localWatchlist.length}），远程和本地均已清空`, '#27ae60');
+      return;
+
+    } catch(e) {
+      showSyncStatus(`❌ 上传失败: ${e.message}（未修改本地）`, '#e74c3c');
+      return;
+    }
+  }
+
+  showSyncStatus('❌ 全局清空失败：重试次数已用完（未修改本地）', '#e74c3c');
 }
 
 // 加载示例自选股

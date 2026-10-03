@@ -1,13 +1,11 @@
 {
   "version": "1.0",
   "exportDate": "2026-10-03",
-  "exportTime": "2026/10/3 15:22:19",
+  "exportTime": "2026/10/3 15:22:22",
   "description": "K线形态分析工具 - 自选股云配置（自动同步）",
   "watchlist": [
     "603068",
     "688105",
-    "600345",
-    "300684",
     "002119"
   ],
   "customSectors": [],
@@ -16,7 +14,7 @@
     "scanSignalType": "bull"
   },
   "stats": {
-    "watchlistCount": 5,
+    "watchlistCount": 3,
     "customSectorsCount": 0
   }
 }

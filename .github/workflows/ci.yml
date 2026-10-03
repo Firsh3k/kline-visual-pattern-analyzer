@@ -63,6 +63,11 @@ jobs:
         cd tests
         python validate_sector_data.py
 
+    - name: Run backtest horizon tests (BUG-013)
+      run: |
+        cd tests
+        python test_backtest_horizons.py
+
   js-syntax-check:
     runs-on: ubuntu-latest
     steps:
@@ -83,6 +88,52 @@ jobs:
         scripts.forEach(s => { totalJS += s.replace(/<\/?script[^>]*>/g, '') + '\n'; });
         try { new Function(totalJS); console.log('JS syntax OK'); }
         catch(e) { console.error('JS syntax error:', e.message); process.exit(1); }
+        "
+
+  cross-runtime-parity:
+    runs-on: ubuntu-latest
+    needs: [python-tests, js-syntax-check]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy matplotlib
+
+    - name: Run Cross-Runtime Parity Gate (Python vs Node/JS)
+      run: |
+        cd tests
+        python run_cross_parity.py
+        # 验证通过率≥90%（允许边界情况）
+        python -c "
+        import subprocess, sys
+        result = subprocess.run([sys.executable, 'run_cross_parity.py'], capture_output=True, text=True)
+        output = result.stdout
+        # 提取通过率
+        for line in output.split('\n'):
+            if '结果:' in line:
+                print(line)
+                parts = line.split(':')[1].strip().split('/')
+                passed = int(parts[0])
+                total = int(parts[1].split(' ')[0])
+                rate = passed / total * 100
+                print(f'Pass rate: {rate:.1f}%')
+                if rate < 90:
+                    print(f'ERROR: pass rate {rate:.1f}% < 90%')
+                    sys.exit(1)
+                print('Cross-runtime parity gate passed (≥90%)')
+                break
         "
 
   file-integrity:

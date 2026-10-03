@@ -8,7 +8,7 @@ import pytest
 from core import (
     AlgorithmRegistry, PatternDetector, IndicatorCalculator,
     DataProvider, PatternResult, TrendDirection, PatternStage, ConfidenceLevel,
-    OHLCV,
+    OHLCV, DuplicateRegistrationError,
 )
 
 
@@ -185,3 +185,101 @@ class TestGlobalRegistry:
     def test_global_registry_is_algorithm_registry(self):
         from core import registry, AlgorithmRegistry
         assert isinstance(registry, AlgorithmRegistry)
+
+
+class TestDuplicateRegistration:
+    """重复注册测试 — 默认 fail fast，防止静默覆盖"""
+
+    def _make_pattern(self, pattern_id):
+        class TestPattern(PatternDetector):
+            @property
+            def pattern_id(self):
+                return pattern_id
+            @property
+            def pattern_name(self):
+                return f"形态_{pattern_id}"
+            def detect(self, klines, pivots=None):
+                return []
+        return TestPattern
+
+    def test_duplicate_pattern_raises_by_default(self, clean_registry):
+        """默认情况下，重复注册相同pattern_id应抛出异常"""
+        PatternA = self._make_pattern("dup_test")
+        clean_registry.register_pattern(PatternA)
+
+        PatternB = self._make_pattern("dup_test")
+        with pytest.raises(DuplicateRegistrationError):
+            clean_registry.register_pattern(PatternB)
+
+    def test_duplicate_pattern_force_replace(self, clean_registry):
+        """使用force=True可以显式替换"""
+        PatternA = self._make_pattern("force_test")
+        clean_registry.register_pattern(PatternA)
+
+        PatternB = self._make_pattern("force_test")
+        result = clean_registry.register_pattern(PatternB, force=True)
+        assert result is PatternB
+
+        # 验证替换成功
+        detector = clean_registry.get_pattern("force_test")
+        assert detector.__class__ is PatternB
+
+    def test_duplicate_indicator_raises(self, clean_registry):
+        """重复注册相同名称的indicator应抛出异常"""
+        class IndA(IndicatorCalculator):
+            def calculate(self, klines, **kwargs):
+                return {}
+        clean_registry.register_indicator("ma", IndA)
+
+        class IndB(IndicatorCalculator):
+            def calculate(self, klines, **kwargs):
+                return {}
+        with pytest.raises(DuplicateRegistrationError):
+            clean_registry.register_indicator("ma", IndB)
+
+    def test_duplicate_data_provider_raises(self, clean_registry):
+        """重复注册相同名称的data_provider应抛出异常"""
+        from core import StockData
+
+        class ProvA(DataProvider):
+            def get_stock_data(self, code, days=250):
+                return StockData(code=code, name="A", klines=[])
+            def get_index_data(self, code, days=250):
+                return StockData(code=code, name="指数", klines=[])
+            def get_sector_constituents(self, sector_code):
+                return []
+        clean_registry.register_data_provider("sina", ProvA)
+
+        class ProvB(DataProvider):
+            def get_stock_data(self, code, days=250):
+                return StockData(code=code, name="B", klines=[])
+            def get_index_data(self, code, days=250):
+                return StockData(code=code, name="指数", klines=[])
+            def get_sector_constituents(self, sector_code):
+                return []
+        with pytest.raises(DuplicateRegistrationError):
+            clean_registry.register_data_provider("sina", ProvB)
+
+    def test_duplicate_error_message_contains_id(self, clean_registry):
+        """异常消息应包含重复的ID和已注册的类名"""
+        PatternA = self._make_pattern("msg_test")
+        clean_registry.register_pattern(PatternA)
+
+        PatternB = self._make_pattern("msg_test")
+        try:
+            clean_registry.register_pattern(PatternB)
+            assert False, "应该抛出DuplicateRegistrationError"
+        except DuplicateRegistrationError as e:
+            assert "msg_test" in str(e)
+            assert "PatternA" in str(e) or "TestPattern" in str(e)
+
+    def test_different_ids_no_conflict(self, clean_registry):
+        """不同ID的注册不应冲突"""
+        PatternA = self._make_pattern("pattern_a")
+        PatternB = self._make_pattern("pattern_b")
+        clean_registry.register_pattern(PatternA)
+        clean_registry.register_pattern(PatternB)
+
+        assert len(clean_registry.get_pattern_ids()) == 2
+        assert "pattern_a" in clean_registry.get_pattern_ids()
+        assert "pattern_b" in clean_registry.get_pattern_ids()

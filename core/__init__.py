@@ -3,52 +3,28 @@ Canonical Core — K线形态分析工具统一核心模块
 
 V5 新增，用于消除 Web/Python/Skill 三端业务逻辑漂移。
 
-## 架构原则
+## 架构模型
 
-1. **Single Source of Truth**: Python 是算法的唯一真实来源
-2. **统一数据结构**: 所有输入输出使用 core.types 中定义的数据类
-3. **统一接口**: 所有算法实现 core.interfaces 中定义的抽象基类
-4. **统一注册**: 所有算法通过 core.registry 注册和查找
-5. **统一测试**: 所有算法通过 tests/v5 中的测试框架验证
-6. **Parity Gate**: Web 端通过 cross-runtime parity 测试保证与 Python 一致
+**Python Canonical Reference + Mandatory Cross-Runtime Parity**
 
-## 目录结构
+Python 是算法的规范参考实现（canonical reference implementation）。
+Web 端 JS 实现必须通过 cross-runtime parity 测试保证与 Python 一致。
+Skill 端直接调用 Python core 模块。
 
-```
-core/
-├── __init__.py          # 模块入口，导出公共API
-├── types.py             # 统一数据结构（OHLCV, StockData, PatternResult等）
-├── interfaces.py        # 统一接口定义（抽象基类）
-├── registry.py          # 算法注册中心
-└── README.md            # 架构文档
+这不是"implement once and every runtime consumes it"的单实现模型，
+而是"Python 作为规范参考 + 强制跨运行时一致性校验"的模型。
+所有业务规则变更必须：先改 Python core → 同步 Web JS → 跑 parity 测试。
 
-tests/v5/
-├── conftest.py          # pytest配置和fixtures
-├── test_types.py        # 数据结构测试
-├── test_interfaces.py   # 接口测试
-└── test_registry.py     # 注册中心测试
-```
+## 向后兼容
 
-## 三端调用路径
-
-```
-用户输入
-    │
-    ├─ Web端 (kline_analyzer.html)
-    │    └─ JS实现 ← parity测试 → Python core
-    │
-    ├─ Python端 (scripts/)
-    │    └─ 直接调用 core 模块
-    │
-    └─ Skill端 (skill/scripts/)
-         └─ 调用 Python core 模块
-```
-
-## 版本
-
-- V5.0 (2026-10-03): 初始架构建立，统一接口/数据结构/注册中心/测试框架
+`detect_swing_pivots` 是 PILOT-001 引入的公共 API，在 V5 迁移期间保持兼容。
+新代码应使用 `core.PivotPoint` 数据类和 `core.PivotDetector` 接口。
 """
 
+# 向后兼容：PILOT-001 公共 API
+from .pivots import detect_swing_pivots
+
+# V5 统一数据结构
 from .types import (
     OHLCV,
     StockData,
@@ -59,12 +35,15 @@ from .types import (
     MarketRegime,
     FakeSignalRisk,
     AnalysisResult,
+    BacktestResult,
+    BacktestSummary,
     TrendDirection,
     PatternStage,
     SignalType,
     ConfidenceLevel,
 )
 
+# V5 统一接口定义
 from .interfaces import (
     DataProvider,
     IndicatorCalculator,
@@ -81,14 +60,18 @@ from .interfaces import (
     AnalysisError,
 )
 
+# V5 算法注册中心
 from .registry import (
     AlgorithmRegistry,
+    DuplicateRegistrationError,
     registry,
     get_registry,
 )
 
 __version__ = "5.0.0"
 __all__ = [
+    # 向后兼容 (PILOT-001)
+    "detect_swing_pivots",
     # 数据结构
     "OHLCV",
     "StockData",
@@ -99,6 +82,8 @@ __all__ = [
     "MarketRegime",
     "FakeSignalRisk",
     "AnalysisResult",
+    "BacktestResult",
+    "BacktestSummary",
     "TrendDirection",
     "PatternStage",
     "SignalType",
@@ -120,6 +105,7 @@ __all__ = [
     "AnalysisError",
     # 注册中心
     "AlgorithmRegistry",
+    "DuplicateRegistrationError",
     "registry",
     "get_registry",
 ]

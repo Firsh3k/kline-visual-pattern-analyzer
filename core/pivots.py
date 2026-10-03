@@ -134,3 +134,4 @@ def detect_swing_pivots(
             )
 
     return pivots
+

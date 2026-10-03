@@ -2,7 +2,7 @@ name: Kline Pattern Analyzer CI
 
 on:
   push:
-    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**' ]
+    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**' ]
   pull_request:
     branches: [ main ]
 
@@ -20,15 +20,23 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pandas numpy matplotlib
+        pip install pandas numpy matplotlib pytest
 
     - name: Python syntax check
       run: |
         python -m py_compile core/pivots.py
+        python -m py_compile core/types.py
+        python -m py_compile core/interfaces.py
+        python -m py_compile core/registry.py
         python -m py_compile skill/scripts/analyze_stock.py
         python -m py_compile skill/scripts/pattern_scanner.py
         python -m py_compile skill/scripts/batch_scan.py
         echo "Python syntax OK"
+
+    - name: Run V5 Canonical Core tests (FIR-14)
+      run: |
+        python -m pytest tests/v5/ -v --tb=short
+        echo "V5 Canonical Core tests passed"
 
     - name: Run V5 canonical swing-pivot tests (PAIOS PILOT-001)
       run: |
@@ -155,6 +163,18 @@ jobs:
       run: |
         test -f kline_analyzer.html || (echo "ERROR: kline_analyzer.html missing" && exit 1)
         test -f core/pivots.py || (echo "ERROR: core/pivots.py missing" && exit 1)
+        test -f core/__init__.py || (echo "ERROR: core/__init__.py missing" && exit 1)
+        test -f core/types.py || (echo "ERROR: core/types.py missing" && exit 1)
+        test -f core/interfaces.py || (echo "ERROR: core/interfaces.py missing" && exit 1)
+        test -f core/registry.py || (echo "ERROR: core/registry.py missing" && exit 1)
+        test -f tests/v5/__init__.py || (echo "ERROR: tests/v5/__init__.py missing" && exit 1)
+        test -f tests/v5/conftest.py || (echo "ERROR: tests/v5/conftest.py missing" && exit 1)
+        test -f tests/v5/test_types.py || (echo "ERROR: tests/v5/test_types.py missing" && exit 1)
+        test -f tests/v5/test_interfaces.py || (echo "ERROR: tests/v5/test_interfaces.py missing" && exit 1)
+        test -f tests/v5/test_registry.py || (echo "ERROR: tests/v5/test_registry.py missing" && exit 1)
+        test -f tests/v5/test_contract.py || (echo "ERROR: tests/v5/test_contract.py missing" && exit 1)
+        test -f tests/v5/test_backwards_compat.py || (echo "ERROR: tests/v5/test_backwards_compat.py missing" && exit 1)
+        test -f tests/v5/test_backtest_result.py || (echo "ERROR: tests/v5/test_backtest_result.py missing" && exit 1)
         test -f tests/test_pivots.py || (echo "ERROR: tests/test_pivots.py missing" && exit 1)
         test -f skill/scripts/analyze_stock.py || (echo "ERROR: analyze_stock.py missing" && exit 1)
         test -f skill/scripts/pattern_scanner.py || (echo "ERROR: pattern_scanner.py missing" && exit 1)

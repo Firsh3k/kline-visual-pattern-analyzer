@@ -11,7 +11,8 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from .types import (
     StockData, OHLCV, PatternResult, SignalResult,
-    MarketRegime, FakeSignalRisk, AnalysisResult, PivotPoint
+    MarketRegime, FakeSignalRisk, AnalysisResult, PivotPoint,
+    BacktestResult, BacktestSummary,
 )
 
 
@@ -257,7 +258,7 @@ class BacktestEngine(ABC):
     """
 
     @abstractmethod
-    def backtest(self, code: str, signal_date: str, horizon_days: int = 20) -> Dict[str, Any]:
+    def backtest(self, code: str, signal_date: str, horizon_days: int = 20) -> BacktestResult:
         """
         回测单个信号
 
@@ -267,21 +268,24 @@ class BacktestEngine(ABC):
             horizon_days: 观察窗口天数（3/5/10/20/40）
 
         Returns:
-            Dict[str, Any]: 回测结果，包含 return、MFE、MAE等
+            BacktestResult: 类型化的回测结果（return、MFE、MAE等）
+            future data 不足时返回 is_complete=False，字段为 None
         """
         pass
 
     @abstractmethod
-    def batch_backtest(self, signals: List[Dict[str, Any]], horizon_days: int = 20) -> Dict[str, Any]:
+    def batch_backtest(self, signals: List[Dict[str, Any]], horizon_days: int = 20) -> BacktestSummary:
         """
         批量回测，统计胜率
+
+        只能比较相同 horizon 的样本。
 
         Args:
             signals: 信号列表，每个包含 code 和 date
             horizon_days: 观察窗口天数
 
         Returns:
-            Dict[str, Any]: 统计结果，包含 win_rate、avg_return、sample_size等
+            BacktestSummary: 类型化的统计结果（win_rate、avg_return、sample_size等）
         """
         pass
 

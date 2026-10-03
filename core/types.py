@@ -267,3 +267,70 @@ class AnalysisResult:
             'summary': self.summary,
             'metadata': self.metadata,
         }
+
+
+@dataclass
+class BacktestResult:
+    """
+    单信号回测结果 — 类型化的回测输出契约
+
+    使用固定 T+3/5/10/20/40 horizon，不缩短窗口。
+    future data 不足时返回 None/N/A。
+    """
+    code: str                          # 股票代码
+    signal_date: str                   # 信号日期 YYYY-MM-DD
+    horizon_days: int                  # 观察窗口天数（3/5/10/20/40）
+    entry_price: float                 # 入场价格（信号日收盘价）
+    return_pct: Optional[float] = None  # 收益率（%），None表示数据不足
+    mfe_pct: Optional[float] = None     # Maximum Favorable Excursion（最大有利波动 %）
+    mae_pct: Optional[float] = None     # Maximum Adverse Excursion（最大不利波动 %）
+    final_price: Optional[float] = None  # 窗口结束时价格
+    actual_days: Optional[int] = None    # 实际观察天数（可能因数据不足少于horizon）
+    is_complete: bool = False            # 是否有完整的horizon数据
+    notes: str = ""                      # 备注
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BacktestResult':
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class BacktestSummary:
+    """
+    批量回测汇总 — 类型化的统计输出契约
+
+    只能比较相同 horizon 的样本。
+    """
+    horizon_days: int                    # 观察窗口天数
+    sample_size: int                     # 样本数量
+    win_rate: Optional[float] = None     # 胜率（%），None表示无有效样本
+    avg_return_pct: Optional[float] = None  # 平均收益率（%）
+    median_return_pct: Optional[float] = None  # 收益率中位数（%）
+    avg_mfe_pct: Optional[float] = None     # 平均MFE（%）
+    avg_mae_pct: Optional[float] = None     # 平均MAE（%）
+    max_return_pct: Optional[float] = None   # 最大收益率（%）
+    min_return_pct: Optional[float] = None   # 最小收益率（%）
+    profit_factor: Optional[float] = None     # 盈亏比（总盈利/总亏损）
+    results: List[BacktestResult] = field(default_factory=list)  # 详细结果列表
+    incomplete_count: int = 0                 # 数据不完整的样本数
+    notes: str = ""                           # 备注
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'horizon_days': self.horizon_days,
+            'sample_size': self.sample_size,
+            'win_rate': self.win_rate,
+            'avg_return_pct': self.avg_return_pct,
+            'median_return_pct': self.median_return_pct,
+            'avg_mfe_pct': self.avg_mfe_pct,
+            'avg_mae_pct': self.avg_mae_pct,
+            'max_return_pct': self.max_return_pct,
+            'min_return_pct': self.min_return_pct,
+            'profit_factor': self.profit_factor,
+            'incomplete_count': self.incomplete_count,
+            'notes': self.notes,
+            'results': [r.to_dict() for r in self.results],
+        }

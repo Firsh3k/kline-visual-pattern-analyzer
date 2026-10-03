@@ -4145,35 +4145,56 @@ async function clearAllWatchlist() {
     const localWatchlist = getWatchlist();
     const allCodes = [...new Set([...remoteWatchlist, ...localWatchlist])];
 
-    // ========== 步骤4: 为所有代码创建tombstone（合并现有） ==========
-    let tombstones = [];
+    // ========== 步骤4: 以remoteConfig为基础，只修改watchlist相关字段 ==========
+    // 保留所有未知/现有字段（如scanMinScore、scanSignalType、schemaExtra等）
+    const config = remoteResult.config ? { ...remoteResult.config } : {};
+
+    // merge remote + local tombstones（按code去重，保留remote的deletedAt）
+    const remoteTombstones = Array.isArray(config.tombstones) ? config.tombstones : [];
+    let localTombstones = [];
     try {
       const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-      tombstones = data ? JSON.parse(data) : [];
+      localTombstones = data ? JSON.parse(data) : [];
     } catch(e) {}
-    const now = new Date().toISOString();
-    allCodes.forEach(code => {
-      if (!tombstones.find(t => t.code === code)) {
-        tombstones.push({ code, deletedAt: now });
+    const mergedTombstones = [...remoteTombstones];
+    localTombstones.forEach(lt => {
+      if (!mergedTombstones.find(mt => mt.code === lt.code)) {
+        mergedTombstones.push(lt);
       }
     });
 
-    // ========== 步骤5: 构建配置（空watchlist + 所有tombstone） ==========
-    const config = {
-      watchlist: [],
-      tombstones: tombstones,
-      customSectors: (remoteResult.config && remoteResult.config.customSectors) || [],
-      settings: { autoSync: settings.autoSync },
-      syncMeta: {
-        mergedFromRemote: true,
-        remoteCount: remoteWatchlist.length,
-        localCount: localWatchlist.length,
-        mergedCount: 0,
-        onlyRemote: [],
-        onlyLocal: [],
-        mergedAt: new Date().toISOString(),
-        operation: 'clear_all',
-      },
+    // 为remote ∪ local watchlist增加tombstones
+    const now = new Date().toISOString();
+    allCodes.forEach(code => {
+      if (!mergedTombstones.find(t => t.code === code)) {
+        mergedTombstones.push({ code, deletedAt: now });
+      }
+    });
+    config.tombstones = mergedTombstones;
+
+    // watchlist = []
+    config.watchlist = [];
+
+    // customSectors按正常同步逻辑merge（使用mergeCustomSectors函数）
+    let localSectors = [];
+    try {
+      const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
+      localSectors = data ? JSON.parse(data) : [];
+    } catch(e) {}
+    config.customSectors = mergeCustomSectors(config.customSectors, localSectors);
+
+    // settings原样保留（不修改config.settings）
+    // 所有未知/现有字段自动保留（因为我们是从remoteConfig复制的）
+
+    // 更新syncMeta（保留原有syncMeta字段，只更新clear_all相关的）
+    config.syncMeta = {
+      ...(config.syncMeta || {}),
+      mergedFromRemote: true,
+      remoteCount: remoteWatchlist.length,
+      localCount: localWatchlist.length,
+      mergedCount: 0,
+      mergedAt: new Date().toISOString(),
+      operation: 'clear_all',
     };
 
     // ========== 步骤6: PUT使用该SHA ==========
@@ -4211,7 +4232,7 @@ async function clearAllWatchlist() {
       }
 
       // ========== 步骤8: 成功PUT后才修改本地 ==========
-      try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+      try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(mergedTombstones)); } catch(e) {}
       saveWatchlist([]);
       watchlistResults = {};
       renderWatchlistTags();

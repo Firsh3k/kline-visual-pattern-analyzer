@@ -331,6 +331,168 @@ async function runTests() {
     console.log(`  📊 GET:${getCount} PUT:${putCount}, 远程不可读时中止且本地不变: ${watchlist.length === 3 ? 'YES' : 'NO'}`);
   }
 
+  // 场景J: Remote已有旧tombstone X → Clear All后X必须仍保留
+  console.log('\n【场景J】Remote已有旧tombstone X → Clear All后X仍保留（字段保留）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B']) });
+    env.sandbox.confirm = () => true;
+
+    let putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // 远程配置包含旧tombstone X
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'sha111',
+          content: Buffer.from(JSON.stringify({
+            watchlist: ['A','B'],
+            tombstones: [{ code: 'X', deletedAt: '2026-09-01T00:00:00.000Z' }],
+          })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    // 验证：旧tombstone X仍保留
+    assert(decoded.tombstones.find(t => t.code === 'X'), '远程旧tombstone X必须仍保留');
+    assertEqual(decoded.tombstones.find(t => t.code === 'X').deletedAt, '2026-09-01T00:00:00.000Z', '旧tombstone X的deletedAt应保持不变');
+    // 验证：A/B也被tombstone
+    assert(decoded.tombstones.find(t => t.code === 'A'), 'A应有tombstone');
+    assert(decoded.tombstones.find(t => t.code === 'B'), 'B应有tombstone');
+    assertEqual(decoded.watchlist, [], 'watchlist应为空');
+
+    console.log(`  📊 远程旧tombstone X保留: ${decoded.tombstones.find(t => t.code === 'X') ? 'YES' : 'NO'}`);
+  }
+
+  // 场景K: Remote sector R + 本地sector L → Clear All后R/L都保留
+  console.log('\n【场景K】Remote sector R + 本地sector L → Clear All后R/L都保留（customSectors merge）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A']) });
+    // 本地customSectors包含L
+    setLocalStorage({
+      'kline_watchlist_v1': JSON.stringify(['A']),
+      'kline_custom_sectors_v1': JSON.stringify([{ code: 'L', name: '本地板块' }]),
+    });
+    env.sandbox.confirm = () => true;
+
+    let putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // 远程配置包含sector R
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'sha222',
+          content: Buffer.from(JSON.stringify({
+            watchlist: ['A'],
+            customSectors: [{ code: 'R', name: '远程板块' }],
+          })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    // 验证：R和L都保留
+    assert(decoded.customSectors.find(s => s.code === 'R'), '远程sector R必须保留');
+    assert(decoded.customSectors.find(s => s.code === 'L'), '本地sector L必须保留');
+    assertEqual(decoded.customSectors.length, 2, 'customSectors应包含R和L共2个');
+    assertEqual(decoded.watchlist, [], 'watchlist应为空');
+
+    console.log(`  📊 Remote R保留: ${decoded.customSectors.find(s => s.code === 'R') ? 'YES' : 'NO'}, Local L保留: ${decoded.customSectors.find(s => s.code === 'L') ? 'YES' : 'NO'}`);
+  }
+
+  // 场景L: scanMinScore / scanSignalType → Clear All后值不变
+  console.log('\n【场景L】scanMinScore / scanSignalType → Clear All后值不变（settings原样保留）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A']) });
+    env.sandbox.confirm = () => true;
+
+    let putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // 远程配置包含settings
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'sha333',
+          content: Buffer.from(JSON.stringify({
+            watchlist: ['A'],
+            settings: { scanMinScore: '75', scanSignalType: 'bear' },
+          })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    // 验证：settings值不变
+    assert(decoded.settings, 'settings字段必须存在');
+    assertEqual(decoded.settings.scanMinScore, '75', 'scanMinScore应保持75不变');
+    assertEqual(decoded.settings.scanSignalType, 'bear', 'scanSignalType应保持bear不变');
+    assertEqual(decoded.watchlist, [], 'watchlist应为空');
+
+    console.log(`  📊 scanMinScore=${decoded.settings?.scanMinScore}, scanSignalType=${decoded.settings?.scanSignalType}（应不变）`);
+  }
+
+  // 场景M: 未知未来字段schemaExtra → Clear All后仍存在
+  console.log('\n【场景M】未知未来字段schemaExtra → Clear All后仍存在（前向兼容）');
+  {
+    resetMocks();
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A']) });
+    env.sandbox.confirm = () => true;
+
+    let putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // 远程配置包含未知未来字段
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'sha444',
+          content: Buffer.from(JSON.stringify({
+            watchlist: ['A'],
+            schemaExtra: { version: 'v99', futureFeature: true, nested: { key: 'value' } },
+            anotherUnknownField: 'some data',
+          })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+    // 验证：未知未来字段仍存在
+    assert(decoded.schemaExtra, '未知未来字段schemaExtra必须仍存在');
+    assertEqual(decoded.schemaExtra.version, 'v99', 'schemaExtra.version应保持不变');
+    assertEqual(decoded.schemaExtra.futureFeature, true, 'schemaExtra.futureFeature应保持不变');
+    assertEqual(decoded.schemaExtra.nested.key, 'value', 'schemaExtra.nested.key应保持不变');
+    assertEqual(decoded.anotherUnknownField, 'some data', 'anotherUnknownField应保持不变');
+    assertEqual(decoded.watchlist, [], 'watchlist应为空');
+
+    console.log(`  📊 schemaExtra保留: ${decoded.schemaExtra ? 'YES' : 'NO'}, anotherUnknownField保留: ${decoded.anotherUnknownField ? 'YES' : 'NO'}`);
+  }
+
   // ========== 总结 ==========
   console.log('\n' + '='.repeat(60));
   console.log(`测试结果: ${passed} 通过, ${failed} 失败`);

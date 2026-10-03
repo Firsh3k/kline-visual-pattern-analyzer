@@ -4046,6 +4046,22 @@ function addStock() {
   if (!/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
   const codes = getWatchlist();
   if (codes.includes(code)) { alert('该股票已在自选股池中'); return; }
+
+  // FIR-19: 检查是否在tombstone中（已从所有设备删除）
+  let tombstones = [];
+  try {
+    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
+    tombstones = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  if (tombstones.find(t => t.code === code)) {
+    if (!confirm(`该股票(${code})此前已从所有设备删除。\n\n如需重新添加，将清除其删除记录并同步到所有设备。\n\n确定要重新添加吗？`)) {
+      return;
+    }
+    // 用户确认重新添加：从tombstone中移除
+    tombstones = tombstones.filter(t => t.code !== code);
+    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+  }
+
   codes.push(code);
   saveWatchlist(codes);
   input.value = '';

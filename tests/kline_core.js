@@ -234,8 +234,8 @@ function calcFakeSignalRisk(data, ind, bestType, bestScore, marketEnv, macdDiv, 
 
   riskScore = Math.min(100, riskScore);
   let level = '低风险';
-  if (riskScore >= 70) level = '高风险';
-  else if (riskScore >= 40) level = '中风险';
+  if (riskScore >= 50) level = '高风险';
+  else if (riskScore >= 30) level = '中风险';
 
   return { riskScore, level, risks: risks.map(r => r.label) };
 }

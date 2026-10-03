@@ -1504,6 +1504,97 @@ def calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_di
 
 
 # ============ 主分析函数 ============
+def calculate_backtest_horizons(data, cutoff_date):
+    """BUG-013: 计算固定窗口回测结果（生产代码，测试直接调用此函数）
+
+    参数:
+        data: 完整K线数据列表（包含回测日期前后的数据）
+        cutoff_date: 回测截止日期（YYYY-MM-DD格式）
+
+    返回:
+        backtest_info字典，包含horizon_returns（T+3/5/10/20/40），
+        每个horizon包含return_pct/mfe/mae/data_sufficient等字段。
+        future data不足时返回None，不缩短窗口。
+    """
+    analysis_data = [d for d in data if d['day'][:10] <= cutoff_date]
+    if len(analysis_data) > 250:
+        analysis_data = analysis_data[-250:]
+    if len(analysis_data) < 60:
+        return {'error': f'回测日期{cutoff_date}数据不足（{len(analysis_data)}根），请选择更近的日期'}
+
+    after_data = [d for d in data if d['day'][:10] > cutoff_date]
+    bt_close = analysis_data[-1]['close']
+
+    # 固定窗口收益率 T+3/5/10/20/40
+    horizons = [3, 5, 10, 20, 40]
+    horizon_returns = {}
+    for h in horizons:
+        if len(after_data) >= h:
+            h_close = after_data[h-1]['close']
+            h_max = max(d['high'] for d in after_data[:h])
+            h_min = min(d['low'] for d in after_data[:h])
+            # MFE (Maximum Favorable Excursion) = 窗口内最高价相对基准价的最大涨幅
+            # MAE (Maximum Adverse Excursion) = 窗口内最低价相对基准价的最大跌幅
+            mfe = round((h_max / bt_close - 1) * 100, 2)
+            mae = round((h_min / bt_close - 1) * 100, 2)
+            horizon_returns[f'T+{h}'] = {
+                'close': round(h_close, 2),
+                'return_pct': round((h_close - bt_close) / bt_close * 100, 2),
+                'mfe': mfe,
+                'mae': mae,
+                'max_pct': mfe,  # 兼容旧字段
+                'min_pct': mae,  # 兼容旧字段
+                'horizon': h,
+                'data_sufficient': True
+            }
+        else:
+            # future data 不足时返回 None，不缩短窗口
+            horizon_returns[f'T+{h}'] = {
+                'close': None,
+                'return_pct': None,
+                'mfe': None,
+                'mae': None,
+                'max_pct': None,
+                'min_pct': None,
+                'horizon': h,
+                'data_sufficient': False,
+                'note': f'future data不足：需要{h}日，实际{len(after_data)}日'
+            }
+
+    # 全期统计（保留用于参考）
+    if after_data:
+        latest_close = after_data[-1]['close']
+        max_price = max(d['high'] for d in after_data)
+        min_price = min(d['low'] for d in after_data)
+        backtest_info = {
+            'date': cutoff_date,
+            'bt_close': bt_close,
+            'latest_close': latest_close,
+            'return_pct': round((latest_close - bt_close) / bt_close * 100, 2),
+            'max_price': max_price,
+            'max_pct': round((max_price / bt_close - 1) * 100, 2),
+            'min_price': min_price,
+            'min_pct': round((min_price / bt_close - 1) * 100, 2),
+            'horizon_returns': horizon_returns,
+            'total_days': len(after_data)
+        }
+    else:
+        backtest_info = {
+            'date': cutoff_date,
+            'bt_close': bt_close,
+            'latest_close': None,
+            'return_pct': None,
+            'max_price': None,
+            'max_pct': None,
+            'min_price': None,
+            'min_pct': None,
+            'horizon_returns': horizon_returns,
+            'total_days': 0
+        }
+
+    return backtest_info
+
+
 def analyze(code, name=None, market_env=None, backtest_date=None):
     # 回测模式下拉取500天数据
     datalen = 500 if backtest_date else 250
@@ -1522,71 +1613,16 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
             'volume': float(d['volume'])
         })
 
-    # 回测模式：截取到回测日期为止的250天数据
+    # 回测模式：调用生产函数calculate_backtest_horizons（BUG-013）
     backtest_info = None
     if backtest_date:
-        cutoff = backtest_date
-        analysis_data = [d for d in data if d['day'][:10] <= cutoff]
+        backtest_info = calculate_backtest_horizons(data, backtest_date)
+        if isinstance(backtest_info, dict) and 'error' in backtest_info:
+            return backtest_info
+        # 截取到回测日期为止的250天数据用于后续分析
+        analysis_data = [d for d in data if d['day'][:10] <= backtest_date]
         if len(analysis_data) > 250:
             analysis_data = analysis_data[-250:]
-        if len(analysis_data) < 60:
-            return {'error': f'回测日期{cutoff}数据不足（{len(analysis_data)}根），请选择更近的日期'}
-        # 后续走势验证数据（BUG-013修复：固定窗口T+3/5/10/20/40）
-        after_data = [d for d in data if d['day'][:10] > cutoff]
-        if after_data:
-            bt_close = analysis_data[-1]['close']
-            # 固定窗口收益率
-            horizons = [3, 5, 10, 20, 40]
-            horizon_returns = {}
-            for h in horizons:
-                if len(after_data) >= h:
-                    h_close = after_data[h-1]['close']
-                    h_max = max(d['high'] for d in after_data[:h])
-                    h_min = min(d['low'] for d in after_data[:h])
-                    # BUG-013: 明确 MFE/MAE 语义
-                    # MFE (Maximum Favorable Excursion) = 窗口内最高价相对基准价的最大涨幅
-                    # MAE (Maximum Adverse Excursion) = 窗口内最低价相对基准价的最大跌幅
-                    mfe = round((h_max / bt_close - 1) * 100, 2)
-                    mae = round((h_min / bt_close - 1) * 100, 2)
-                    horizon_returns[f'T+{h}'] = {
-                        'close': round(h_close, 2),
-                        'return_pct': round((h_close - bt_close) / bt_close * 100, 2),
-                        'mfe': mfe,  # 最大有利波动（原max_pct）
-                        'mae': mae,  # 最大不利波动（原min_pct）
-                        'max_pct': mfe,  # 兼容旧字段
-                        'min_pct': mae,  # 兼容旧字段
-                        'horizon': h,
-                        'data_sufficient': True
-                    }
-                else:
-                    # BUG-013: future data 不足时返回 None，不缩短窗口
-                    horizon_returns[f'T+{h}'] = {
-                        'close': None,
-                        'return_pct': None,
-                        'mfe': None,
-                        'mae': None,
-                        'max_pct': None,
-                        'min_pct': None,
-                        'horizon': h,
-                        'data_sufficient': False,
-                        'note': f'future data不足：需要{h}日，实际{len(after_data)}日'
-                    }
-            # 全期统计（保留用于参考）
-            latest_close = after_data[-1]['close']
-            max_price = max(d['high'] for d in after_data)
-            min_price = min(d['low'] for d in after_data)
-            backtest_info = {
-                'date': cutoff,
-                'bt_close': bt_close,
-                'latest_close': latest_close,
-                'return_pct': round((latest_close - bt_close) / bt_close * 100, 2),
-                'max_price': max_price,
-                'max_pct': round((max_price / bt_close - 1) * 100, 2),
-                'min_price': min_price,
-                'min_pct': round((min_price / bt_close - 1) * 100, 2),
-                'horizon_returns': horizon_returns,
-                'total_days': len(after_data)
-            }
         data = analysis_data
 
     n = len(data)

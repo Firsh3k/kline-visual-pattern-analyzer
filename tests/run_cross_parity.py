@@ -229,9 +229,10 @@ def run_python_analysis(data):
     bear_matches = match_bear_patterns(data, ind)
     hs_bottom = bull_matches.get('hs_bottom', {'score': 0, 'stage': ''})
     hs_top = bear_matches.get('hs_top', {'score': 0, 'stage': ''})
-    # fake_signal_risk使用hs_bottom/hs_top的score作为bestScore（与JS端core.analyze一致）
-    fake_risk_bull = calc_fake_signal_risk(data, ind, 'bull', hs_bottom.get('score', 0), None, macd_div, vol)
-    fake_risk_bear = calc_fake_signal_risk(data, ind, 'bear', hs_top.get('score', 0), None, macd_div, vol)
+    # fake_signal_risk使用固定bestScore测试（消除H&S检测差异影响，确保输入完全一致）
+    fake_risk_bull_high = calc_fake_signal_risk(data, ind, 'bull', 70, None, macd_div, vol)
+    fake_risk_bull_low = calc_fake_signal_risk(data, ind, 'bull', 30, None, macd_div, vol)
+    fake_risk_bear_high = calc_fake_signal_risk(data, ind, 'bear', 70, None, macd_div, vol)
 
     return {
         'volume': {
@@ -245,13 +246,20 @@ def run_python_analysis(data):
             'signal': boll.get('signal', boll.get('detail', '')),
             'score': boll.get('score')
         },
-        'fake_signal_risk_bull': {
-            'riskScore': fake_risk_bull.get('risk_score'),
-            'level': fake_risk_bull.get('level')
+        'fake_signal_risk_bull_high': {
+            'riskScore': fake_risk_bull_high.get('risk_score'),
+            'level': fake_risk_bull_high.get('level'),
+            'riskItems': [r.get('label') for r in fake_risk_bull_high.get('risks', [])]
         },
-        'fake_signal_risk_bear': {
-            'riskScore': fake_risk_bear.get('risk_score'),
-            'level': fake_risk_bear.get('level')
+        'fake_signal_risk_bull_low': {
+            'riskScore': fake_risk_bull_low.get('risk_score'),
+            'level': fake_risk_bull_low.get('level'),
+            'riskItems': [r.get('label') for r in fake_risk_bull_low.get('risks', [])]
+        },
+        'fake_signal_risk_bear_high': {
+            'riskScore': fake_risk_bear_high.get('risk_score'),
+            'level': fake_risk_bear_high.get('level'),
+            'riskItems': [r.get('label') for r in fake_risk_bear_high.get('risks', [])]
         },
         'hs_bottom': {
             'score': hs_bottom.get('score'),
@@ -277,6 +285,9 @@ const core = require('{os.path.join(os.path.dirname(__file__), 'kline_core.js')}
 const fs = require('fs');
 const data = JSON.parse(fs.readFileSync('{data_file}', 'utf8'));
 const result = core.analyze(data, null);
+const ind = core.calcIndicators(data);
+const vol = core.analyzeVolume(data, ind);
+const macdDiv = core.detectMACDDivergence(data, ind);
 console.log(JSON.stringify({{
     volume: {{
         volRatio: result.volume.volRatio,
@@ -289,13 +300,20 @@ console.log(JSON.stringify({{
         signal: result.bollinger.signal,
         score: result.bollinger.score
     }},
-    fake_signal_risk_bull: {{
-        riskScore: result.fake_signal_risk_bull.riskScore,
-        level: result.fake_signal_risk_bull.level
+    fake_signal_risk_bull_high: {{
+        riskScore: core.calcFakeSignalRisk(data, ind, 'bull', 70, null, macdDiv, vol).riskScore,
+        level: core.calcFakeSignalRisk(data, ind, 'bull', 70, null, macdDiv, vol).level,
+        riskItems: core.calcFakeSignalRisk(data, ind, 'bull', 70, null, macdDiv, vol).risks
     }},
-    fake_signal_risk_bear: {{
-        riskScore: result.fake_signal_risk_bear.riskScore,
-        level: result.fake_signal_risk_bear.level
+    fake_signal_risk_bull_low: {{
+        riskScore: core.calcFakeSignalRisk(data, ind, 'bull', 30, null, macdDiv, vol).riskScore,
+        level: core.calcFakeSignalRisk(data, ind, 'bull', 30, null, macdDiv, vol).level,
+        riskItems: core.calcFakeSignalRisk(data, ind, 'bull', 30, null, macdDiv, vol).risks
+    }},
+    fake_signal_risk_bear_high: {{
+        riskScore: core.calcFakeSignalRisk(data, ind, 'bear', 70, null, macdDiv, vol).riskScore,
+        level: core.calcFakeSignalRisk(data, ind, 'bear', 70, null, macdDiv, vol).level,
+        riskItems: core.calcFakeSignalRisk(data, ind, 'bear', 70, null, macdDiv, vol).risks
     }},
     hs_bottom: {{
         score: result.hs_bottom.score,
@@ -343,12 +361,19 @@ def compare_results(py_result, js_result, fixture_id, verbose=False):
     if bool(py_boll['isSqueeze']) != bool(js_boll['isSqueeze']):
         diffs.append(f"bollinger.isSqueeze: Python={py_boll['isSqueeze']}, JS={js_boll['isSqueeze']}")
 
-    # 3. Fake Signal Risk 对比（容差15分，因为H&S检测差异会影响bestScore）
-    for risk_type in ['fake_signal_risk_bull', 'fake_signal_risk_bear']:
+    # 3. Fake Signal Risk 对比（使用固定bestScore，要求100%一致：riskScore/level/riskItems）
+    for risk_type in ['fake_signal_risk_bull_high', 'fake_signal_risk_bull_low', 'fake_signal_risk_bear_high']:
         py_risk = py_result[risk_type]
         js_risk = js_result[risk_type]
-        if abs(py_risk['riskScore'] - js_risk['riskScore']) > 15:
+        # riskScore必须完全一致（输入相同，输出必须相同）
+        if py_risk['riskScore'] != js_risk['riskScore']:
             diffs.append(f"{risk_type}.riskScore: Python={py_risk['riskScore']}, JS={js_risk['riskScore']}")
+        # level必须完全一致
+        if py_risk['level'] != js_risk['level']:
+            diffs.append(f"{risk_type}.level: Python={py_risk['level']}, JS={js_risk['level']}")
+        # riskItems必须完全一致（风险项列表）
+        if py_risk.get('riskItems', []) != js_risk.get('riskItems', []):
+            diffs.append(f"{risk_type}.riskItems: Python={py_risk.get('riskItems', [])}, JS={js_risk.get('riskItems', [])}")
 
     # 4. H&S breakout/breakdown state 对比（只对比状态机状态，不对比分数，因为JS端是简化版本）
     if py_result['hs_bottom'].get('breakoutState') and js_result['hs_bottom'].get('breakoutState'):
@@ -406,7 +431,7 @@ def main():
         py_result = run_python_analysis(data)
         print(f"  Python: volStatus={py_result['volume']['volStatus']}, "
               f"bollSqueeze={py_result['bollinger']['isSqueeze']}, "
-              f"riskBull={py_result['fake_signal_risk_bull']['riskScore']}")
+              f"riskBullHigh={py_result['fake_signal_risk_bull_high']['riskScore']}")
 
         # 运行JS
         js_result = run_js_analysis(data)
@@ -416,7 +441,7 @@ def main():
             continue
         print(f"  JS:     volStatus={js_result['volume']['volStatus']}, "
               f"bollSqueeze={js_result['bollinger']['isSqueeze']}, "
-              f"riskBull={js_result['fake_signal_risk_bull']['riskScore']}")
+              f"riskBullHigh={js_result['fake_signal_risk_bull_high']['riskScore']}")
 
         # 对比
         diffs = compare_results(py_result, js_result, fid, args.verbose)

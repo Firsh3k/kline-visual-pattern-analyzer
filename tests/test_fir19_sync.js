@@ -38,6 +38,9 @@ assert(typeof prod.fetchRemoteGithubConfig === 'function', '生产函数 fetchRe
 assert(typeof prod.syncToGithub === 'function', '生产函数 syncToGithub 已加载');
 assert(typeof prod.deleteFromAllDevices === 'function', '生产函数 deleteFromAllDevices 已加载');
 
+// Mock showConfirm（自定义确认对话框，直接返回true）
+env.sandbox.showConfirm = async () => true;
+
 const { mergeWatchlistsWithTombstones, mergeCustomSectors } = prod;
 
 // ========== 第一部分：纯函数测试 ==========
@@ -174,7 +177,7 @@ async function runNetworkTests() {
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
-    runInSandbox('deleteFromAllDevices("A2")');
+    await runInSandbox('deleteFromAllDevices("A2")');
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 1, '应添加1条tombstone');
     assertEqual(tombstones[0].code, 'A2', 'tombstone code应为A2');

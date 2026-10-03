@@ -3955,9 +3955,10 @@ async function syncToGithub() {
 /**
  * 从所有设备删除股票（添加到tombstone）
  */
-function deleteFromAllDevices(code) {
+async function deleteFromAllDevices(code) {
   if (!code) return;
-  if (!confirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`)) return;
+  const confirmed = await showConfirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`, '从所有设备删除');
+  if (!confirmed) return;
 
   // 添加到本地tombstones
   let tombstones = [];
@@ -4040,7 +4041,7 @@ function renderWatchlistTags() {
 }
 
 // 添加股票
-function addStock() {
+async function addStock() {
   const input = document.getElementById('addStockInput');
   const code = input.value.trim();
   if (!/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
@@ -4054,7 +4055,8 @@ function addStock() {
     tombstones = data ? JSON.parse(data) : [];
   } catch(e) {}
   if (tombstones.find(t => t.code === code)) {
-    if (!confirm(`该股票(${code})此前已从所有设备删除。\n\n如需重新添加，将清除其删除记录并同步到所有设备。\n\n确定要重新添加吗？`)) {
+    const confirmed = await showConfirm(`该股票(${code})此前已从所有设备删除。\n\n如需重新添加，将清除其删除记录并同步到所有设备。\n\n确定要重新添加吗？`, '重新添加已删除股票');
+    if (!confirmed) {
       return;
     }
     // 用户确认重新添加：从tombstone中移除
@@ -4072,10 +4074,72 @@ function addStock() {
   analyzeSingleStock(code);
 }
 
+// 自定义确认对话框（替代原生confirm，确保在所有环境中正常工作）
+function showConfirm(message, title = '确认操作') {
+  return new Promise((resolve) => {
+    // 创建遮罩层
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;';
+
+    // 创建对话框
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#1a2332;border:1px solid #2a3441;border-radius:12px;padding:24px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+
+    // 标题
+    const titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-size:16px;font-weight:bold;color:#f0f0f0;margin-bottom:12px;';
+    titleEl.textContent = title;
+
+    // 消息
+    const messageEl = document.createElement('div');
+    messageEl.style.cssText = 'font-size:14px;color:#aabbcc;line-height:1.6;margin-bottom:20px;white-space:pre-line;';
+    messageEl.textContent = message;
+
+    // 按钮容器
+    const btnContainer = document.createElement('div');
+    btnContainer.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;';
+
+    // 取消按钮
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = '取消';
+    cancelBtn.style.cssText = 'padding:8px 20px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:13px;cursor:pointer;';
+    cancelBtn.onclick = () => {
+      document.body.removeChild(overlay);
+      resolve(false);
+    };
+
+    // 确定按钮
+    const okBtn = document.createElement('button');
+    okBtn.textContent = '确定';
+    okBtn.style.cssText = 'padding:8px 20px;background:#e74c3c;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;';
+    okBtn.onclick = () => {
+      document.body.removeChild(overlay);
+      resolve(true);
+    };
+
+    btnContainer.appendChild(cancelBtn);
+    btnContainer.appendChild(okBtn);
+    dialog.appendChild(titleEl);
+    dialog.appendChild(messageEl);
+    dialog.appendChild(btnContainer);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    // 点击遮罩层取消
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+        resolve(false);
+      }
+    };
+  });
+}
+
 // 删除股票（默认全局删除：创建tombstone，同步后所有设备都会删除）
-function removeStock(code) {
+async function removeStock(code) {
   if (!code) return;
-  if (!confirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`)) return;
+  const confirmed = await showConfirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`, '删除自选股');
+  if (!confirmed) return;
 
   // 添加到本地tombstones（防止同步时被远程复活）
   let tombstones = [];
@@ -4101,7 +4165,8 @@ function removeStock(code) {
 
 // 清空全部（原子事务：GET→tombstone→PUT带SHA→409重试→成功后才改本地）
 async function clearAllWatchlist() {
-  if (!confirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。')) return;
+  const confirmed = await showConfirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。', '清空全部自选股');
+  if (!confirmed) return;
 
   const settings = getGithubSettings();
 

@@ -143,7 +143,12 @@ async function runTests() {
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A1','A2','A3']) });
     env.sandbox.confirm = () => true;
 
-    runInSandbox('clearAllWatchlist()');
+    // mock fetch：远程无配置（404）
+    setMockFetch(async (url, options) => {
+      return { ok: false, status: 404, json: async () => ({ message: 'Not Found' }) };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
     assertEqual(tombstones.length, 3, '应为3只股票创建tombstone');
@@ -155,24 +160,24 @@ async function runTests() {
     assertEqual(watchlist, [], '本地watchlist应为空');
   }
 
-  // 场景E: 仅本机清空 → 不创建tombstone
-  console.log('\n【场景E】仅本机清空 → 不创建tombstone（旧行为保留）');
+  // 场景E: 取消清空 → 不做任何操作（股票保留）
+  console.log('\n【场景E】取消清空 → 中止操作，股票保留（Blocker 3修复）');
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['B1','B2','B3']) });
-    env.sandbox.confirm = () => false;
+    env.sandbox.confirm = () => false; // 用户取消
 
-    runInSandbox('clearAllWatchlist()');
+    await runInSandbox('clearAllWatchlist()');
 
     const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
-    assertEqual(tombstones.length, 0, '仅本机清空不应创建tombstone');
+    assertEqual(tombstones.length, 0, '取消清空不应创建tombstone');
 
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
-    assertEqual(watchlist, [], '本地watchlist应为空');
+    assertEqual(watchlist, ['B1','B2','B3'], '取消清空后股票应保留（不做任何操作）');
   }
 
-  // 场景F: 取消删除 → 不创建tombstone
-  console.log('\n【场景F】取消删除 → 不创建tombstone，股票保留');
+  // 场景F: 取消删除（单只）→ 不创建tombstone，股票保留
+  console.log('\n【场景F】取消删除（单只）→ 不创建tombstone，股票保留');
   {
     resetMocks();
     setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['C1','C2','C3']) });
@@ -185,6 +190,56 @@ async function runTests() {
 
     const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
     assertEqual(watchlist, ['C1','C2','C3'], '取消删除后股票应保留');
+  }
+
+  // 场景G: 全局清空（远程有独有股票）→ 为remote ∪ local创建tombstone（Blocker 2修复）
+  console.log('\n【场景G】全局清空（远程有独有股票）→ 为remote∪local创建tombstone（Blocker 2）');
+  {
+    resetMocks();
+    // 本地有[A,B,C]，远程有[A,B,C,D]（D是远程独有）
+    setLocalStorage({ 'kline_watchlist_v1': JSON.stringify(['A','B','C']) });
+    env.sandbox.confirm = () => true;
+
+    // mock fetch：GET返回远程配置（包含D），PUT成功
+    let putCount = 0, putBody = null;
+    setMockFetch(async (url, options) => {
+      if (options?.method === 'PUT') {
+        putCount++;
+        putBody = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      // GET返回远程配置（包含D，远程独有）
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          sha: 'remote789',
+          content: Buffer.from(JSON.stringify({ watchlist: ['A','B','C','D'] })).toString('base64'),
+        }),
+      };
+    });
+
+    await runInSandbox('clearAllWatchlist()');
+
+    // 验证tombstone包含A/B/C/D（远程独有D也被tombstone）
+    const tombstones = JSON.parse(getLocalStorage()['kline_watchlist_tombstones_v1'] || '[]');
+    assertEqual(tombstones.length, 4, '应为4只股票创建tombstone（远程3+本地3，去重后4）');
+    assert(tombstones.find(t => t.code === 'A'), 'A应有tombstone');
+    assert(tombstones.find(t => t.code === 'B'), 'B应有tombstone');
+    assert(tombstones.find(t => t.code === 'C'), 'C应有tombstone');
+    assert(tombstones.find(t => t.code === 'D'), 'D（远程独有）应有tombstone（Blocker 2核心修复）');
+
+    // 验证本地已清空
+    const watchlist = JSON.parse(getLocalStorage()['kline_watchlist_v1']);
+    assertEqual(watchlist, [], '本地watchlist应为空');
+
+    // 验证同步后远程也不包含D
+    if (putBody) {
+      const decoded = JSON.parse(Buffer.from(putBody.content, 'base64').toString('utf8'));
+      assertEqual(decoded.watchlist, [], '同步后远程watchlist应为空');
+      assert(decoded.tombstones && decoded.tombstones.find(t => t.code === 'D'), 'tombstone应同步到远程，包含D');
+    }
+
+    console.log(`  📊 远程有独有D，全局清空后D也被tombstone: ${tombstones.find(t => t.code === 'D') ? 'YES' : 'NO'}`);
   }
 
   // ========== 总结 ==========

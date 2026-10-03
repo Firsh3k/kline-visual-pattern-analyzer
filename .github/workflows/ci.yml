@@ -2,7 +2,7 @@ name: Kline Pattern Analyzer CI
 
 on:
   push:
-    branches: [ main, develop, 'feature/**', 'bugfix/**' ]
+    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**' ]
   pull_request:
     branches: [ main ]
 
@@ -24,10 +24,15 @@ jobs:
 
     - name: Python syntax check
       run: |
+        python -m py_compile core/pivots.py
         python -m py_compile skill/scripts/analyze_stock.py
         python -m py_compile skill/scripts/pattern_scanner.py
         python -m py_compile skill/scripts/batch_scan.py
         echo "Python syntax OK"
+
+    - name: Run V5 canonical swing-pivot tests (PAIOS PILOT-001)
+      run: |
+        python tests/test_pivots.py
 
     - name: Run Batch 1 regression tests
       run: |
@@ -43,7 +48,6 @@ jobs:
       run: |
         cd tests
         python run_parity_tests.py --output /tmp/parity_results.json
-        # 验证所有fixtures都成功运行
         python -c "
         import json
         with open('/tmp/parity_results.json') as f:
@@ -125,7 +129,6 @@ jobs:
       run: |
         cd tests
         python run_cross_parity.py
-        # 验证通过率=100%（required semantic fields必须完全一致）
         python -c "
         import subprocess, sys
         result = subprocess.run([sys.executable, 'run_cross_parity.py'], capture_output=True, text=True)
@@ -151,6 +154,8 @@ jobs:
     - name: Check critical files exist
       run: |
         test -f kline_analyzer.html || (echo "ERROR: kline_analyzer.html missing" && exit 1)
+        test -f core/pivots.py || (echo "ERROR: core/pivots.py missing" && exit 1)
+        test -f tests/test_pivots.py || (echo "ERROR: tests/test_pivots.py missing" && exit 1)
         test -f skill/scripts/analyze_stock.py || (echo "ERROR: analyze_stock.py missing" && exit 1)
         test -f skill/scripts/pattern_scanner.py || (echo "ERROR: pattern_scanner.py missing" && exit 1)
         test -f skill/scripts/batch_scan.py || (echo "ERROR: batch_scan.py missing" && exit 1)

@@ -4099,30 +4099,44 @@ function removeStock(code) {
   triggerAutoSync();
 }
 
-// 清空全部（提供全局清空和仅本机清空两种选择）
-function clearAllWatchlist() {
-  const choice = confirm(
-    '选择清空方式：\n\n' +
-    '【确定】所有设备清空 — 为所有股票创建tombstone，同步后所有设备都会清空\n\n' +
-    '【取消】仅本机清空 — 只清空本机，同步后远程股票会恢复'
-  );
+// 清空全部（全局/持久删除：为远程∪本地所有股票创建tombstone，同步后所有设备都会清空）
+async function clearAllWatchlist() {
+  if (!confirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。')) return;
 
-  if (choice) {
-    // 全局清空：为所有当前股票创建tombstone
-    const codes = getWatchlist();
-    let tombstones = [];
-    try {
-      const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-      tombstones = data ? JSON.parse(data) : [];
-    } catch(e) {}
-    const now = new Date().toISOString();
-    codes.forEach(code => {
-      if (!tombstones.find(t => t.code === code)) {
-        tombstones.push({ code, deletedAt: now });
+  showSyncStatus('⏳ 正在拉取远程配置以确保全局清空...', '#f39c12');
+
+  // 先拉取远程配置，获取完整的remote ∪ local股票列表
+  let remoteWatchlist = [];
+  try {
+    const settings = getGithubSettings();
+    if (settings && settings.token) {
+      const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}?ref=${settings.branch}`;
+      const remoteResult = await fetchRemoteGithubConfig(apiUrl, settings.token);
+      if (remoteResult && remoteResult.exists && remoteResult.config && Array.isArray(remoteResult.config.watchlist)) {
+        remoteWatchlist = remoteResult.config.watchlist;
       }
-    });
-    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+    }
+  } catch(e) {
+    console.warn('拉取远程配置失败，使用本地列表:', e.message);
   }
+
+  // 合并remote ∪ local，去重
+  const localCodes = getWatchlist();
+  const allCodes = [...new Set([...remoteWatchlist, ...localCodes])];
+
+  // 为所有股票创建tombstone
+  let tombstones = [];
+  try {
+    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
+    tombstones = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  const now = new Date().toISOString();
+  allCodes.forEach(code => {
+    if (!tombstones.find(t => t.code === code)) {
+      tombstones.push({ code, deletedAt: now });
+    }
+  });
+  try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
 
   // 清空本地
   saveWatchlist([]);
@@ -4131,6 +4145,8 @@ function clearAllWatchlist() {
   document.getElementById('batchResults').innerHTML = '';
   document.getElementById('batchStatus').textContent = '';
   updateConfigSummary();
+
+  showSyncStatus(`✅ 已为 ${allCodes.length} 只股票创建删除标记（远程${remoteWatchlist.length}只+本地${localCodes.length}只），正在同步...`, '#27ae60');
   triggerAutoSync();
 }
 

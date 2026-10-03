@@ -115,24 +115,21 @@ jobs:
       run: |
         cd tests
         python run_cross_parity.py
-        # 验证通过率≥90%（允许边界情况）
+        # 验证通过率=100%（required semantic fields必须完全一致）
         python -c "
         import subprocess, sys
         result = subprocess.run([sys.executable, 'run_cross_parity.py'], capture_output=True, text=True)
         output = result.stdout
-        # 提取通过率
         for line in output.split('\n'):
             if '结果:' in line:
                 print(line)
                 parts = line.split(':')[1].strip().split('/')
                 passed = int(parts[0])
                 total = int(parts[1].split(' ')[0])
-                rate = passed / total * 100
-                print(f'Pass rate: {rate:.1f}%')
-                if rate < 90:
-                    print(f'ERROR: pass rate {rate:.1f}% < 90%')
+                if passed != total:
+                    print(f'ERROR: pass rate {passed}/{total} != 100%')
                     sys.exit(1)
-                print('Cross-runtime parity gate passed (≥90%)')
+                print('Cross-runtime parity gate passed (100%)')
                 break
         "
 

@@ -395,8 +395,11 @@ def main():
 
         print(f"[{total}] {fid} - {fname}")
 
-        # 生成数据
-        data = generate_fixture_data(fixture)
+        # 生成数据（优先使用fixture中已有的data字段）
+        if 'data' in fixture and fixture['data']:
+            data = fixture['data']
+        else:
+            data = generate_fixture_data(fixture)
         print(f"  数据: {len(data)} 根K线")
 
         # 运行Python

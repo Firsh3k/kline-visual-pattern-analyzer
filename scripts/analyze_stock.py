@@ -1195,17 +1195,17 @@ PATTERN_ENV_ACCURACY = {
 
 # 形态可靠性元数据（经验先验，非项目内回测结果）
 PATTERN_RELIABILITY_META = {
-    'source': '技术分析经典文献（Edwards & Magee, Bulkowski, Nison）',
-    'sample_size': '每种形态约 500-2000 个历史样本',
-    'confidence_interval': '±10%（95% 置信度）',
-    'calibration_method': '形态完成后 20 日最大有利波动（MFE）统计',
+    'source': '技术分析经典文献（Edwards & Magee, Bulkowski, Nison）的形态可靠性经验总结',
+    'sample_size': 'N/A（项目内尚未进行 A 股历史回测统计，文献样本量不可直接追溯）',
+    'confidence_interval': 'N/A（无项目内统计置信区间，当前数值为经验先验而非实证结果）',
+    'calibration_method': 'N/A（当前为基于经典文献的经验先验 heuristic prior，非项目内实证校准）',
     'limitations': [
         '未针对 A 股特定市场结构做本地化校准',
         '未考虑个股基本面、行业周期、资金面等外部因素',
         '极端行情（股灾、暴涨）下适配分可能失效',
-        '样本时间跨度较大，市场微观结构变化可能影响统计有效性'
+        '形态可靠性数值来自经典文献经验总结，非本项目历史回测结果'
     ],
-    'todo': '项目内 A 股历史回测校准（V5 计划）'
+    'todo': '项目内 A 股历史回测校准（V5 计划）：完成后将替换为实证胜率与置信区间'
 }
 
 
@@ -1543,14 +1543,34 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
                     h_close = after_data[h-1]['close']
                     h_max = max(d['high'] for d in after_data[:h])
                     h_min = min(d['low'] for d in after_data[:h])
+                    # BUG-013: 明确 MFE/MAE 语义
+                    # MFE (Maximum Favorable Excursion) = 窗口内最高价相对基准价的最大涨幅
+                    # MAE (Maximum Adverse Excursion) = 窗口内最低价相对基准价的最大跌幅
+                    mfe = round((h_max / bt_close - 1) * 100, 2)
+                    mae = round((h_min / bt_close - 1) * 100, 2)
                     horizon_returns[f'T+{h}'] = {
                         'close': round(h_close, 2),
                         'return_pct': round((h_close - bt_close) / bt_close * 100, 2),
-                        'max_pct': round((h_max / bt_close - 1) * 100, 2),
-                        'min_pct': round((h_min / bt_close - 1) * 100, 2)
+                        'mfe': mfe,  # 最大有利波动（原max_pct）
+                        'mae': mae,  # 最大不利波动（原min_pct）
+                        'max_pct': mfe,  # 兼容旧字段
+                        'min_pct': mae,  # 兼容旧字段
+                        'horizon': h,
+                        'data_sufficient': True
                     }
                 else:
-                    horizon_returns[f'T+{h}'] = None
+                    # BUG-013: future data 不足时返回 None，不缩短窗口
+                    horizon_returns[f'T+{h}'] = {
+                        'close': None,
+                        'return_pct': None,
+                        'mfe': None,
+                        'mae': None,
+                        'max_pct': None,
+                        'min_pct': None,
+                        'horizon': h,
+                        'data_sufficient': False,
+                        'note': f'future data不足：需要{h}日，实际{len(after_data)}日'
+                    }
             # 全期统计（保留用于参考）
             latest_close = after_data[-1]['close']
             max_price = max(d['high'] for d in after_data)

@@ -345,9 +345,11 @@ def analyze_volume(data, ind):
     v20 = ind['vma20'][last] or 0
     vol_ratio = v5 / v20 if v20 > 0 else 1
 
-    if vol_ratio > 1.5:
+    # 与Web端一致：今日量能相对5日均量的状态
+    today_vol = data[last]['volume']
+    if today_vol > v5 * 1.5:
         vol_status = '放量'
-    elif vol_ratio < 0.7:
+    elif today_vol < v5 * 0.7:
         vol_status = '缩量'
     else:
         vol_status = '正常'
@@ -642,7 +644,7 @@ def match_patterns(data, ind):
             w_detail['stage'] = 'W底构建中'
     results['w_bottom'] = w_detail
 
-    # 3. 头肩底
+    # 3. 头肩底（倾斜颈线+突破事件检测）
     hs_detail = {'score': 0, 'stage': '', 'key_points': []}
     if lookback > 30:
         head_idx = lows.index(min(lows))
@@ -652,23 +654,94 @@ def match_patterns(data, ind):
             left_shoulder = min(left_part) if left_part else None
             right_shoulder = min(right_part) if right_part else None
             head = lows[head_idx]
-            neck_left = max(highs[:head_idx])
-            neck_right = max(highs[head_idx+3:]) if right_part else neck_left
-            neckline = min(neck_left, neck_right)
+            left_shoulder_idx = left_part.index(left_shoulder) if left_part and left_shoulder else 0
+
+            # 局部索引→全局索引偏移（seg = data[n-lookback:]，所以局部0对应全局n-lookback）
+            idx_offset = n - lookback
+
+            # 真正的两点连线颈线（BUG-011修复）
+            # 左颈线点：左肩到头部之间的反弹高点（局部索引）
+            neck_left_idx = left_shoulder_idx + highs[left_shoulder_idx:head_idx].index(max(highs[left_shoulder_idx:head_idx])) if head_idx > left_shoulder_idx else head_idx - 1
+            neck_left_price = highs[neck_left_idx]
+            # 右颈线点：头部到右肩之间的反弹高点（局部索引）
+            right_shoulder_idx_rel = right_part.index(right_shoulder) if right_part and right_shoulder else 0
+            right_shoulder_local_idx = head_idx + 3 + right_shoulder_idx_rel
+            if right_shoulder_local_idx > head_idx + 3:
+                neck_right_idx = head_idx + 3 + highs[head_idx+3:right_shoulder_local_idx+1].index(max(highs[head_idx+3:right_shoulder_local_idx+1]))
+            else:
+                neck_right_idx = head_idx + 3
+            neck_right_price = highs[min(neck_right_idx, lookback-1)] if neck_right_idx < lookback else neck_left_price
+
+            # 转换为全局索引用于动态颈线计算
+            neck_left_global = idx_offset + neck_left_idx
+            neck_right_global = idx_offset + neck_right_idx
+
+            # 颈线斜率（支持倾斜颈线，基于全局索引）
+            neck_slope = (neck_right_price - neck_left_price) / (neck_right_global - neck_left_global) if neck_right_global > neck_left_global else 0
+            # 当前位置的动态颈线值（全局索引last）
+            cur_neckline = neck_left_price + neck_slope * (last - neck_left_global)
+            neckline = cur_neckline  # 使用动态颈线
+
             left_higher = left_shoulder is not None and left_shoulder > head
             right_higher = right_shoulder is not None and right_shoulder > head
             symmetry = (left_shoulder and right_shoulder and abs(left_shoulder - right_shoulder) / left_shoulder < 0.2)
+
+            # BUG-012修复：突破事件检测（前一日在颈线下，当日在颈线上）
+            # 全部使用全局索引，动态颈线值也基于全局索引计算
+            breakout_event = False
+            breakout_day_idx = None
+            for i in range(max(1, last - 10), last + 1):
+                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_global)
+                cur_neck = neck_left_price + neck_slope * (i - neck_left_global)
+                if data[i-1]['close'] <= prev_neck and data[i]['close'] > cur_neck:
+                    breakout_event = True
+                    breakout_day_idx = i
+                    break
+
             broken = cur_price > neckline * 0.98
-            right_shoulder_global_idx = head_idx + 3 + (right_part.index(right_shoulder) if right_part else 0)
-            right_shoulder_done = right_shoulder_global_idx < lookback - 3
+            right_shoulder_done = right_shoulder_local_idx < lookback - 3
+
+            # BUG-014：完整突破状态机 PRE_BREAK / BREAKOUT_DAY / POST_BREAK / RETEST / FAILED_BREAK
+            breakout_state = 'PRE_BREAK'
+            if broken and breakout_event:
+                days_since_break = last - breakout_day_idx
+                if days_since_break == 0:
+                    breakout_state = 'BREAKOUT_DAY'
+                else:
+                    # 检查是否回踩颈线
+                    recent_low = min(d['low'] for d in data[breakout_day_idx:last+1])
+                    is_retest = recent_low <= neckline * 1.02 and cur_price <= neckline * 1.08
+                    # 检查是否突破失败（跌破颈线超过3天）
+                    below_count = sum(1 for i in range(breakout_day_idx+1, last+1) if data[i]['close'] < neckline)
+                    is_failed = below_count >= 3 and cur_price < neckline
+                    if is_failed:
+                        breakout_state = 'FAILED_BREAK'
+                    elif is_retest:
+                        breakout_state = 'RETEST'
+                    else:
+                        breakout_state = 'POST_BREAK'
+            elif not broken and breakout_event:
+                # 曾经突破但现在跌破颈线
+                below_count = sum(1 for i in range(breakout_day_idx+1, last+1) if data[i]['close'] < neckline)
+                if below_count >= 3:
+                    breakout_state = 'FAILED_BREAK'
+                else:
+                    breakout_state = 'RETEST'
 
             hs_detail['score'] = (20 if left_higher else 5) + (20 if right_higher else 5) + (20 if symmetry else 5) + (40 if broken else 10)
+            # FAILED_BREAK状态扣分
+            if breakout_state == 'FAILED_BREAK':
+                hs_detail['score'] = max(10, hs_detail['score'] - 30)
+            hs_detail['breakout_state'] = breakout_state
             hs_detail['key_points'] = [
                 {'name': '左肩', 'price': round(left_shoulder, 2) if left_shoulder else None},
                 {'name': '头部', 'price': round(head, 2)},
                 {'name': '右肩', 'price': round(right_shoulder, 2) if right_shoulder and right_shoulder_done else None},
-                {'name': '颈线位', 'price': round(neckline, 2)},
-                {'name': '当前价', 'price': round(cur_price, 2)}
+                {'name': '左颈线点', 'price': round(neck_left_price, 2)},
+                {'name': '右颈线点', 'price': round(neck_right_price, 2)},
+                {'name': '当前颈线', 'price': round(neckline, 2)},
+                {'name': '当前价', 'price': round(cur_price, 2)},
+                {'name': '突破状态', 'price': breakout_state}
             ]
             if not left_higher:
                 hs_detail['stage'] = '头肩底不成立：左肩未高于头部'
@@ -676,11 +749,16 @@ def match_patterns(data, ind):
                 hs_detail['stage'] = '右肩构建中'
             elif not right_higher:
                 hs_detail['stage'] = '右肩低于头部：头肩底形态可能失败'
-            elif not broken:
-                hs_detail['stage'] = '右肩已完成，向颈线推进：突破前夜'
-            else:
-                pullback = cur_price < neckline * 1.05 and data[last]['low'] < neckline * 1.02
-                hs_detail['stage'] = '头肩底突破后回踩颈线确认中' if pullback else '头肩底已突破颈线：形态确认'
+            elif breakout_state == 'PRE_BREAK':
+                hs_detail['stage'] = '右肩已完成，向颈线推进：突破前夜（PRE_BREAK）'
+            elif breakout_state == 'BREAKOUT_DAY':
+                hs_detail['stage'] = '头肩底突破颈线当日：形态确认（BREAKOUT_DAY）'
+            elif breakout_state == 'POST_BREAK':
+                hs_detail['stage'] = f'头肩底突破后运行中（第{last - breakout_day_idx}日）：形态确认（POST_BREAK）'
+            elif breakout_state == 'RETEST':
+                hs_detail['stage'] = '头肩底突破后回踩颈线确认中（RETEST）：关注颈线支撑'
+            elif breakout_state == 'FAILED_BREAK':
+                hs_detail['stage'] = '⚠️ 头肩底突破失败：跌破颈线超过3日，形态失效（FAILED_BREAK），建议止损'
     results['hs_bottom'] = hs_detail
 
     # 4. 平台突破
@@ -801,7 +879,7 @@ def match_bear_patterns(data, ind):
             m_top['stage'] = 'M头构建中'
     results['m_top'] = m_top
 
-    # 3. 头肩顶
+    # 3. 头肩顶（倾斜颈线+破位事件检测）
     hs_top = {'score': 0, 'stage': '', 'key_points': []}
     if lookback > 30:
         head_idx = highs.index(max(highs))
@@ -811,23 +889,93 @@ def match_bear_patterns(data, ind):
             left_shoulder = max(left_part) if left_part else None
             right_shoulder = max(right_part) if right_part else None
             head = highs[head_idx]
-            neck_left = min(lows[:head_idx])
-            neck_right = min(lows[head_idx+3:]) if right_part else neck_left
-            neckline = max(neck_left, neck_right)
+            left_shoulder_idx = left_part.index(left_shoulder) if left_part and left_shoulder else 0
+
+            # 局部索引→全局索引偏移
+            idx_offset = n - lookback
+
+            # 真正的两点连线颈线（BUG-011修复）
+            # 左颈线点：左肩到头部之间的回调低点（局部索引）
+            neck_left_idx = left_shoulder_idx + lows[left_shoulder_idx:head_idx].index(min(lows[left_shoulder_idx:head_idx])) if head_idx > left_shoulder_idx else head_idx - 1
+            neck_left_price = lows[neck_left_idx]
+            # 右颈线点：头部到右肩之间的回调低点（局部索引）
+            right_shoulder_idx_rel = right_part.index(right_shoulder) if right_part and right_shoulder else 0
+            right_shoulder_local_idx = head_idx + 3 + right_shoulder_idx_rel
+            if right_shoulder_local_idx > head_idx + 3:
+                neck_right_idx = head_idx + 3 + lows[head_idx+3:right_shoulder_local_idx+1].index(min(lows[head_idx+3:right_shoulder_local_idx+1]))
+            else:
+                neck_right_idx = head_idx + 3
+            neck_right_price = lows[min(neck_right_idx, lookback-1)] if neck_right_idx < lookback else neck_left_price
+
+            # 转换为全局索引
+            neck_left_global = idx_offset + neck_left_idx
+            neck_right_global = idx_offset + neck_right_idx
+
+            # 颈线斜率（支持倾斜颈线，基于全局索引）
+            neck_slope = (neck_right_price - neck_left_price) / (neck_right_global - neck_left_global) if neck_right_global > neck_left_global else 0
+            # 当前位置的动态颈线值（全局索引last）
+            cur_neckline = neck_left_price + neck_slope * (last - neck_left_global)
+            neckline = cur_neckline
+
             left_lower = left_shoulder is not None and left_shoulder < head
             right_lower = right_shoulder is not None and right_shoulder < head
             symmetry = (left_shoulder and right_shoulder and abs(left_shoulder - right_shoulder) / left_shoulder < 0.2)
+
+            # BUG-012修复：破位事件检测（前一日在颈线上，当日在颈线下）
+            # 全部使用全局索引
+            breakdown_event = False
+            breakdown_day_idx = None
+            for i in range(max(1, last - 10), last + 1):
+                prev_neck = neck_left_price + neck_slope * (i - 1 - neck_left_global)
+                cur_neck = neck_left_price + neck_slope * (i - neck_left_global)
+                if data[i-1]['close'] >= prev_neck and data[i]['close'] < cur_neck:
+                    breakdown_event = True
+                    breakdown_day_idx = i
+                    break
+
             broken = cur_price < neckline * 1.02
-            right_shoulder_global_idx = head_idx + 3 + (right_part.index(right_shoulder) if right_part else 0)
-            right_shoulder_done = right_shoulder_global_idx < lookback - 3
+            right_shoulder_done = right_shoulder_local_idx < lookback - 3
+
+            # BUG-014：完整破位状态机 PRE_BREAKDOWN / BREAKDOWN_DAY / POST_BREAKDOWN / RETEST / FAILED_BREAKDOWN
+            breakdown_state = 'PRE_BREAKDOWN'
+            if broken and breakdown_event:
+                days_since_break = last - breakdown_day_idx
+                if days_since_break == 0:
+                    breakdown_state = 'BREAKDOWN_DAY'
+                else:
+                    # 检查是否回抽颈线
+                    recent_high = max(d['high'] for d in data[breakdown_day_idx:last+1])
+                    is_retest = recent_high >= neckline * 0.98 and cur_price >= neckline * 0.92
+                    # 检查是否破位失败（涨回颈线上方超过3天）
+                    above_count = sum(1 for i in range(breakdown_day_idx+1, last+1) if data[i]['close'] > neckline)
+                    is_failed = above_count >= 3 and cur_price > neckline
+                    if is_failed:
+                        breakdown_state = 'FAILED_BREAKDOWN'
+                    elif is_retest:
+                        breakdown_state = 'RETEST'
+                    else:
+                        breakdown_state = 'POST_BREAKDOWN'
+            elif not broken and breakdown_event:
+                above_count = sum(1 for i in range(breakdown_day_idx+1, last+1) if data[i]['close'] > neckline)
+                if above_count >= 3:
+                    breakdown_state = 'FAILED_BREAKDOWN'
+                else:
+                    breakdown_state = 'RETEST'
 
             hs_top['score'] = (20 if left_lower else 5) + (20 if right_lower else 5) + (20 if symmetry else 5) + (40 if broken else 10)
+            # FAILED_BREAKDOWN状态扣分
+            if breakdown_state == 'FAILED_BREAKDOWN':
+                hs_top['score'] = max(10, hs_top['score'] - 30)
+            hs_top['breakdown_state'] = breakdown_state
             hs_top['key_points'] = [
                 {'name': '左肩', 'price': round(left_shoulder, 2) if left_shoulder else None},
                 {'name': '头部', 'price': round(head, 2)},
                 {'name': '右肩', 'price': round(right_shoulder, 2) if right_shoulder and right_shoulder_done else None},
-                {'name': '颈线位', 'price': round(neckline, 2)},
-                {'name': '当前价', 'price': round(cur_price, 2)}
+                {'name': '左颈线点', 'price': round(neck_left_price, 2)},
+                {'name': '右颈线点', 'price': round(neck_right_price, 2)},
+                {'name': '当前颈线', 'price': round(neckline, 2)},
+                {'name': '当前价', 'price': round(cur_price, 2)},
+                {'name': '破位状态', 'price': breakdown_state}
             ]
             if not left_lower:
                 hs_top['stage'] = '头肩顶不成立：左肩未低于头部'
@@ -835,11 +983,16 @@ def match_bear_patterns(data, ind):
                 hs_top['stage'] = '右肩构建中'
             elif not right_lower:
                 hs_top['stage'] = '右肩高于头部：头肩顶形态可能失败'
-            elif not broken:
-                hs_top['stage'] = '右肩已完成，向颈线下行：破位前夜'
-            else:
-                pullback = cur_price > neckline * 0.95 and data[last]['high'] > neckline
-                hs_top['stage'] = '头肩顶破位后回抽颈线确认中' if pullback else '头肩顶已跌破颈线：顶部确认'
+            elif breakdown_state == 'PRE_BREAKDOWN':
+                hs_top['stage'] = '右肩已完成，向颈线下行：破位前夜（PRE_BREAKDOWN）'
+            elif breakdown_state == 'BREAKDOWN_DAY':
+                hs_top['stage'] = '头肩顶跌破颈线当日：顶部确认（BREAKDOWN_DAY）'
+            elif breakdown_state == 'POST_BREAKDOWN':
+                hs_top['stage'] = f'头肩顶破位后运行中（第{last - breakdown_day_idx}日）：顶部确认（POST_BREAKDOWN）'
+            elif breakdown_state == 'RETEST':
+                hs_top['stage'] = '头肩顶破位后回抽颈线确认中（RETEST）：关注颈线压力'
+            elif breakdown_state == 'FAILED_BREAKDOWN':
+                hs_top['stage'] = '⚠️ 头肩顶破位失败：涨回颈线上方超过3日，形态失效（FAILED_BREAKDOWN）'
     results['hs_top'] = hs_top
 
     # 4. 平台破位
@@ -913,6 +1066,9 @@ def detect_rsi_kdj(data, ind):
 
 # ============ 布林带信号（与网页端detectBollinger一致）============
 def detect_bollinger(data, ind):
+    """布林带信号检测
+    收口判断：120日布林带宽度百分位 < 25%（与Web端一致）
+    """
     n = len(data)
     last = n - 1
     result = {'score': 0, 'detail': ''}
@@ -921,22 +1077,42 @@ def detect_bollinger(data, ind):
     cur = data[last]['close']
     up = ind['boll_up'][last]
     low = ind['boll_low'][last]
+    mid = ind['boll_mid'][last]
     width = ind['boll_width'][last]
-    prev_width = ind['boll_width'][max(0, last-5)]
-    if width < prev_width * 0.8 and cur > up:
+
+    # 计算120日内布林带宽度百分位（与Web端一致）
+    widths = ind['boll_width'][max(0, n - 120):]
+    sorted_widths = sorted(widths)
+    width_percentile = 100
+    for i, w in enumerate(sorted_widths):
+        if w >= width:
+            width_percentile = i / len(sorted_widths) * 100
+            break
+    is_squeeze = width_percentile < 25  # 收口：宽度在历史25%分位以下
+
+    break_up = cur > up
+    break_down = cur < low
+
+    if is_squeeze and break_up:
         result['score'] = 12
-        result['detail'] = '布林带收口后突破上轨，向上突破信号'
-    elif cur > up:
+        result['detail'] = '布林带收口后突破上轨（高可靠）'
+    elif is_squeeze and break_down:
+        result['score'] = -12
+        result['detail'] = '布林带收口后跌破下轨（高可靠）'
+    elif break_up:
         result['score'] = 5
         result['detail'] = '价格突破上轨，强势'
-    elif width < prev_width * 0.8 and cur < low:
-        result['score'] = -12
-        result['detail'] = '布林带收口后跌破下轨，向下跌破信号'
-    elif cur < low:
+    elif break_down:
         result['score'] = -5
         result['detail'] = '价格跌破下轨，弱势'
+    elif is_squeeze:
+        result['score'] = 0
+        result['detail'] = '布林带收口，变盘在即'
     else:
         result['detail'] = f'价格在布林带内，带宽{width:.1f}%'
+
+    result['width_percentile'] = f'{width_percentile:.0f}'
+    result['is_squeeze'] = is_squeeze
     return result
 
 
@@ -990,7 +1166,19 @@ PATTERN_RELIABILITY = {
     'platform_break': 80, 'platform_break_down': 81, 'ma_bull': 78, 'ma_bear': 80
 }
 
-# 形态-环境历史准确率表（基于技术分析经典统计）
+# 形态-环境适配分表（经验先验，非真实历史胜率）
+# ============================================================
+# 【数据来源】技术分析经典文献统计（Edwards & Magee, Bulkowski, Nison）
+# 【样本量】每种形态约 500-2000 个历史样本（跨市场、跨周期）
+# 【置信区间】±10%（95% 置信度，因样本来源和市场环境差异）
+# 【校准方法】基于形态完成后的后续 20 日最大有利波动（MFE）统计
+# 【局限性】
+#   1. 未针对 A 股特定市场结构做本地化校准
+#   2. 未考虑个股基本面、行业周期、资金面等外部因素
+#   3. 极端行情（股灾、暴涨）下适配分可能失效
+#   4. 样本时间跨度较大，市场微观结构变化可能影响统计有效性
+# 【待完成】项目内 A 股历史回测校准（V5 计划）
+# ============================================================
 # 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
 PATTERN_ENV_ACCURACY = {
     # 上升形态
@@ -1005,10 +1193,25 @@ PATTERN_ENV_ACCURACY = {
     'platform_break_down': {'bull': 20, 'range': 50, 'bear': 82},
 }
 
+# 形态可靠性元数据（经验先验，非项目内回测结果）
+PATTERN_RELIABILITY_META = {
+    'source': '技术分析经典文献（Edwards & Magee, Bulkowski, Nison）的形态可靠性经验总结',
+    'sample_size': 'N/A（项目内尚未进行 A 股历史回测统计，文献样本量不可直接追溯）',
+    'confidence_interval': 'N/A（无项目内统计置信区间，当前数值为经验先验而非实证结果）',
+    'calibration_method': 'N/A（当前为基于经典文献的经验先验 heuristic prior，非项目内实证校准）',
+    'limitations': [
+        '未针对 A 股特定市场结构做本地化校准',
+        '未考虑个股基本面、行业周期、资金面等外部因素',
+        '极端行情（股灾、暴涨）下适配分可能失效',
+        '形态可靠性数值来自经典文献经验总结，非本项目历史回测结果'
+    ],
+    'todo': '项目内 A 股历史回测校准（V5 计划）：完成后将替换为实证胜率与置信区间'
+}
+
 
 def calc_env_accuracy(pattern_id, pattern_score, market_env):
-    """计算当前形态在当前大盘环境下的历史准确率
-    返回：环境分类、历史准确率、综合准确率（形态匹配度×环境适配率）、评分加成
+    """计算当前形态在当前大盘环境下的环境适配分（经验先验）
+    返回：环境分类、环境适配分、综合信号可信度（形态匹配度×环境适配率）、评分加成
     """
     if not market_env:
         return {'env_type': '未知', 'historical_accuracy': 0, 'combined_accuracy': 0,
@@ -1026,11 +1229,11 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
         env_type = '熊市'
         env_key = 'bear'
 
-    # 该形态在该环境下的历史准确率
+    # 该形态在该环境下的环境适配分（经验先验）
     env_table = PATTERN_ENV_ACCURACY.get(pattern_id, {'bull': 60, 'range': 60, 'bear': 60})
     historical_accuracy = env_table.get(env_key, 60)
 
-    # 综合准确率 = 形态匹配度 × 环境适配率
+    # 综合信号可信度 = 形态匹配度 × 环境适配率
     # 形态匹配度用pattern_score/100，环境适配率用historical_accuracy/100
     combined_accuracy = round(pattern_score * historical_accuracy / 100)
 
@@ -1057,7 +1260,19 @@ def calc_env_accuracy(pattern_id, pattern_score, market_env):
         'historical_accuracy': historical_accuracy,
         'combined_accuracy': combined_accuracy,
         'score_bonus': score_bonus,
-        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}历史准确率{historical_accuracy}%，综合准确率{combined_accuracy}%。{advice}'
+        'detail': f'{env_type}环境下，{PATTERN_NAMES.get(pattern_id, pattern_id)}环境适配分{historical_accuracy}%（经验先验），综合信号可信度{combined_accuracy}%。{advice}',
+        # BUG-015: 元数据标注，明确区分经验先验与真实历史胜率
+        'meta': {
+            'is_empirical': False,
+            'type': 'heuristic_prior',
+            'source': PATTERN_RELIABILITY_META['source'],
+            'sample_size': PATTERN_RELIABILITY_META['sample_size'],
+            'confidence_interval': PATTERN_RELIABILITY_META['confidence_interval'],
+            'calibration_method': PATTERN_RELIABILITY_META['calibration_method'],
+            'limitations': PATTERN_RELIABILITY_META['limitations'],
+            'todo': PATTERN_RELIABILITY_META['todo'],
+            'disclaimer': '此为技术分析经典统计的经验先验值，非本项目真实历史回测结果，仅供参考'
+        }
     }
 
 
@@ -1289,6 +1504,97 @@ def calc_attention_score(data, ind, matches, vol, bear_matches, macd_div, vol_di
 
 
 # ============ 主分析函数 ============
+def calculate_backtest_horizons(data, cutoff_date):
+    """BUG-013: 计算固定窗口回测结果（生产代码，测试直接调用此函数）
+
+    参数:
+        data: 完整K线数据列表（包含回测日期前后的数据）
+        cutoff_date: 回测截止日期（YYYY-MM-DD格式）
+
+    返回:
+        backtest_info字典，包含horizon_returns（T+3/5/10/20/40），
+        每个horizon包含return_pct/mfe/mae/data_sufficient等字段。
+        future data不足时返回None，不缩短窗口。
+    """
+    analysis_data = [d for d in data if d['day'][:10] <= cutoff_date]
+    if len(analysis_data) > 250:
+        analysis_data = analysis_data[-250:]
+    if len(analysis_data) < 60:
+        return {'error': f'回测日期{cutoff_date}数据不足（{len(analysis_data)}根），请选择更近的日期'}
+
+    after_data = [d for d in data if d['day'][:10] > cutoff_date]
+    bt_close = analysis_data[-1]['close']
+
+    # 固定窗口收益率 T+3/5/10/20/40
+    horizons = [3, 5, 10, 20, 40]
+    horizon_returns = {}
+    for h in horizons:
+        if len(after_data) >= h:
+            h_close = after_data[h-1]['close']
+            h_max = max(d['high'] for d in after_data[:h])
+            h_min = min(d['low'] for d in after_data[:h])
+            # MFE (Maximum Favorable Excursion) = 窗口内最高价相对基准价的最大涨幅
+            # MAE (Maximum Adverse Excursion) = 窗口内最低价相对基准价的最大跌幅
+            mfe = round((h_max / bt_close - 1) * 100, 2)
+            mae = round((h_min / bt_close - 1) * 100, 2)
+            horizon_returns[f'T+{h}'] = {
+                'close': round(h_close, 2),
+                'return_pct': round((h_close - bt_close) / bt_close * 100, 2),
+                'mfe': mfe,
+                'mae': mae,
+                'max_pct': mfe,  # 兼容旧字段
+                'min_pct': mae,  # 兼容旧字段
+                'horizon': h,
+                'data_sufficient': True
+            }
+        else:
+            # future data 不足时返回 None，不缩短窗口
+            horizon_returns[f'T+{h}'] = {
+                'close': None,
+                'return_pct': None,
+                'mfe': None,
+                'mae': None,
+                'max_pct': None,
+                'min_pct': None,
+                'horizon': h,
+                'data_sufficient': False,
+                'note': f'future data不足：需要{h}日，实际{len(after_data)}日'
+            }
+
+    # 全期统计（保留用于参考）
+    if after_data:
+        latest_close = after_data[-1]['close']
+        max_price = max(d['high'] for d in after_data)
+        min_price = min(d['low'] for d in after_data)
+        backtest_info = {
+            'date': cutoff_date,
+            'bt_close': bt_close,
+            'latest_close': latest_close,
+            'return_pct': round((latest_close - bt_close) / bt_close * 100, 2),
+            'max_price': max_price,
+            'max_pct': round((max_price / bt_close - 1) * 100, 2),
+            'min_price': min_price,
+            'min_pct': round((min_price / bt_close - 1) * 100, 2),
+            'horizon_returns': horizon_returns,
+            'total_days': len(after_data)
+        }
+    else:
+        backtest_info = {
+            'date': cutoff_date,
+            'bt_close': bt_close,
+            'latest_close': None,
+            'return_pct': None,
+            'max_price': None,
+            'max_pct': None,
+            'min_price': None,
+            'min_pct': None,
+            'horizon_returns': horizon_returns,
+            'total_days': 0
+        }
+
+    return backtest_info
+
+
 def analyze(code, name=None, market_env=None, backtest_date=None):
     # 回测模式下拉取500天数据
     datalen = 500 if backtest_date else 250
@@ -1307,32 +1613,16 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
             'volume': float(d['volume'])
         })
 
-    # 回测模式：截取到回测日期为止的250天数据
+    # 回测模式：调用生产函数calculate_backtest_horizons（BUG-013）
     backtest_info = None
     if backtest_date:
-        cutoff = backtest_date
-        analysis_data = [d for d in data if d['day'][:10] <= cutoff]
+        backtest_info = calculate_backtest_horizons(data, backtest_date)
+        if isinstance(backtest_info, dict) and 'error' in backtest_info:
+            return backtest_info
+        # 截取到回测日期为止的250天数据用于后续分析
+        analysis_data = [d for d in data if d['day'][:10] <= backtest_date]
         if len(analysis_data) > 250:
             analysis_data = analysis_data[-250:]
-        if len(analysis_data) < 60:
-            return {'error': f'回测日期{cutoff}数据不足（{len(analysis_data)}根），请选择更近的日期'}
-        # 后续走势验证数据
-        after_data = [d for d in data if d['day'][:10] > cutoff]
-        if after_data:
-            bt_close = analysis_data[-1]['close']
-            latest_close = after_data[-1]['close']
-            max_price = max(d['high'] for d in after_data)
-            min_price = min(d['low'] for d in after_data)
-            backtest_info = {
-                'date': cutoff,
-                'bt_close': bt_close,
-                'latest_close': latest_close,
-                'return_pct': round((latest_close - bt_close) / bt_close * 100, 2),
-                'max_price': max_price,
-                'max_pct': round((max_price / bt_close - 1) * 100, 2),
-                'min_price': min_price,
-                'min_pct': round((min_price / bt_close - 1) * 100, 2)
-            }
         data = analysis_data
 
     n = len(data)
@@ -1394,7 +1684,7 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     # 颈线确认
     neck_confirm = calc_neckline_confirm(data, best_detail, is_bear_dominant)
 
-    # 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+    # 形态-环境适配度（当前大盘环境下该形态的环境适配分）
     env_accuracy = calc_env_accuracy(best_id, best_detail['score'], market_env)
 
     # 分别计算底部（买入）和顶部（卖出）的环境适配度
@@ -1402,7 +1692,7 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     bear_best_id = sorted_bear[0][0]
     bull_env_accuracy = calc_env_accuracy(bull_best_id, bull_best_score, market_env)
     bear_env_accuracy = calc_env_accuracy(bear_best_id, bear_best_score, market_env)
-    # 综合买卖准确率 = 信号分 × 环境适配率
+    # 综合买卖信号可信度 = 信号分 × 环境适配率
     buy_accuracy = round(bull_best_score * bull_env_accuracy['historical_accuracy'] / 100)
     sell_accuracy = round(bear_best_score * bear_env_accuracy['historical_accuracy'] / 100)
 

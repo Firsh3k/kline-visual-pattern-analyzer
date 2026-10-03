@@ -54,7 +54,10 @@ python3 scripts/pattern_scanner.py <csv路径> <股票名称> <股票代码>
 
 **批量扫描**：
 ```bash
-python3 scripts/batch_scan.py <代码1>,<代码2>,<代码3>
+python3 scripts/batch_scan.py [--days N] [--data DIR] [--output DIR]
+# -d/--days: 扫描最近N个交易日的信号（默认10）
+# --data: 指定数据目录（默认自动向上查找data/目录）
+# --output: 指定输出目录（默认data目录同级的output/）
 # 输出：每只股票的推荐度排序表格
 ```
 

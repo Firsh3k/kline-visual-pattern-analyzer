@@ -246,12 +246,21 @@ canvas { width: 100%; display: block; }
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;">
-              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步（增减个股自动更新GitHub）
+              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:not-allowed;font-size:12px;color:#8899aa;" title="安全策略：强制使用会话存储，关闭浏览器后Token自动清除">
+              <input type="checkbox" id="useSessionStorage" checked disabled> 会话存储（强制，安全策略）
             </label>
             <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
             <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
           </div>
-          <div style="margin-top:6px;font-size:10px;color:#556677;">⚠️ Token仅保存在本地浏览器，不会上传到任何服务器。建议使用仅repo权限的细粒度Token。</div>
+          <div style="margin-top:8px;padding:8px;background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:4px;font-size:10px;color:#e74c3c;line-height:1.5;">
+            <b>⚠️ 安全提醒</b><br>
+            1. Token仅保存在本地浏览器localStorage，不会上传到任何服务器<br>
+            2. <b>强烈建议</b>使用GitHub Fine-grained Token（仅授予目标仓库的Contents读写权限），不要使用经典repo全权限Token<br>
+            3. 公共电脑使用后请清除浏览器数据，或使用"清除设置"按钮<br>
+            4. 若仓库为<b>私有仓库</b>，通过raw链接导入配置时可能需要认证，建议使用"GitHub自动同步设置"功能而非匿名raw链接
+          </div>
         </div>
         <div id="configSummary" style="margin-top:8px;font-size:11px;color:#556677;"></div>
         <div id="syncStatus" style="margin-top:4px;font-size:11px;"></div>
@@ -1034,7 +1043,7 @@ function matchPatterns(data, ind) {
   }
   results.w_bottom = wDetail;
 
-  // ===== 3. 头肩底 =====
+  // ===== 3. 头肩底（倾斜颈线+突破事件检测）=====
   let hsDetail = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
   if (lookback > 30) {
     const headIdx = lows.indexOf(Math.min(...lows));
@@ -1046,37 +1055,66 @@ function matchPatterns(data, ind) {
       const rightShoulder = rightPart.length > 0 ? Math.min(...rightPart) : null;
       const rightShoulderIdx = rightPart.length > 0 ? rightPart.indexOf(rightShoulder) : -1;
       const head = lows[headIdx];
-      const neckLeft = Math.max(...highs.slice(0, headIdx));
-      const neckRight = rightPart.length > 0 ? Math.max(...highs.slice(headIdx + 3)) : neckLeft;
-      const neckline = Math.min(neckLeft, neckRight);
+
+      // 真正的两点连线颈线（BUG-011修复）
+      const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
+      const neckLeftIdx = lsIdx + highs.slice(lsIdx, headIdx).indexOf(Math.max(...highs.slice(lsIdx, headIdx)));
+      const neckLeftPrice = highs[neckLeftIdx];
+      const rightShoulderLocalIdx = headIdx + 3 + rightShoulderIdx;
+      let neckRightIdx = headIdx + 3;
+      if (rightShoulderLocalIdx > headIdx + 3) {
+        const seg = highs.slice(headIdx + 3, rightShoulderLocalIdx + 1);
+        neckRightIdx = headIdx + 3 + seg.indexOf(Math.max(...seg));
+      }
+      const neckRightPrice = highs[Math.min(neckRightIdx, lookback - 1)];
+
+      // 局部索引→全局索引偏移（seg = data.slice(n-lookback)）
+      const idxOffset = n - lookback;
+      const neckLeftGlobal = idxOffset + neckLeftIdx;
+      const neckRightGlobal = idxOffset + neckRightIdx;
+
+      // 颈线斜率（基于全局索引）
+      const neckSlope = neckRightGlobal > neckLeftGlobal ? (neckRightPrice - neckLeftPrice) / (neckRightGlobal - neckLeftGlobal) : 0;
+      // 当前位置的动态颈线值（全局索引last）
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftGlobal);
+
       const leftHigher = leftShoulder && leftShoulder > head;
       const rightHigher = rightShoulder && rightShoulder > head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice > neckline * 0.98;
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
-      const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+      const rightShoulderDone = rightShoulderLocalIdx < lookback - 3;
+
+      // BUG-012修复：突破事件检测（全部使用全局索引）
+      let breakoutEvent = false, breakoutDayIdx = null;
+      for (let i = Math.max(1, last - 10); i <= last; i++) {
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftGlobal);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftGlobal);
+        if (data[i-1].close <= prevNeck && data[i].close > curNeck) {
+          breakoutEvent = true; breakoutDayIdx = i; break;
+        }
+      }
 
       hsDetail.score = (leftHigher?20:5)+(rightHigher?20:5)+(symmetry?20:5)+(broken?40:10);
       hsDetail.points = [
         { label: '左肩', value: leftShoulder ? leftShoulder.toFixed(2) : '-' },
         { label: '头部', value: head.toFixed(2) },
         { label: '右肩', value: rightShoulder ? rightShoulder.toFixed(2) : '构建中' },
-        { label: '颈线位', value: neckline.toFixed(2) },
+        { label: '左颈线点', value: neckLeftPrice.toFixed(2) },
+        { label: '右颈线点', value: neckRightPrice.toFixed(2) },
+        { label: '当前颈线', value: neckline.toFixed(2) },
         { label: '当前价', value: curPrice.toFixed(2) }
       ];
-      // 图上标注
       if (leftShoulderIdx >= 0) {
         hsDetail.markers.points.push({ idx: n - lookback + leftShoulderIdx, price: leftShoulder, label: '左肩', color: '#3498db' });
       }
       hsDetail.markers.points.push({ idx: n - lookback + headIdx, price: head, label: '头', color: '#e74c3c' });
       if (rightShoulderDone && rightShoulderIdx >= 0) {
-        hsDetail.markers.points.push({ idx: n - lookback + rightShoulderGlobalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
+        hsDetail.markers.points.push({ idx: n - lookback + rightShoulderLocalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
       }
       hsDetail.markers.lines = [{ price: neckline, label: '头肩底颈线', color: '#f39c12' }];
       if (!leftHigher) {
         hsDetail.stage = '头肩底不成立：左肩未高于头部';
-        hsDetail.outlook = '形态不标准';
-        hsDetail.action = '观望';
+        hsDetail.outlook = '形态不标准'; hsDetail.action = '观望';
       } else if (!rightShoulderDone) {
         hsDetail.stage = '右肩构建中：头部已形成，正在构建右肩';
         hsDetail.outlook = '右肩低点应高于头部，右肩完成后关注颈线突破';
@@ -1085,20 +1123,51 @@ function matchPatterns(data, ind) {
         hsDetail.stage = '右肩低于头部：头肩底形态可能失败';
         hsDetail.outlook = '右肩创新低，下跌趋势可能延续';
         hsDetail.action = '观望或止损';
-      } else if (!broken) {
-        hsDetail.stage = '右肩已完成，向颈线推进：突破前夜';
-        hsDetail.outlook = '放量突破颈线则头肩底确认，最小涨幅=头部到颈线距离';
-        hsDetail.action = '可布局，突破颈线加仓';
       } else {
-        const pullback = curPrice < neckline * 1.05 && data[last].low < neckline * 1.02;
-        if (pullback) {
-          hsDetail.stage = '头肩底突破后回踩颈线确认中';
-          hsDetail.outlook = '回踩不破颈线则确认有效，开启上涨';
-          hsDetail.action = '回踩企稳加仓，破颈线止损';
-        } else {
-          hsDetail.stage = '头肩底已突破颈线：形态确认，上涨进行中';
+        // BUG-014：完整突破状态机
+        let breakoutState = 'PRE_BREAK';
+        if (broken && breakoutEvent) {
+          const daysSince = last - breakoutDayIdx;
+          if (daysSince === 0) {
+            breakoutState = 'BREAKOUT_DAY';
+          } else {
+            const recentLow = Math.min(...data.slice(breakoutDayIdx, last+1).map(d => d.low));
+            const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+            let belowCount = 0;
+            for (let i = breakoutDayIdx+1; i <= last; i++) if (data[i].close < neckline) belowCount++;
+            const isFailed = belowCount >= 3 && curPrice < neckline;
+            if (isFailed) breakoutState = 'FAILED_BREAK';
+            else if (isRetest) breakoutState = 'RETEST';
+            else breakoutState = 'POST_BREAK';
+          }
+        } else if (!broken && breakoutEvent) {
+          let belowCount = 0;
+          for (let i = breakoutDayIdx+1; i <= last; i++) if (data[i].close < neckline) belowCount++;
+          breakoutState = belowCount >= 3 ? 'FAILED_BREAK' : 'RETEST';
+        }
+        hsDetail.breakoutState = breakoutState;
+        if (breakoutState === 'FAILED_BREAK') hsDetail.score = Math.max(10, hsDetail.score - 30);
+
+        if (breakoutState === 'PRE_BREAK') {
+          hsDetail.stage = '右肩已完成，向颈线推进：突破前夜（PRE_BREAK）';
+          hsDetail.outlook = '放量突破颈线则头肩底确认，最小涨幅=头部到颈线距离';
+          hsDetail.action = '可布局，突破颈线加仓';
+        } else if (breakoutState === 'BREAKOUT_DAY') {
+          hsDetail.stage = '头肩底突破颈线当日：形态确认（BREAKOUT_DAY）';
+          hsDetail.outlook = '突破事件已确认，目标价=颈线+(颈线-头部)，沿均线持股';
+          hsDetail.action = '持股待涨';
+        } else if (breakoutState === 'POST_BREAK') {
+          hsDetail.stage = `头肩底突破后运行中（第${last - breakoutDayIdx}日）：形态确认（POST_BREAK）`;
           hsDetail.outlook = '目标价=颈线+(颈线-头部)，沿均线持股';
           hsDetail.action = '持股待涨';
+        } else if (breakoutState === 'RETEST') {
+          hsDetail.stage = '头肩底突破后回踩颈线确认中（RETEST）：关注颈线支撑';
+          hsDetail.outlook = '回踩不破颈线则确认有效，开启上涨';
+          hsDetail.action = '回踩企稳加仓，破颈线止损';
+        } else if (breakoutState === 'FAILED_BREAK') {
+          hsDetail.stage = '⚠️ 头肩底突破失败：跌破颈线超过3日，形态失效（FAILED_BREAK），建议止损';
+          hsDetail.outlook = '突破失败，下跌趋势可能延续';
+          hsDetail.action = '立即止损';
         }
       }
     }
@@ -1283,7 +1352,7 @@ function matchBearPatterns(data, ind) {
   }
   results.m_top = mTop;
 
-  // ===== 3. 头肩顶 =====
+  // ===== 3. 头肩顶（倾斜颈线+破位事件检测）=====
   let hsTop = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
   if (lookback > 30) {
     const headIdx = highs.indexOf(Math.max(...highs));
@@ -1295,33 +1364,63 @@ function matchBearPatterns(data, ind) {
       const rightShoulder = rightPart.length > 0 ? Math.max(...rightPart) : null;
       const rightShoulderIdx = rightPart.length > 0 ? rightPart.indexOf(rightShoulder) : -1;
       const head = highs[headIdx];
-      const neckLeft = Math.min(...lows.slice(0, headIdx));
-      const neckRight = rightPart.length > 0 ? Math.min(...lows.slice(headIdx + 3)) : neckLeft;
-      const neckline = Math.max(neckLeft, neckRight);
+
+      // 真正的两点连线颈线（BUG-011修复）
+      const lsIdx = leftShoulderIdx >= 0 ? leftShoulderIdx : 0;
+      const neckLeftIdx = lsIdx + lows.slice(lsIdx, headIdx).indexOf(Math.min(...lows.slice(lsIdx, headIdx)));
+      const neckLeftPrice = lows[neckLeftIdx];
+      const rightShoulderLocalIdx = headIdx + 3 + rightShoulderIdx;
+      let neckRightIdx = headIdx + 3;
+      if (rightShoulderLocalIdx > headIdx + 3) {
+        const seg = lows.slice(headIdx + 3, rightShoulderLocalIdx + 1);
+        neckRightIdx = headIdx + 3 + seg.indexOf(Math.min(...seg));
+      }
+      const neckRightPrice = lows[Math.min(neckRightIdx, lookback - 1)];
+
+      // 局部索引→全局索引偏移
+      const idxOffset = n - lookback;
+      const neckLeftGlobal = idxOffset + neckLeftIdx;
+      const neckRightGlobal = idxOffset + neckRightIdx;
+
+      // 颈线斜率（基于全局索引）
+      const neckSlope = neckRightGlobal > neckLeftGlobal ? (neckRightPrice - neckLeftPrice) / (neckRightGlobal - neckLeftGlobal) : 0;
+      // 当前位置的动态颈线值（全局索引last）
+      const neckline = neckLeftPrice + neckSlope * (last - neckLeftGlobal);
+
       const leftLower = leftShoulder && leftShoulder < head;
       const rightLower = rightShoulder && rightShoulder < head;
       const symmetry = leftShoulder && rightShoulder ? Math.abs(leftShoulder - rightShoulder) / leftShoulder < 0.2 : false;
       const broken = curPrice < neckline * 1.02;
-      const rightShoulderGlobalIdx = headIdx + 3 + rightShoulderIdx;
-      const rightShoulderDone = rightShoulderGlobalIdx < lookback - 3;
+      const rightShoulderDone = rightShoulderLocalIdx < lookback - 3;
+
+      // BUG-012修复：破位事件检测（全部使用全局索引）
+      let breakdownEvent = false, breakdownDayIdx = null;
+      for (let i = Math.max(1, last - 10); i <= last; i++) {
+        const prevNeck = neckLeftPrice + neckSlope * (i - 1 - neckLeftGlobal);
+        const curNeck = neckLeftPrice + neckSlope * (i - neckLeftGlobal);
+        if (data[i-1].close >= prevNeck && data[i].close < curNeck) {
+          breakdownEvent = true; breakdownDayIdx = i; break;
+        }
+      }
 
       hsTop.score = (leftLower?20:5)+(rightLower?20:5)+(symmetry?20:5)+(broken?40:10);
       hsTop.points = [
         { label: '左肩', value: leftShoulder ? leftShoulder.toFixed(2) : '-' },
         { label: '头部', value: head.toFixed(2) },
         { label: '右肩', value: rightShoulder ? rightShoulder.toFixed(2) : '构建中' },
-        { label: '颈线位', value: neckline.toFixed(2) },
+        { label: '左颈线点', value: neckLeftPrice.toFixed(2) },
+        { label: '右颈线点', value: neckRightPrice.toFixed(2) },
+        { label: '当前颈线', value: neckline.toFixed(2) },
         { label: '当前价', value: curPrice.toFixed(2) }
       ];
       if (leftShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + leftShoulderIdx, price: leftShoulder, label: '左肩', color: '#3498db' });
       hsTop.markers.points.push({ idx: n - lookback + headIdx, price: head, label: '头', color: '#e74c3c' });
-      if (rightShoulderDone && rightShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + rightShoulderGlobalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
+      if (rightShoulderDone && rightShoulderIdx >= 0) hsTop.markers.points.push({ idx: n - lookback + rightShoulderLocalIdx, price: rightShoulder, label: '右肩', color: '#3498db' });
       hsTop.markers.lines = [{ price: neckline, label: '头肩顶颈线', color: '#f39c12' }];
 
       if (!leftLower) {
         hsTop.stage = '头肩顶不成立：左肩未低于头部';
-        hsTop.outlook = '形态不标准';
-        hsTop.action = '观望';
+        hsTop.outlook = '形态不标准'; hsTop.action = '观望';
       } else if (!rightShoulderDone) {
         hsTop.stage = '右肩构建中：头部已形成，正在构建右肩';
         hsTop.outlook = '右肩高点应低于头部，右肩完成后关注颈线破位';
@@ -1330,20 +1429,51 @@ function matchBearPatterns(data, ind) {
         hsTop.stage = '右肩高于头部：头肩顶形态可能失败';
         hsTop.outlook = '右肩创新高，上升趋势可能延续';
         hsTop.action = '观望或继续持股';
-      } else if (!broken) {
-        hsTop.stage = '右肩已完成，向颈线下行：破位前夜';
-        hsTop.outlook = '放量跌破颈线则头肩顶确认，最小跌幅=头部到颈线距离';
-        hsTop.action = '可减仓，跌破颈线清仓';
       } else {
-        const pullback = curPrice > neckline * 0.95 && data[last].high > neckline;
-        if (pullback) {
-          hsTop.stage = '头肩顶破位后回抽颈线确认中';
+        // BUG-014：完整破位状态机
+        let breakdownState = 'PRE_BREAKDOWN';
+        if (broken && breakdownEvent) {
+          const daysSince = last - breakdownDayIdx;
+          if (daysSince === 0) {
+            breakdownState = 'BREAKDOWN_DAY';
+          } else {
+            const recentHigh = Math.max(...data.slice(breakdownDayIdx, last+1).map(d => d.high));
+            const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+            let aboveCount = 0;
+            for (let i = breakdownDayIdx+1; i <= last; i++) if (data[i].close > neckline) aboveCount++;
+            const isFailed = aboveCount >= 3 && curPrice > neckline;
+            if (isFailed) breakdownState = 'FAILED_BREAKDOWN';
+            else if (isRetest) breakdownState = 'RETEST';
+            else breakdownState = 'POST_BREAKDOWN';
+          }
+        } else if (!broken && breakdownEvent) {
+          let aboveCount = 0;
+          for (let i = breakdownDayIdx+1; i <= last; i++) if (data[i].close > neckline) aboveCount++;
+          breakdownState = aboveCount >= 3 ? 'FAILED_BREAKDOWN' : 'RETEST';
+        }
+        hsTop.breakdownState = breakdownState;
+        if (breakdownState === 'FAILED_BREAKDOWN') hsTop.score = Math.max(10, hsTop.score - 30);
+
+        if (breakdownState === 'PRE_BREAKDOWN') {
+          hsTop.stage = '右肩已完成，向颈线下行：破位前夜（PRE_BREAKDOWN）';
+          hsTop.outlook = '放量跌破颈线则头肩顶确认，最小跌幅=头部到颈线距离';
+          hsTop.action = '可减仓，跌破颈线清仓';
+        } else if (breakdownState === 'BREAKDOWN_DAY') {
+          hsTop.stage = '头肩顶跌破颈线当日：顶部确认（BREAKDOWN_DAY）';
+          hsTop.outlook = '破位事件已确认，目标价=颈线-(头部-颈线)，沿均线持币';
+          hsTop.action = '止损离场，不要抄底';
+        } else if (breakdownState === 'POST_BREAKDOWN') {
+          hsTop.stage = `头肩顶破位后运行中（第${last - breakdownDayIdx}日）：顶部确认（POST_BREAKDOWN）`;
+          hsTop.outlook = '目标价=颈线-(头部-颈线)，沿均线持币';
+          hsTop.action = '持币观望，不要抄底';
+        } else if (breakdownState === 'RETEST') {
+          hsTop.stage = '头肩顶破位后回抽颈线确认中（RETEST）：关注颈线压力';
           hsTop.outlook = '回抽不过颈线则确认有效，开启下跌';
           hsTop.action = '回抽是最后离场机会，不过颈线清仓';
-        } else {
-          hsTop.stage = '头肩顶已跌破颈线：顶部确认，下跌进行中';
-          hsTop.outlook = '目标价=颈线-(头部-颈线)，沿均线持币';
-          hsTop.action = '止损离场，不要抄底';
+        } else if (breakdownState === 'FAILED_BREAKDOWN') {
+          hsTop.stage = '⚠️ 头肩顶破位失败：涨回颈线上方超过3日，形态失效（FAILED_BREAKDOWN）';
+          hsTop.outlook = '破位失败，上升趋势可能延续';
+          hsTop.action = '重新评估，可考虑回补';
         }
       }
     }
@@ -1630,7 +1760,7 @@ function analyzeMarketEnv(data) {
   };
 }
 
-// ============ 形态-环境历史准确率表 ============
+// ============ 形态-环境适配分表（经验先验，非真实历史胜率） ============
 // 环境分类：bull=牛市(大盘≥60分), range=震荡市(40-60分), bear=熊市(<40分)
 const PATTERN_ENV_ACCURACY = {
   // 上升形态
@@ -1676,7 +1806,7 @@ function calcEnvAccuracy(patternId, patternScore, marketEnv) {
   const patternName = PATTERN_NAMES[patternId] || patternId;
   return {
     envType, envScore, historicalAccuracy, combinedAccuracy, scoreBonus,
-    detail: `${envType}环境下，${patternName}历史准确率${historicalAccuracy}%，综合准确率${combinedAccuracy}%。${advice}`
+    detail: `${envType}环境下，${patternName}环境适配分${historicalAccuracy}%（经验先验），综合信号可信度${combinedAccuracy}%。${advice}`
   };
 }
 
@@ -2388,7 +2518,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const neckConfirm = calcNecklineConfirm(data, bestDetail, bestType === 'bear');
   const attention = calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm);
 
-  // 形态-环境适配度（当前大盘环境下该形态的历史准确率）
+  // 形态-环境适配度（当前大盘环境下该形态的环境适配分）
   const envAccuracy = calcEnvAccuracy(best.id, bestScore, marketEnv);
   // 将环境适配度加成纳入推荐度评分
   if (envAccuracy.scoreBonus !== 0) {
@@ -2410,7 +2540,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const bearBestPattern = BEAR_PATTERNS.find(p => p.id === bearBestId);
   const bullEnvAccuracy = calcEnvAccuracy(bullBestId, bullBestScore, marketEnv);
   const bearEnvAccuracy = calcEnvAccuracy(bearBestId, bearBestScore, marketEnv);
-  // 综合买卖准确率 = 信号分 × 环境适配率
+  // 综合买卖信号可信度 = 信号分 × 环境适配率
   const buyAccuracy = Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100);
   const sellAccuracy = Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100);
 
@@ -2669,7 +2799,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
     <!-- ===== 形态-环境适配度（多空双侧） ===== -->
     <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">买卖信号准确率 <span style="font-size:11px;color:#8899aa;font-weight:400;">（信号强度 × 环境适配率 = 综合准确率）</span></span>
+        <span style="font-size:14px;font-weight:600;color:#f0f0f0;">买卖信号可信度 <span style="font-size:11px;color:#8899aa;font-weight:400;">（信号强度 × 环境适配率 = 综合信号可信度，经验先验非真实胜率）</span></span>
         <span style="font-size:12px;padding:3px 10px;border-radius:10px;background:${envAccuracy.envType==='牛市'?'rgba(231,76,60,0.2)':envAccuracy.envType==='熊市'?'rgba(46,204,113,0.2)':'rgba(243,156,18,0.2)'};color:${envAccuracy.envType==='牛市'?'#e74c3c':envAccuracy.envType==='熊市'?'#2ecc71':'#f39c12'};">当前环境：${envAccuracy.envType}（大盘${marketEnv?marketEnv.score:'-'}分）</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -2680,9 +2810,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
             <span style="font-size:11px;color:#8899aa;">匹配度 ${bullBestScore}分</span>
           </div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bullBestPattern?bullBestPattern.name:bullBestId}</b></div>
-          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bullEnvAccuracy.historicalAccuracy>=60?'#e74c3c':bullEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#2ecc71'};">${bullEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态环境适配分，经验先验）</div>
           <div style="text-align:center;padding:8px;background:rgba(231,76,60,0.15);border-radius:6px;">
-            <div style="font-size:11px;color:#8899aa;">买入综合准确率</div>
+            <div style="font-size:11px;color:#8899aa;">买入信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${buyAccuracy>=60?'#e74c3c':buyAccuracy>=40?'#f39c12':'#556677'};">${buyAccuracy}%</div>
           </div>
           <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${buyAccuracy}%;background:#e74c3c;border-radius:2px;"></div></div>
@@ -2694,9 +2824,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
             <span style="font-size:11px;color:#8899aa;">匹配度 ${bearBestScore}分</span>
           </div>
           <div style="font-size:12px;color:#aabbcc;margin-bottom:6px;">最佳形态：<b style="color:#f0f0f0;">${bearBestPattern?bearBestPattern.name:bearBestId}</b></div>
-          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态历史准确率）</div>
+          <div style="font-size:12px;color:#aabbcc;margin-bottom:8px;">环境适配率：<b style="color:${bearEnvAccuracy.historicalAccuracy>=60?'#2ecc71':bearEnvAccuracy.historicalAccuracy>=45?'#f39c12':'#e74c3c'};">${bearEnvAccuracy.historicalAccuracy}%</b>（${envAccuracy.envType}下该形态环境适配分，经验先验）</div>
           <div style="text-align:center;padding:8px;background:rgba(46,204,113,0.15);border-radius:6px;">
-            <div style="font-size:11px;color:#8899aa;">卖出综合准确率</div>
+            <div style="font-size:11px;color:#8899aa;">卖出信号可信度<sup style="color:#f39c12;">*</sup></div>
             <div style="font-size:28px;font-weight:900;color:${sellAccuracy>=60?'#2ecc71':sellAccuracy>=40?'#f39c12':'#556677'};">${sellAccuracy}%</div>
           </div>
           <div style="margin-top:6px;height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${sellAccuracy}%;background:#2ecc71;border-radius:2px;"></div></div>
@@ -2708,6 +2838,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
           sellAccuracy > buyAccuracy + 10 ? '<b style="color:#2ecc71;">卖出信号更强</b>：顶部形态匹配度高且当前环境适合该形态，建议止盈止损，不要抄底。' :
           '<b style="color:#f39c12;">多空博弈</b>：买卖信号强度接近，方向不明，建议观望等待明确信号。'}
         （买入${buyAccuracy}% vs 卖出${sellAccuracy}%，差值${Math.abs(buyAccuracy-sellAccuracy)}%）
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1a2332;font-size:10px;color:#556677;">
+          <sup style="color:#f39c12;">*</sup> 信号可信度 = 形态匹配度 × 环境适配率（经验先验值），非项目内真实回测胜率。形态经典可靠性（头肩底85%等）为行业经验统计，待回测校准。
+        </div>
       </div>
     </div>
 
@@ -3382,19 +3515,42 @@ const GITHUB_SETTINGS_KEY = 'kline_github_settings_v1';
 
 function getGithubSettings() {
   try {
-    const data = localStorage.getItem(GITHUB_SETTINGS_KEY);
-    return data ? JSON.parse(data) : null;
+    // 优先从 sessionStorage 读取（更安全，关闭浏览器即清除）
+    let data = sessionStorage.getItem(GITHUB_SETTINGS_KEY);
+    let storageUsed = sessionStorage;
+    if (!data) {
+      // 兼容旧版 localStorage
+      data = localStorage.getItem(GITHUB_SETTINGS_KEY);
+      storageUsed = localStorage;
+    }
+    if (!data) return null;
+    const settings = JSON.parse(data);
+    // Token 过期检查（默认7天）— 过期则实际删除，不只是标记
+    if (settings.token && settings.savedAt) {
+      const ageDays = (Date.now() - settings.savedAt) / (1000 * 60 * 60 * 24);
+      if (ageDays > 7) {
+        console.warn('GitHub Token已过期（超过7天），已自动删除');
+        // 实际删除两个存储中的数据
+        sessionStorage.removeItem(GITHUB_SETTINGS_KEY);
+        localStorage.removeItem(GITHUB_SETTINGS_KEY);
+        return null;
+      }
+    }
+    return settings;
   } catch(e) { return null; }
 }
 
 function saveGithubSettings() {
+  const useSession = document.getElementById('useSessionStorage')?.checked ?? true;
   const settings = {
     username: document.getElementById('ghUsername').value.trim() || 'Firsh3k',
     repo: document.getElementById('ghRepo').value.trim() || 'kline-visual-pattern-analyzer',
     branch: document.getElementById('ghBranch').value.trim() || 'main',
     path: document.getElementById('ghPath').value.trim() || 'config/watchlist.json',
     token: document.getElementById('ghToken').value.trim(),
-    autoSync: document.getElementById('autoSyncEnabled').checked
+    autoSync: document.getElementById('autoSyncEnabled').checked,
+    savedAt: Date.now(),
+    storageType: useSession ? 'session' : 'local'
   };
   if (!settings.token) {
     alert('请填写GitHub Personal Access Token');
@@ -3405,14 +3561,31 @@ function saveGithubSettings() {
     alert('Token格式不正确，长度至少10个字符');
     return;
   }
+  // #18/#16 安全强制：完全禁止 localStorage 持久化 write PAT
+  // GitHub PAT 含 repo 写权限，持久化到 localStorage 存在安全风险
+  // 强制使用 sessionStorage（关闭浏览器即自动清除）
+  if (!useSession) {
+    alert(
+      '⚠️ 安全策略：不允许将 GitHub Personal Access Token 持久化到 localStorage。\n\n' +
+      '原因：PAT 含 repo 写权限，任何同源脚本或恶意扩展都可能读取，导致仓库被篡改或删除。\n\n' +
+      '已自动切换为 sessionStorage（关闭浏览器即自动清除，更安全）。'
+    );
+    document.getElementById('useSessionStorage').checked = true;
+    useSession = true;
+    settings.storageType = 'session';
+  }
   try {
-    localStorage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
-    showSyncStatus('✅ 设置已保存！Token已加密存储在本地', '#27ae60');
+    const storage = useSession ? sessionStorage : localStorage;
+    storage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
+    // 清除另一个存储中的旧数据
+    const otherStorage = useSession ? localStorage : sessionStorage;
+    otherStorage.removeItem(GITHUB_SETTINGS_KEY);
+    const storageName = useSession ? 'sessionStorage（关闭浏览器即清除）' : 'localStorage（持久化，安全性较低）';
+    showSyncStatus(`✅ 设置已保存！Token存储在${storageName}，7天后自动过期`, '#27ae60');
     updateAutoSyncUI();
-    // 保存成功后测试连接
     setTimeout(() => testGithubConnection(), 300);
   } catch(e) {
-    alert('保存失败: ' + e.message + '。可能是浏览器禁用了localStorage，请检查隐私设置。');
+    alert('保存失败: ' + e.message + '。可能是浏览器禁用了存储，请检查隐私设置。');
   }
 }
 
@@ -3423,9 +3596,16 @@ function loadGithubSettings() {
     document.getElementById('ghRepo').value = settings.repo || 'kline-visual-pattern-analyzer';
     document.getElementById('ghBranch').value = settings.branch || 'main';
     document.getElementById('ghPath').value = settings.path || 'config/watchlist.json';
-    document.getElementById('ghToken').value = settings.token || '';
+    document.getElementById('ghToken').value = settings._tokenExpired ? '' : (settings.token || '');
     document.getElementById('autoSyncEnabled').checked = settings.autoSync || false;
-    showSyncStatus(`✅ 已加载保存的设置（${settings.username}/${settings.repo}）`, '#27ae60');
+    if (document.getElementById('useSessionStorage')) {
+      document.getElementById('useSessionStorage').checked = settings.storageType !== 'local';
+    }
+    if (settings._tokenExpired) {
+      showSyncStatus('⚠️ Token已过期（超过7天），请重新输入Token', '#e74c3c');
+    } else {
+      showSyncStatus(`✅ 已加载保存的设置（${settings.username}/${settings.repo}）`, '#27ae60');
+    }
   } else {
     showSyncStatus('💡 请填写Token后点击保存设置', '#f39c12');
   }
@@ -3689,7 +3869,7 @@ function calculateStockResult(result, marketEnv = null) {
   const prev = result.data[result.data.length - 2];
   const pct = ((last.close - prev.close) / prev.close * 100).toFixed(2);
 
-  // 买卖信号准确率（需要大盘环境）
+  // 买卖信号可信度（需要大盘环境）
   let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
   if (marketEnv) {
     const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
@@ -3758,8 +3938,8 @@ function renderWatchlistTable() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
-            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入信号可信度</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出信号可信度</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
             <th style="padding:10px 8px;width:40px;">操作</th>
@@ -3965,8 +4145,8 @@ function renderScanResults() {
             <th style="padding:10px 8px;">股票</th>
             <th style="padding:10px 8px;">现价</th>
             <th style="padding:10px 8px;">涨跌幅</th>
-            <th style="padding:10px 8px;color:#e74c3c;">买入准确率</th>
-            <th style="padding:10px 8px;color:#2ecc71;">卖出准确率</th>
+            <th style="padding:10px 8px;color:#e74c3c;">买入信号可信度</th>
+            <th style="padding:10px 8px;color:#2ecc71;">卖出信号可信度</th>
             <th style="padding:10px 8px;">推荐度</th>
             <th style="padding:10px 8px;">操作建议</th>
           </tr>

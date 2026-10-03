@@ -1,19 +1,56 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "exportDate": "2026-10-03",
-  "exportTime": "2026/10/3 15:30:06",
-  "description": "K线形态分析工具 - 自选股云配置（自动同步）",
+  "exportTime": "2026/10/3 18:00:55",
+  "description": "K线形态分析工具 - 自选股云配置（多设备合并同步+Tombstone删除语义）",
   "watchlist": [
     "603068",
-    "688105"
+    "688105",
+    "002119",
+    "600345",
+    "300684",
+    "301080",
+    "300647",
+    "688432",
+    "300170",
+    "002436",
+    "300602",
+    "301361",
+    "601288",
+    "000001"
   ],
+  "tombstones": [],
   "customSectors": [],
   "settings": {
     "scanMinScore": "60",
     "scanSignalType": "bull"
   },
   "stats": {
-    "watchlistCount": 2,
-    "customSectorsCount": 0
+    "watchlistCount": 14,
+    "customSectorsCount": 0,
+    "tombstoneCount": 0
+  },
+  "syncMeta": {
+    "mergedFromRemote": true,
+    "remoteCount": 2,
+    "localCount": 14,
+    "mergedCount": 14,
+    "onlyRemote": [],
+    "onlyLocal": [
+      "002119",
+      "600345",
+      "300684",
+      "301080",
+      "300647",
+      "688432",
+      "300170",
+      "002436",
+      "300602",
+      "301361",
+      "601288",
+      "000001"
+    ],
+    "resurrectedBlocked": [],
+    "mergedAt": "2026-10-03T10:00:55.168Z"
   }
 }

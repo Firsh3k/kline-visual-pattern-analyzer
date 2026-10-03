@@ -4033,7 +4033,7 @@ function renderWatchlistTags() {
     return `<span style="display:inline-flex;align-items:center;gap:6px;background:#1a2332;border:1px solid #2a3441;border-radius:14px;padding:4px 8px 4px 12px;font-size:13px;">
       <span style="color:#f0f0f0">${name}</span>
       <span style="color:#556677;font-size:11px">${code}</span>
-      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="仅本地删除">×</button>
+      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="从所有设备删除">×</button>
       <button onclick="deleteFromAllDevices('${code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:12px;padding:0 2px;line-height:1;" title="从所有设备删除（同步到云端）">☁️</button>
     </span>`;
   }).join('');
@@ -4072,8 +4072,23 @@ function addStock() {
   analyzeSingleStock(code);
 }
 
-// 删除股票
+// 删除股票（默认全局删除：创建tombstone，同步后所有设备都会删除）
 function removeStock(code) {
+  if (!code) return;
+  if (!confirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`)) return;
+
+  // 添加到本地tombstones（防止同步时被远程复活）
+  let tombstones = [];
+  try {
+    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
+    tombstones = data ? JSON.parse(data) : [];
+  } catch(e) {}
+  if (!tombstones.find(t => t.code === code)) {
+    tombstones.push({ code, deletedAt: new Date().toISOString() });
+    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+  }
+
+  // 从本地watchlist移除
   let codes = getWatchlist();
   codes = codes.filter(c => c !== code);
   saveWatchlist(codes);
@@ -4084,9 +4099,32 @@ function removeStock(code) {
   triggerAutoSync();
 }
 
-// 清空全部
+// 清空全部（提供全局清空和仅本机清空两种选择）
 function clearAllWatchlist() {
-  if (!confirm('确定清空全部自选股吗？')) return;
+  const choice = confirm(
+    '选择清空方式：\n\n' +
+    '【确定】所有设备清空 — 为所有股票创建tombstone，同步后所有设备都会清空\n\n' +
+    '【取消】仅本机清空 — 只清空本机，同步后远程股票会恢复'
+  );
+
+  if (choice) {
+    // 全局清空：为所有当前股票创建tombstone
+    const codes = getWatchlist();
+    let tombstones = [];
+    try {
+      const data = localStorage.getItem('kline_watchlist_tombstones_v1');
+      tombstones = data ? JSON.parse(data) : [];
+    } catch(e) {}
+    const now = new Date().toISOString();
+    codes.forEach(code => {
+      if (!tombstones.find(t => t.code === code)) {
+        tombstones.push({ code, deletedAt: now });
+      }
+    });
+    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+  }
+
+  // 清空本地
   saveWatchlist([]);
   watchlistResults = {};
   renderWatchlistTags();
@@ -4243,7 +4281,7 @@ function renderWatchlistTable() {
               </td>
               <td style="padding:10px 8px;color:#aabbcc;font-size:12px;max-width:200px">${r.advice}</td>
               <td style="padding:10px 8px;">
-                <button onclick="event.stopPropagation();removeStock('${r.code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:16px;padding:4px 6px;" title="仅本地删除">×</button>
+                <button onclick="event.stopPropagation();removeStock('${r.code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:16px;padding:4px 6px;" title="从所有设备删除">×</button>
                 <button onclick="event.stopPropagation();deleteFromAllDevices('${r.code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;padding:4px 6px;" title="从所有设备删除（同步到云端）">☁️</button>
               </td>
             </tr>

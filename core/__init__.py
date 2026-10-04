@@ -41,14 +41,6 @@ from .types import (
     PatternStage,
     SignalType,
     ConfidenceLevel,
-    AdjustmentType,
-    FrequencyType,
-    DataSourceType,
-    DataQualityFlag,
-    DataProvenance,
-    MarketDataBar,
-    MarketDataSeries,
-    DataQualityReport,
 )
 
 # V5 统一接口定义
@@ -66,7 +58,6 @@ from .interfaces import (
     DataProviderError,
     PatternDetectionError,
     AnalysisError,
-    MarketDataError,
 )
 
 # V5 算法注册中心
@@ -77,10 +68,10 @@ from .registry import (
     get_registry,
 )
 
-# V5 Phase 1B — Swing Pivot Engine (FIR-12)
+# V5 Phase 1B — Swing Pivot Engine (FIR-12 Engine Foundation)
 from .swing_pivot import SwingPivotEngine, PivotUpdateResult, HistoricalDataMutationError
 
-# V5 FIR-12 — 基于 SwingPivotEngine 的经典形态识别器
+# V5 FIR-12 Phase-2 — 基于 SwingPivotEngine 的经典形态识别器
 from .pivot_patterns import (
     PivotPatternDetectorBase,
     WBottomDetector,
@@ -93,7 +84,7 @@ from .pivot_patterns import (
 # __version__ = "5.1.0" 是 Canonical Core internal/API version，
 # 不代表 GitHub product release 已经达到 V5.1.0。
 # 正式产品 Release 版本由 Git tag / GitHub Release 决定（如 v4.0.0）。
-__version__ = "5.2.0"
+__version__ = "5.1.0"
 __all__ = [
     # 向后兼容 (PILOT-001)
     "detect_swing_pivots",
@@ -113,15 +104,6 @@ __all__ = [
     "PatternStage",
     "SignalType",
     "ConfidenceLevel",
-    # FIR-23 市场数据契约
-    "AdjustmentType",
-    "FrequencyType",
-    "DataSourceType",
-    "DataQualityFlag",
-    "DataProvenance",
-    "MarketDataBar",
-    "MarketDataSeries",
-    "DataQualityReport",
     # 接口
     "DataProvider",
     "IndicatorCalculator",
@@ -137,7 +119,6 @@ __all__ = [
     "DataProviderError",
     "PatternDetectionError",
     "AnalysisError",
-    "MarketDataError",
     # 注册中心
     "AlgorithmRegistry",
     "DuplicateRegistrationError",
@@ -147,7 +128,7 @@ __all__ = [
     "SwingPivotEngine",
     "PivotUpdateResult",
     "HistoricalDataMutationError",
-    # V5 FIR-12 — Pivot 形态识别器
+    # V5 FIR-12 Phase-2 — Pivot 形态识别器
     "PivotPatternDetectorBase",
     "WBottomDetector",
     "MTopDetector",

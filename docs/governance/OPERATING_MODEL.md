@@ -1,5 +1,11 @@
 # End-to-End Product × Engineering × Release Operating Model
 
+## Visual overview
+
+![Kline Product × Engineering × Release Management Flow](product-engineering-release-flow.svg)
+
+The SVG above is the durable GitHub-native version of the interactive Visualize flow created during governance design. It is intended for quick orientation; the Mermaid diagrams below remain the editable structural source.
+
 ## System ownership
 
 - **Linear** — Product scope, backlog, priorities, acceptance criteria, milestones and V5/V6 classification.

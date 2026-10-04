@@ -97,9 +97,9 @@ class CalibrationSignalGenerator:
         klines: List[OHLCV],
         stock_code: str,
         market_regime_by_date: Dict[str, MarketRegime],
-        data_source: str = "multi_source",
-        adjustment: str = "qfq",
-        data_quality: str = "OK",
+        data_source: str = "unknown",
+        adjustment: str = "unknown",
+        data_quality: str = "unknown",
         provenance: Optional[dict] = None,
     ) -> List[SignalOccurrence]:
         """对一只股票的历史数据逐日生成信号

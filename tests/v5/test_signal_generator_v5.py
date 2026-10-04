@@ -190,7 +190,8 @@ class TestProvenance:
                                low=c - 0.2, close=c, volume=2000.0))
         gen = CalibrationSignalGenerator()
         sigs = gen.generate_signals(klines, "600519", {},
-                                    data_source="multi_source", adjustment="qfq")
+                                    data_source="multi_source", adjustment="qfq",
+                                    data_quality="OK")
         assert sigs, "上升趋势应有信号"
         for s in sigs:
             assert s.data_source == "multi_source"

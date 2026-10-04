@@ -229,10 +229,20 @@ class CalibrationDataCollector:
             anomalies = getattr(qr, "anomalies", None) or []
             cr = getattr(qr, "completeness_ratio", None)
             adj_consistent = getattr(qr, "adjustment_consistent", False)
+            src_consistency = getattr(qr, "source_consistency", None)
 
             issues = []
             if not adj_consistent:
                 issues.append("adjustment_unverified")
+            # FIR-23 source-consistency policy (fail-closed):
+            #   source_consistency = 1.0 - avg_diff (multi-source cross-validation)
+            #   None  → unknown (single-source, cannot verify) → fail-closed
+            #   < 0.95 → inconsistent (cross-source diff > 5%)
+            #   >= 0.95 → consistent
+            if src_consistency is None:
+                issues.append("source_consistency_unknown")
+            elif src_consistency < 0.95:
+                issues.append("source_inconsistent")
             if missing_days > 0 or unknown_missing_days > 0:
                 issues.append("has_missing")
             if suspended_days > 0:

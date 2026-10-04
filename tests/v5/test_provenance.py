@@ -85,6 +85,7 @@ def _good_quality_report() -> DataQualityReport:
         total_days=365, expected_trading_days=243, actual_bars=243,
         suspended_days=0, missing_days=0, completeness_ratio=1.0,
         adjustment_consistent=True, unknown_missing_days=0,
+        source_consistency=0.99,  # 多源交叉验证通过（差异<1%）
     )
 
 
@@ -205,6 +206,37 @@ class TestBuildProvenance:
         # 完整 data_quality 子字段集齐全
         for f in CANONICAL_DATA_QUALITY_FIELDS:
             assert f in prov["data_quality"], f"missing dq field: {f}"
+
+    def test_source_consistency_none_fail_closed(self):
+        """source_consistency=None（单源，无法交叉验证）→ status 不能是 OK"""
+        qr = _good_quality_report()
+        qr.source_consistency = None  # 单源数据，无交叉验证
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        status = prov["data_quality"]["status"]
+        assert status != "OK", f"source_consistency=None must not produce OK, got: {status}"
+        assert "source_consistency_unknown" in status
+        assert prov["data_quality"]["source_consistency"] is None
+
+    def test_source_consistency_low_fail_closed(self):
+        """source_consistency<0.95（多源差异>5%）→ status 不能是 OK"""
+        qr = _good_quality_report()
+        qr.source_consistency = 0.90  # 10% 差异，明显不一致
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        status = prov["data_quality"]["status"]
+        assert status != "OK", f"source_consistency=0.90 must not produce OK, got: {status}"
+        assert "source_inconsistent" in status
+        assert prov["data_quality"]["source_consistency"] == 0.90
+
+    def test_source_consistency_high_ok(self):
+        """source_consistency>=0.95 且其他都好 → status=OK"""
+        qr = _good_quality_report()
+        qr.source_consistency = 0.98  # 2% 差异，可接受
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        assert prov["data_quality"]["status"] == "OK"
+        assert prov["data_quality"]["source_consistency"] == 0.98
 
     def test_unknown_fields_when_series_none(self):
         prov = CalibrationDataCollector._build_provenance(None)
@@ -328,6 +360,30 @@ class TestGeneratorProvenancePassThrough:
             assert s.adjustment == "unknown"
             # data_quality 在 SignalOccurrence 中为字符串（provenance dict 的 status 字段）
             assert s.data_quality == "unknown"
+
+    def test_default_params_are_unknown_fail_closed(self):
+        """不传 provenance 也不传显式参数时，默认值必须是 unknown，不能伪装成已验证数据。
+
+        Third QA Gate P0: generate_signals() 之前默认 data_source='multi_source',
+        adjustment='qfq', data_quality='OK'，这是 fail-open。修复后默认值全部为 unknown。
+        """
+        gen = CalibrationSignalGenerator()
+        klines = _rising_klines()
+        regime = {k.date: MarketRegime.RANGE for k in klines}
+        # 不传 provenance，也不传 data_source/adjustment/data_quality
+        sigs = gen.generate_signals(klines, "600519", regime)
+        assert sigs, "should still generate signals with unknown provenance"
+        for s in sigs:
+            assert s.data_source == "unknown", \
+                f"default data_source must be 'unknown', got '{s.data_source}'"
+            assert s.adjustment == "unknown", \
+                f"default adjustment must be 'unknown', got '{s.adjustment}'"
+            assert s.data_quality == "unknown", \
+                f"default data_quality must be 'unknown', got '{s.data_quality}'"
+            # 明确禁止伪装成已验证数据
+            assert s.data_source not in ("multi_source", "tencent", "sina")
+            assert s.adjustment not in ("qfq", "raw", "hfq")
+            assert s.data_quality != "OK"
 
     def test_fetch_stock_data_backward_compat_returns_list(self, tmp_path, monkeypatch):
         """fetch_stock_data 仍返回 List[OHLCV]（向后兼容）"""

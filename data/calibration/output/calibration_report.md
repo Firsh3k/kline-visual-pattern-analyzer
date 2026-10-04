@@ -2,65 +2,65 @@
 
 ## 概览
 - 股票数量: 73
-- 信号总数: 11,264
+- 信号总数: 8,646
 - 日期范围: 2024-05-16 ~ 2026-09-30
 - Horizons: T+3, T+5, T+10, T+20, T+40
 
 ## 总体胜率
 | Horizon | Sample Size | Win Rate | Avg Return | Avg MFE | Avg MAE | Confidence |
 |---------|-------------|----------|------------|---------|---------|------------|
-| T+3 | 11,201 | 46.5% | 0.2% | 3.5% | -2.7% | empirical |
-| T+5 | 11,165 | 46.9% | 0.4% | 4.7% | -3.5% | empirical |
-| T+10 | 11,082 | 46.2% | 0.6% | 6.9% | -4.9% | empirical |
-| T+20 | 10,925 | 47.6% | 1.3% | 10.2% | -6.8% | empirical |
-| T+40 | 10,732 | 48.9% | 2.0% | 15.0% | -9.4% | empirical |
+| T+3 | 8,610 | 47.4% | 0.4% | 3.4% | -2.5% | empirical |
+| T+5 | 8,587 | 48.3% | 0.6% | 4.5% | -3.3% | empirical |
+| T+10 | 8,420 | 47.6% | 0.6% | 6.6% | -4.6% | empirical |
+| T+20 | 8,319 | 47.7% | 1.3% | 9.7% | -6.5% | empirical |
+| T+40 | 7,914 | 49.5% | 2.5% | 15.0% | -8.9% | empirical |
 
 ## 按形态分组（T+20）
 | Pattern | Sample | Win Rate | Avg Return | Profit Factor | Confidence |
 |---------|--------|----------|------------|---------------|------------|
-| ma_bull | 1,037 | 47.6% | 1.7% | 1.47 | empirical |
-| ma_bear | 1,712 | 49.1% | 1.2% | 1.38 | empirical |
-| w_bottom | 2,557 | 48.1% | 1.5% | 1.41 | empirical |
-| m_top | 2,038 | 44.6% | 0.2% | 1.07 | empirical |
-| hs_bottom | 1,318 | 45.4% | 1.1% | 1.34 | empirical |
-| hs_top | 1,230 | 48.9% | 1.3% | 1.44 | empirical |
-| platform_break | 616 | 45.6% | 1.4% | 1.34 | empirical |
-| platform_break_down | 417 | 57.8% | 3.8% | 2.40 | empirical |
+| ma_bull | 437 | 46.7% | 1.8% | 1.50 | empirical |
+| ma_bear | 587 | 46.7% | 1.0% | 1.29 | empirical |
+| w_bottom | 2,026 | 46.0% | 1.0% | 1.29 | empirical |
+| m_top | 1,519 | 48.0% | 1.3% | 1.40 | empirical |
+| hs_bottom | 1,235 | 47.4% | 1.2% | 1.32 | empirical |
+| hs_top | 1,775 | 48.6% | 1.1% | 1.34 | empirical |
+| platform_break | 415 | 48.4% | 1.9% | 1.50 | empirical |
+| platform_break_down | 325 | 54.5% | 2.9% | 1.97 | empirical |
 
 ## 按大盘环境分组（T+20）
 | Regime | Sample | Win Rate | Avg Return | Profit Factor | Confidence |
 |--------|--------|----------|------------|---------------|------------|
-| bull | 3,696 | 47.8% | 1.3% | 1.37 | empirical |
-| bear | 4,922 | 48.6% | 1.1% | 1.32 | empirical |
-| range | 2,307 | 45.0% | 1.6% | 1.51 | empirical |
+| bull | 2,847 | 46.0% | 0.3% | 1.09 | empirical |
+| bear | 3,827 | 48.6% | 1.5% | 1.42 | empirical |
+| range | 1,645 | 48.3% | 2.4% | 1.88 | empirical |
 
 ## 交叉分组：形态 × 大盘环境（T+20）
 | Pattern | Regime | Sample | Win Rate | Avg Return | Profit Factor | Confidence |
 |---------|--------|--------|----------|------------|---------------|------------|
-| ma_bull | bull | 487 | 48.7% | 1.5% | 1.43 | empirical |
-| ma_bull | bear | 311 | 45.0% | -0.1% | 0.98 | empirical |
-| ma_bull | range | 239 | 49.0% | 4.7% | 2.67 | empirical |
-| ma_bear | bull | 321 | 35.2% | -2.7% | 0.44 | empirical |
-| ma_bear | bear | 1,001 | 54.4% | 2.7% | 1.97 | empirical |
-| ma_bear | range | 390 | 46.9% | 0.8% | 1.25 | empirical |
-| w_bottom | bull | 1,134 | 57.6% | 4.0% | 2.45 | empirical |
-| w_bottom | bear | 867 | 37.7% | -1.8% | 0.64 | empirical |
-| w_bottom | range | 556 | 45.1% | 1.6% | 1.50 | empirical |
-| m_top | bull | 348 | 34.5% | -2.7% | 0.43 | empirical |
-| m_top | bear | 1,308 | 49.3% | 1.3% | 1.44 | empirical |
-| m_top | range | 382 | 37.4% | -0.7% | 0.80 | empirical |
-| hs_bottom | bull | 688 | 47.5% | 2.4% | 1.76 | empirical |
-| hs_bottom | bear | 328 | 45.1% | -0.5% | 0.88 | empirical |
-| hs_bottom | range | 302 | 40.7% | 0.1% | 1.04 | empirical |
-| hs_top | bull | 330 | 46.7% | -0.5% | 0.86 | empirical |
-| hs_top | bear | 671 | 50.8% | 2.1% | 1.75 | empirical |
-| hs_top | range | 229 | 46.7% | 1.4% | 1.60 | empirical |
-| platform_break | bull | 318 | 42.1% | -0.4% | 0.92 | empirical |
-| platform_break | bear | 155 | 47.1% | 0.7% | 1.15 | empirical |
-| platform_break | range | 143 | 51.7% | 6.1% | 2.87 | empirical |
-| platform_break_down | bull | 70 | 38.6% | -0.5% | 0.89 | low_confidence |
-| platform_break_down | bear | 281 | 61.9% | 4.5% | 2.79 | empirical |
-| platform_break_down | range | 66 | 60.6% | 5.5% | 3.58 | low_confidence |
+| ma_bull | bull | 207 | 45.4% | 0.9% | 1.24 | empirical |
+| ma_bull | bear | 132 | 47.0% | 0.8% | 1.20 | empirical |
+| ma_bull | range | 98 | 49.0% | 5.0% | 2.86 | low_confidence |
+| ma_bear | bull | 127 | 37.0% | -2.7% | 0.43 | empirical |
+| ma_bear | bear | 331 | 55.0% | 3.1% | 2.15 | empirical |
+| ma_bear | range | 129 | 34.9% | -0.7% | 0.82 | empirical |
+| w_bottom | bull | 750 | 48.4% | 0.9% | 1.26 | empirical |
+| w_bottom | bear | 892 | 43.4% | 0.3% | 1.08 | empirical |
+| w_bottom | range | 384 | 47.4% | 2.9% | 2.06 | empirical |
+| m_top | bull | 459 | 45.1% | -0.1% | 0.98 | empirical |
+| m_top | bear | 759 | 50.2% | 2.1% | 1.69 | empirical |
+| m_top | range | 301 | 46.8% | 1.1% | 1.43 | empirical |
+| hs_bottom | bull | 446 | 46.2% | 0.8% | 1.22 | empirical |
+| hs_bottom | bear | 543 | 47.5% | 1.1% | 1.27 | empirical |
+| hs_bottom | range | 246 | 49.2% | 2.0% | 1.72 | empirical |
+| hs_top | bull | 605 | 46.8% | 0.1% | 1.03 | empirical |
+| hs_top | bear | 843 | 48.4% | 1.3% | 1.39 | empirical |
+| hs_top | range | 327 | 52.6% | 2.4% | 1.99 | empirical |
+| platform_break | bull | 187 | 45.5% | 0.1% | 1.03 | empirical |
+| platform_break | bear | 120 | 50.0% | 1.2% | 1.28 | empirical |
+| platform_break | range | 108 | 51.9% | 5.7% | 2.84 | empirical |
+| platform_break_down | bull | 66 | 39.4% | -0.2% | 0.95 | low_confidence |
+| platform_break_down | bear | 207 | 58.5% | 3.4% | 2.22 | empirical |
+| platform_break_down | range | 52 | 57.7% | 4.6% | 2.97 | low_confidence |
 
 ---
 

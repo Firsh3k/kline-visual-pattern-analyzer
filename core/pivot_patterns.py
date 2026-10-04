@@ -81,7 +81,26 @@ class PivotPatternDetectorBase(PatternDetector):
         if pivots is None:
             engine = SwingPivotEngine(left_bars=self.left_bars, right_bars=self.right_bars)
             return engine.detect_confirmed_only(klines)
-        return [p for p in pivots if p.confirmed]
+
+        n = len(klines)
+        result: List[PivotPoint] = []
+        for p in pivots:
+            # 1) 必须是已确认 pivot（pending 不参与形态识别）
+            if not p.confirmed:
+                continue
+            # 2) 必须携带 point-in-time 确认元数据
+            if p.confirmed_at_index is None:
+                continue
+            # 3) 确认时点不能晚于当前 prefix 的最后一根K线 —— 否则引入未来函数
+            if p.confirmed_at_index > n - 1:
+                continue
+            # 4) pivot index/date 必须属于当前 series/prefix，防止跨 series 错位
+            if p.index < 0 or p.index >= n:
+                continue
+            if p.date != klines[p.index].date:
+                continue
+            result.append(p)
+        return result
 
     # ---------- 量能 ----------
 
@@ -217,26 +236,6 @@ class PivotPatternDetectorBase(PatternDetector):
             return max(candidates, key=lambda p: p.price)
         return min(candidates, key=lambda p: p.price)
 
-    @staticmethod
-    def _fallback_extreme_bar(
-        klines: List[OHLCV],
-        start: int,
-        end: int,
-        pick_high: bool,
-    ) -> PivotPoint:
-        """区间内无合适 pivot 时，退化取K线本身的最高/最低点作为颈线点"""
-        seg = klines[start:end + 1]
-        if pick_high:
-            rel = max(range(len(seg)), key=lambda i: seg[i].high)
-            idx = start + rel
-            return PivotPoint(index=idx, date=klines[idx].date,
-                              price=klines[idx].high, pivot_type="swing_high")
-        rel = min(range(len(seg)), key=lambda i: seg[i].low)
-        idx = start + rel
-        return PivotPoint(index=idx, date=klines[idx].date,
-                          price=klines[idx].low, pivot_type="swing_low")
-
-
 # ============================================================
 # W Bottom — W底/双底（看涨）
 # ============================================================
@@ -289,10 +288,11 @@ class WBottomDetector(PivotPatternDetectorBase):
 
             # --- 颈线：两底之间最高的 swing high ---
             between = [h for h in highs if a.index < h.index < b.index]
-            if between:
-                nl_pt = self._pick_extreme_pivot(between, pick_max=True)
-            else:
-                nl_pt = self._fallback_extreme_bar(klines, a.index, b.index, pick_high=True)
+            if not between:
+                # 缺少对立 pivot（两底之间无已确认 swing high）：拒绝该候选。
+                # 不允许退化到无限制的原始 K 线极值（违反 FIR-12 acceptance）。
+                continue
+            nl_pt = self._pick_extreme_pivot(between, pick_max=True)
             neckline = nl_pt.price
 
             # 水平颈线：常数函数
@@ -384,10 +384,10 @@ class MTopDetector(PivotPatternDetectorBase):
 
             # --- 颈线：两顶之间最低的 swing low ---
             between = [l for l in lows if a.index < l.index < b.index]
-            if between:
-                nl_pt = self._pick_extreme_pivot(between, pick_max=False)
-            else:
-                nl_pt = self._fallback_extreme_bar(klines, a.index, b.index, pick_high=False)
+            if not between:
+                # 缺少对立 pivot（两顶之间无已确认 swing low）：拒绝该候选
+                continue
+            nl_pt = self._pick_extreme_pivot(between, pick_max=False)
             neckline = nl_pt.price
 
             nl_fn = lambda idx, nl=neckline: nl
@@ -485,16 +485,16 @@ class HSBottomDetector(PivotPatternDetectorBase):
 
             # --- 颈线两点 ---
             left_between = [h for h in highs if ls.index < h.index < head.index]
-            if left_between:
-                ln = self._pick_extreme_pivot(left_between, pick_max=True)
-            else:
-                ln = self._fallback_extreme_bar(klines, ls.index, head.index, pick_high=True)
+            if not left_between:
+                # 左颈线区间缺少已确认对立 pivot：拒绝该候选
+                continue
+            ln = self._pick_extreme_pivot(left_between, pick_max=True)
 
             right_between = [h for h in highs if head.index < h.index < rs.index]
-            if right_between:
-                rn = self._pick_extreme_pivot(right_between, pick_max=True)
-            else:
-                rn = self._fallback_extreme_bar(klines, head.index, rs.index, pick_high=True)
+            if not right_between:
+                # 右颈线区间缺少已确认对立 pivot：拒绝该候选
+                continue
+            rn = self._pick_extreme_pivot(right_between, pick_max=True)
 
             # 倾斜颈线：线性插值
             if rn.index != ln.index:
@@ -597,16 +597,16 @@ class HSTopDetector(PivotPatternDetectorBase):
 
             # --- 颈线两点 ---
             left_between = [l for l in lows if ls.index < l.index < head.index]
-            if left_between:
-                ln = self._pick_extreme_pivot(left_between, pick_max=False)
-            else:
-                ln = self._fallback_extreme_bar(klines, ls.index, head.index, pick_high=False)
+            if not left_between:
+                # 左颈线区间缺少已确认对立 pivot：拒绝该候选
+                continue
+            ln = self._pick_extreme_pivot(left_between, pick_max=False)
 
             right_between = [l for l in lows if head.index < l.index < rs.index]
-            if right_between:
-                rn = self._pick_extreme_pivot(right_between, pick_max=False)
-            else:
-                rn = self._fallback_extreme_bar(klines, head.index, rs.index, pick_high=False)
+            if not right_between:
+                # 右颈线区间缺少已确认对立 pivot：拒绝该候选
+                continue
+            rn = self._pick_extreme_pivot(right_between, pick_max=False)
 
             # 倾斜颈线：线性插值
             if rn.index != ln.index:

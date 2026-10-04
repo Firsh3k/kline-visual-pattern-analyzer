@@ -25,6 +25,7 @@ if PROJECT_ROOT not in sys.path:
 
 from core import (  # noqa: E402
     OHLCV,
+    PivotPoint,
     TrendDirection,
     PatternStage,
     ConfidenceLevel,
@@ -420,3 +421,109 @@ class TestScoring:
             assert r.confidence == ConfidenceLevel.S
         elif r.score >= 65:
             assert r.confidence == ConfidenceLevel.A
+
+# ============================================================
+# Blocker 2 — caller-supplied pivots 的 point-in-time 校验（防 look-ahead）
+# ============================================================
+
+def _flat_klines(n=30, price=100.0):
+    """构造 n 根平盘K线（open=close=price, high=price*1.01, low=price*0.99）"""
+    return make_klines([price] * n)
+
+
+def _w_manual_pivots(klines, a_idx=5, b_idx=20, h_idx=12,
+                     a_price=90.0, b_price=90.5, h_price=100.0,
+                     right_bars=5, b_confirmed_at=None, b_date=None, h_confirmed_at=None):
+    """
+    手工构造一组可构成 W 底的 confirmed pivot：
+      a (swing_low @ a_idx)、b (swing_low @ b_idx)、h (swing_high @ h_idx，落在 a,b 之间)
+    默认全部 confirmed=True 且携带合法 confirmed_at_index/date。
+    """
+    a = PivotPoint(index=a_idx, date=klines[a_idx].date, price=a_price,
+                   pivot_type="swing_low", confirmed=True,
+                   confirmed_at_index=a_idx + right_bars,
+                   confirmed_at_date=klines[a_idx + right_bars].date)
+    b = PivotPoint(index=b_idx, date=(b_date or klines[b_idx].date), price=b_price,
+                   pivot_type="swing_low", confirmed=True,
+                   confirmed_at_index=(b_confirmed_at if b_confirmed_at is not None
+                                       else b_idx + right_bars),
+                   confirmed_at_date=None)
+    h = PivotPoint(index=h_idx, date=klines[h_idx].date, price=h_price,
+                   pivot_type="swing_high", confirmed=True,
+                   confirmed_at_index=(h_confirmed_at if h_confirmed_at is not None
+                                       else h_idx + right_bars),
+                   confirmed_at_date=None)
+    return [a, b, h]
+
+
+class TestSuppliedPivotPointInTimeValidation:
+    """Blocker 2 — caller-supplied pivots 必须通过 point-in-time 校验，否则引入未来函数"""
+
+    def test_valid_supplied_pivots_form_w_bottom(self):
+        """基线：合法的手工 confirmed pivots 应能构成 W 底（验证测试夹具本身正确）"""
+        klines = _flat_klines(30)
+        pivots = _w_manual_pivots(klines)
+        results = WBottomDetector().detect(klines, pivots=pivots)
+        assert len(results) == 1
+        assert results[0].pattern_id == "w_bottom"
+
+    def test_full_history_pivots_leaked_into_prefix(self):
+        """full-history pivots 传入 prefix：在 prefix 达到 confirmed_at_index 之前不能使用"""
+        klines = _flat_klines(30)
+        full_pivots = _w_manual_pivots(klines)
+        prefix = klines[:18]  # indices 0..17
+        # b@20 的 confirmed_at_index=25 > 17，且 b.index=20 >= 18 —— 在 prefix 时点不可用
+        results = WBottomDetector().detect(prefix, pivots=full_pivots)
+        assert results == []
+        internal = WBottomDetector().detect(prefix)
+        assert results == internal
+
+    def test_confirmed_at_index_beyond_series_skipped(self):
+        """pivot.confirmed_at_index > len(klines)-1 → 被跳过"""
+        klines = _flat_klines(30)
+        pivots = _w_manual_pivots(klines, b_confirmed_at=30)
+        results = WBottomDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+    def test_mismatched_date_skipped(self):
+        """pivot.date != klines[p.index].date → 被跳过（跨 series 错位防护）"""
+        klines = _flat_klines(30)
+        pivots = _w_manual_pivots(klines, b_date="1999-01-01")
+        results = WBottomDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+    def test_unconfirmed_pivot_skipped(self):
+        """pivot.confirmed is False（pending）→ 被跳过"""
+        klines = _flat_klines(30)
+        pivots = _w_manual_pivots(klines)
+        pivots = [
+            PivotPoint(index=20, date=klines[20].date, price=90.5,
+                       pivot_type="swing_low", confirmed=False,
+                       confirmed_at_index=None, confirmed_at_date=None)
+            if p.index == 20 else p
+            for p in pivots
+        ]
+        results = WBottomDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+
+# ============================================================
+# Blocker 3 — raw-extrema fallback 已移除（仅原始窗口极值不能创建形态）
+# ============================================================
+
+class TestRawExtremaFallbackRemoved:
+    """Blocker 3 — 两对立 pivot 缺失时拒绝候选，不退化到无限制原始 K 线极值"""
+
+    def test_raw_window_extreme_does_not_create_w_bottom(self):
+        """两底之间无 swing high pivot、但有原始价格高点时，WBottomDetector 不返回结果"""
+        klines = _flat_klines(30)
+        a = PivotPoint(index=5, date=klines[5].date, price=90.0, pivot_type="swing_low",
+                       confirmed=True, confirmed_at_index=10,
+                       confirmed_at_date=klines[10].date)
+        b = PivotPoint(index=20, date=klines[20].date, price=90.5, pivot_type="swing_low",
+                       confirmed=True, confirmed_at_index=25,
+                       confirmed_at_date=klines[25].date)
+        raw_high_between = max(k.high for k in klines[5:21])
+        assert raw_high_between > 90.0  # 原始窗口里确实存在价格高点
+        results = WBottomDetector().detect(klines, pivots=[a, b])
+        assert results == []

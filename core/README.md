@@ -195,22 +195,42 @@ pattern_ids = registry.get_pattern_ids()
 - 前复权：以最新交易日收盘价为基准，历史价格向下调整
 - 后复权：以上市首日为基准，历史价格向上调整
 
+### UseCase 与 fail-closed 路由（Blocker 7）
+
+- `policy.UseCase`：
+  - `TECHNICAL_ANALYSIS` -> `AdjustmentType.FORWARD`（qfq，形态/指标）
+  - `TRANSACTION_PRICE`  -> `AdjustmentType.NONE`（真实成交价）
+- `MultiSourceDataProvider`：
+  - qfq/hfq 请求仅走 Tencent；Tencent 失败则 `raise DataProviderError`（fail closed），
+    **绝不**静默回退到 Sina raw（否则复权语义错误、provider 身份不诚实）。
+  - raw 请求：Sina 主源，失败降级 Tencent。
+- WEEKLY/MONTHLY：不直接用 provider 周/月行，而是先取带正确复权的 DAILY，
+  再由 `aggregation.py` 确定性派生（open=周一, high=周高, low=周低, close=周五, volume=求和）。
+
 ### 交易日历规则
 
 - 周六、周日休市（**即使国务院安排调休上班，股市仍休市**）
-- 法定节假日休市（2020-2025 硬编码，2026-2027 估算）
+- 法定节假日休市：2020-2026 硬编码自国务院/沪深北交易所公告（权威）。
+  2026 采用国办发明电〔2025〕7号 + 沪深北交易所 2025-12-22 休市安排。
+- **2027 及以后为未核实年份**：`is_trading_day`/`get_trading_days` 抛出
+  `CalendarUnverifiedError`（fail-closed），绝不把估算日历伪装成权威。
+  先用 `is_calendar_verified()` 检查。
 - 提供 `is_trading_day` / `get_trading_days` / `next_trading_day` / `prev_trading_day`
 
-### 缺失数据处理
+### 缺失数据处理（Blocker 6）
 
-- **停牌日**：不生成 K 线 bar，在 `DataQualityReport.suspended_days` 中记录
-- **数据源缺失**：MultiSource 自动降级到备源；仍缺失则记录 `missing_days`
-- **禁止静默前向填充**（no forward-fill）
-- **价格跳变 >20%** 标记为 anomaly（除权日除外）
+- **停牌日**：无停牌数据源时不臆断；缺口一律记为 `unknown_missing_days`（原因未知），
+  不静默记为 OK。`missing_days` 仅用于已知原因（停牌）归因。
+- **数据源缺失**：raw 请求 MultiSource 自动降级；仍缺失记入 `unknown_missing_days`。
+- **OHLC 不变量**：逐根校验 high>=low、high>=open/close、low<=open/close、volume>=0。
+- **重复/乱序**：`normalize_bars` 确定性去重（保留最后一根）并强制升序。
+- **禁止静默前向填充**（no forward-fill）。
+- **复权一致性**（Blocker 2）：无配对 raw 序列时返回 `UNVERIFIED`（bool=False），
+  绝不把 unknown 编码为 True。
 
 ### Provenance 设计
 
-每根 `MarketDataBar` 携带 `DataProvenance`，记录：
+每根 `MarketDataBar` **必填**携带 `DataProvenance`（Blocker 5），记录：
 - 数据源（sina/tencent/...）
 - 请求 URL
 - 拉取时间（ISO8601）
@@ -218,7 +238,9 @@ pattern_ids = registry.get_pattern_ids()
 - 已应用的复权方式
 - 数据质量标记
 
-这确保了每一根 K 线都可追溯到原始 API 响应。
+`MarketDataSeries` 另带 `schema_version`（当前 "1.0"）与派生属性 `last_bar_date`
+（= bars[-1].date，包含在 to_dict 中）。legacy `from_ohlcv` 会构造显式的 MANUAL
+占位 provenance（而非 None），并在校验中被标记为 untracked。
 
 ### 使用示例
 

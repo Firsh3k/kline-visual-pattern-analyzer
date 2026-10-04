@@ -10,7 +10,7 @@ MultiSourceDataProvider — 多源容错数据提供者
 
 from typing import List, Optional
 
-from ..interfaces import DataProvider, MarketDataError
+from ..interfaces import DataProvider, MarketDataError, DataProviderError
 from ..types import (
     MarketDataBar, MarketDataSeries, DataQualityReport,
     DataProvenance, DataQualityFlag, DataSourceType,

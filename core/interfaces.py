@@ -13,6 +13,8 @@ from .types import (
     StockData, OHLCV, PatternResult, SignalResult,
     MarketRegime, FakeSignalRisk, AnalysisResult, PivotPoint,
     BacktestResult, BacktestSummary,
+    MarketDataSeries, DataQualityReport,
+    AdjustmentType, FrequencyType,
 )
 
 
@@ -65,6 +67,60 @@ class DataProvider(ABC):
 
         Returns:
             List[str]: 股票代码列表
+        """
+        pass
+
+    # ---- FIR-23: Canonical Market Data Contract ----
+
+    @abstractmethod
+    def fetch_klines(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        frequency: FrequencyType = FrequencyType.DAILY,
+        adjustment: AdjustmentType = AdjustmentType.NONE,
+    ) -> MarketDataSeries:
+        """
+        获取K线数据（统一市场数据契约）
+
+        Args:
+            symbol: 证券代码（带市场前缀，如 sh600519）
+            start_date: 开始日期 YYYY-MM-DD（可选）
+            end_date: 结束日期 YYYY-MM-DD（可选）
+            frequency: K线频率
+            adjustment: 复权方式
+
+        Returns:
+            MarketDataSeries: 带 provenance 和质量报告的数据序列
+        """
+        pass
+
+    @abstractmethod
+    def validate_data(self, series: MarketDataSeries) -> DataQualityReport:
+        """
+        校验市场数据质量
+
+        Args:
+            series: 待校验的数据序列
+
+        Returns:
+            DataQualityReport: 质量报告
+        """
+        pass
+
+    @abstractmethod
+    def get_trading_calendar(self, exchange: str, start_date: str, end_date: str) -> List[str]:
+        """
+        获取交易日历
+
+        Args:
+            exchange: 交易所标识（如 'SSE'）
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            List[str]: 交易日列表（升序）
         """
         pass
 
@@ -299,6 +355,11 @@ class CanonicalCoreError(Exception):
 
 class DataProviderError(CanonicalCoreError):
     """数据提供者异常"""
+    pass
+
+
+class MarketDataError(CanonicalCoreError):
+    """市场数据异常（FIR-23）"""
     pass
 
 

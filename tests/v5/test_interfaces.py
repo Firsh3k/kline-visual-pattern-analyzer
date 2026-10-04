@@ -117,6 +117,15 @@ class TestDataProviderInterface:
             def get_sector_constituents(self, sector_code):
                 return ["000001", "000002"]
 
+            def fetch_klines(self, symbol, start_date=None, end_date=None, frequency=None, adjustment=None):
+                raise NotImplementedError
+
+            def validate_data(self, series):
+                raise NotImplementedError
+
+            def get_trading_calendar(self, exchange, start_date, end_date):
+                return []
+
         provider = TestProvider()
         data = provider.get_stock_data("002436")
         assert data.code == "002436"

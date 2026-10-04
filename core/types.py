@@ -337,3 +337,267 @@ class BacktestSummary:
             'notes': self.notes,
             'results': [r.to_dict() for r in self.results],
         }
+
+
+# ===========================================================================
+# FIR-23: Canonical Market Data Contract
+# 以下类型为 FIR-23 新增，作为 FIR-13 Empirical Calibration 的数据基础。
+# ===========================================================================
+
+
+class AdjustmentType(Enum):
+    """复权方式"""
+    NONE = "none"          # 不复权
+    FORWARD = "qfq"        # 前复权
+    BACKWARD = "hfq"       # 后复权
+
+
+class FrequencyType(Enum):
+    """K线频率"""
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
+class DataSourceType(Enum):
+    """数据源类型"""
+    SINA = "sina"
+    TENCENT = "tencent"
+    IFIND = "ifind"
+    TONGDAXIN = "tongdaxin"
+    MANUAL = "manual"
+
+
+class DataQualityFlag(Enum):
+    """数据质量标记"""
+    OK = "ok"                # 正常
+    SUSPENDED = "suspended"  # 停牌
+    MISSING = "missing"      # 缺失
+    ADJUSTED = "adjusted"    # 已复权
+    PARTIAL = "partial"      # 部分数据
+
+
+@dataclass
+class DataProvenance:
+    """数据来源溯源 — 每根K线的元数据"""
+    source: DataSourceType               # 数据源
+    url: str                             # 请求URL
+    fetched_at: str                      # 拉取时间 ISO8601
+    raw_payload_hash: str                # 原始响应SHA256哈希
+    adjustment_applied: AdjustmentType   # 已应用的复权方式
+    quality_flag: DataQualityFlag        # 数据质量标记
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'source': self.source.value,
+            'url': self.url,
+            'fetched_at': self.fetched_at,
+            'raw_payload_hash': self.raw_payload_hash,
+            'adjustment_applied': self.adjustment_applied.value,
+            'quality_flag': self.quality_flag.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'DataProvenance':
+        return cls(
+            source=DataSourceType(data['source']),
+            url=str(data['url']),
+            fetched_at=str(data['fetched_at']),
+            raw_payload_hash=str(data['raw_payload_hash']),
+            adjustment_applied=AdjustmentType(data['adjustment_applied']),
+            quality_flag=DataQualityFlag(data['quality_flag']),
+        )
+
+
+@dataclass
+class DataQualityReport:
+    """数据质量报告 — 评估 MarketDataSeries 的完整性和一致性"""
+    total_days: int                                  # 总自然日数
+    expected_trading_days: int                       # 预期交易日数
+    actual_bars: int                                 # 实际K线数
+    suspended_days: int                              # 停牌天数
+    missing_days: int                                # 已知原因缺失天数（如停牌，当前无停牌源=0）
+    completeness_ratio: float                        # 完整率 (actual/expected)
+    adjustment_consistent: bool                      # 复权一致性（True 仅当 positively 证明；unknown=False）
+    unknown_missing_days: int = 0                   # 原因未知的缺失天数（provider/数据失败，blocker6）
+    source_consistency: Optional[float] = None      # 多源一致性（相关系数或平均差异比）
+    anomalies: List[Dict[str, Any]] = field(default_factory=list)  # 异常列表
+    notes: str = ""                                  # 备注
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'total_days': self.total_days,
+            'expected_trading_days': self.expected_trading_days,
+            'actual_bars': self.actual_bars,
+            'suspended_days': self.suspended_days,
+            'missing_days': self.missing_days,
+            'completeness_ratio': self.completeness_ratio,
+            'adjustment_consistent': self.adjustment_consistent,
+            'unknown_missing_days': self.unknown_missing_days,
+            'source_consistency': self.source_consistency,
+            'anomalies': self.anomalies,
+            'notes': self.notes,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'DataQualityReport':
+        return cls(
+            total_days=int(data['total_days']),
+            expected_trading_days=int(data['expected_trading_days']),
+            actual_bars=int(data['actual_bars']),
+            suspended_days=int(data['suspended_days']),
+            missing_days=int(data['missing_days']),
+            completeness_ratio=float(data['completeness_ratio']),
+            adjustment_consistent=bool(data['adjustment_consistent']),
+            unknown_missing_days=int(data.get('unknown_missing_days', 0)),
+            source_consistency=float(data['source_consistency']) if data.get('source_consistency') is not None else None,
+            anomalies=list(data.get('anomalies', [])),
+            notes=str(data.get('notes', '')),
+        )
+
+
+@dataclass
+class MarketDataBar:
+    """单根市场数据K线 — 带 provenance 的增强版OHLCV（provenance 必填，blocker5）"""
+    date: str                              # 日期 YYYY-MM-DD
+    open: float                            # 开盘价
+    high: float                            # 最高价
+    low: float                             # 最低价
+    close: float                           # 收盘价
+    volume: float                          # 成交量
+    provenance: DataProvenance            # 数据溯源（必填，不可为 None）
+    amount: Optional[float] = None        # 成交额（可选）
+
+    @staticmethod
+    def _legacy_provenance() -> 'DataProvenance':
+        """legacy 转换占位 provenance（MANUAL + 空字段）——会被校验标记为 untracked。"""
+        return DataProvenance(
+            source=DataSourceType.MANUAL,
+            url="",
+            fetched_at="",
+            raw_payload_hash="",
+            adjustment_applied=AdjustmentType.NONE,
+            quality_flag=DataQualityFlag.OK,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'date': self.date,
+            'open': self.open,
+            'high': self.high,
+            'low': self.low,
+            'close': self.close,
+            'volume': self.volume,
+            'amount': self.amount,
+            'provenance': self.provenance.to_dict() if self.provenance else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MarketDataBar':
+        prov_data = data.get('provenance')
+        provenance = DataProvenance.from_dict(prov_data) if prov_data else cls._legacy_provenance()
+        return cls(
+            date=str(data['date']),
+            open=float(data['open']),
+            high=float(data['high']),
+            low=float(data['low']),
+            close=float(data['close']),
+            volume=float(data['volume']),
+            provenance=provenance,
+            amount=float(data['amount']) if data.get('amount') is not None else None,
+        )
+
+    def to_ohlcv(self) -> OHLCV:
+        """转换为 legacy OHLCV（供下游算法使用）"""
+        return OHLCV(
+            date=self.date,
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+            amount=self.amount,
+        )
+
+    @classmethod
+    def from_ohlcv(cls, ohlcv: OHLCV, provenance: Optional[DataProvenance] = None) -> 'MarketDataBar':
+        """从 legacy OHLCV 构造（未提供 provenance 时构造显式 legacy 占位，而非 None）"""
+        return cls(
+            date=ohlcv.date,
+            open=ohlcv.open,
+            high=ohlcv.high,
+            low=ohlcv.low,
+            close=ohlcv.close,
+            volume=ohlcv.volume,
+            amount=ohlcv.amount,
+            provenance=provenance if provenance is not None else cls._legacy_provenance(),
+        )
+
+
+@dataclass
+class MarketDataSeries:
+    """市场数据序列 — 带元数据和质量报告的完整K线数据集"""
+    symbol: str                              # 证券代码（如 sh600519）
+    name: str                                # 证券名称
+    frequency: FrequencyType                 # K线频率
+    adjustment: AdjustmentType               # 复权方式
+    trading_calendar: str                    # 交易日历标识（如 'SSE'）
+    source: DataSourceType                   # 数据源
+    fetched_at: str                         # 拉取时间 ISO8601
+    bars: List[MarketDataBar]               # K线列表（按日期升序）
+    schema_version: str = "1.0"            # canonical schema 版本（blocker5）
+    quality_report: Optional[DataQualityReport] = None  # 数据质量报告
+
+    @property
+    def last_bar_date(self) -> str:
+        """最后一根K线日期（派生自 bars[-1].date；空序列返回空串）。
+
+        该属性不参与 dataclass field parity（派生量），但必须出现在 to_dict 中。
+        """
+        return self.bars[-1].date if self.bars else ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'symbol': self.symbol,
+            'name': self.name,
+            'frequency': self.frequency.value,
+            'adjustment': self.adjustment.value,
+            'trading_calendar': self.trading_calendar,
+            'source': self.source.value,
+            'fetched_at': self.fetched_at,
+            'schema_version': self.schema_version,
+            'last_bar_date': self.last_bar_date,
+            'bars': [b.to_dict() for b in self.bars],
+            'quality_report': self.quality_report.to_dict() if self.quality_report else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MarketDataSeries':
+        qr_data = data.get('quality_report')
+        return cls(
+            symbol=str(data['symbol']),
+            name=str(data['name']),
+            frequency=FrequencyType(data['frequency']),
+            adjustment=AdjustmentType(data['adjustment']),
+            trading_calendar=str(data['trading_calendar']),
+            source=DataSourceType(data['source']),
+            fetched_at=str(data['fetched_at']),
+            bars=[MarketDataBar.from_dict(b) for b in data.get('bars', [])],
+            schema_version=str(data.get('schema_version', '1.0')),
+            quality_report=DataQualityReport.from_dict(qr_data) if qr_data else None,
+        )
+
+    def to_ohlcv_list(self) -> List[OHLCV]:
+        """转换为 List[OHLCV] 供下游算法使用"""
+        return [b.to_ohlcv() for b in self.bars]
+
+    def to_stock_data(self) -> StockData:
+        """转换为 StockData（legacy 接口兼容）"""
+        return StockData(
+            code=self.symbol,
+            name=self.name,
+            klines=self.to_ohlcv_list(),
+            market="A股",
+            source=self.source.value,
+            last_updated=self.fetched_at,
+        )

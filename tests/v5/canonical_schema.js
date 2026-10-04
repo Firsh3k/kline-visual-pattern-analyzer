@@ -274,8 +274,8 @@ const CANONICAL_SCHEMA = {
     MarketDataBar: {
       name: 'MarketDataBar',
       field_count: 8,
-      required_fields: ['date', 'open', 'high', 'low', 'close', 'volume'],
-      optional_fields: ['amount', 'provenance'],
+      required_fields: ['date', 'open', 'high', 'low', 'close', 'volume', 'provenance'],
+      optional_fields: ['amount'],
       fields: [
         { name: 'date', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'open', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
@@ -283,16 +283,16 @@ const CANONICAL_SCHEMA = {
         { name: 'low', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'close', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'volume', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
-        { name: 'amount', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
-        { name: 'provenance', type: 'Optional[DataProvenance]', is_optional: true, has_default: true, default: null, nullable: true }
+        { name: 'provenance', type: 'DataProvenance', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'amount', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true }
       ]
     },
 
     MarketDataSeries: {
       name: 'MarketDataSeries',
-      field_count: 9,
+      field_count: 10,
       required_fields: ['symbol', 'name', 'frequency', 'adjustment', 'trading_calendar', 'source', 'fetched_at', 'bars'],
-      optional_fields: ['quality_report'],
+      optional_fields: ['schema_version', 'quality_report'],
       fields: [
         { name: 'symbol', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'name', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
@@ -302,15 +302,16 @@ const CANONICAL_SCHEMA = {
         { name: 'source', type: 'DataSourceType', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'fetched_at', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'bars', type: 'List[MarketDataBar]', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'schema_version', type: 'str', is_optional: false, has_default: true, default: '1.0', nullable: false },
         { name: 'quality_report', type: 'Optional[DataQualityReport]', is_optional: true, has_default: true, default: null, nullable: true }
       ]
     },
 
     DataQualityReport: {
       name: 'DataQualityReport',
-      field_count: 10,
+      field_count: 11,
       required_fields: ['total_days', 'expected_trading_days', 'actual_bars', 'suspended_days', 'missing_days', 'completeness_ratio', 'adjustment_consistent'],
-      optional_fields: ['source_consistency', 'anomalies', 'notes'],
+      optional_fields: ['unknown_missing_days', 'source_consistency', 'anomalies', 'notes'],
       fields: [
         { name: 'total_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'expected_trading_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
@@ -319,6 +320,7 @@ const CANONICAL_SCHEMA = {
         { name: 'missing_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'completeness_ratio', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'adjustment_consistent', type: 'bool', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'unknown_missing_days', type: 'int', is_optional: false, has_default: true, default: 0, nullable: false },
         { name: 'source_consistency', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
         { name: 'anomalies', type: 'List[Dict[str, Any]]', is_optional: false, has_default: true, default: [], nullable: false },
         { name: 'notes', type: 'str', is_optional: false, has_default: true, default: '', nullable: false }

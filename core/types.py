@@ -416,9 +416,10 @@ class DataQualityReport:
     expected_trading_days: int                       # 预期交易日数
     actual_bars: int                                 # 实际K线数
     suspended_days: int                              # 停牌天数
-    missing_days: int                                # 缺失天数
+    missing_days: int                                # 已知原因缺失天数（如停牌，当前无停牌源=0）
     completeness_ratio: float                        # 完整率 (actual/expected)
-    adjustment_consistent: bool                      # 复权一致性
+    adjustment_consistent: bool                      # 复权一致性（True 仅当 positively 证明；unknown=False）
+    unknown_missing_days: int = 0                   # 原因未知的缺失天数（provider/数据失败，blocker6）
     source_consistency: Optional[float] = None      # 多源一致性（相关系数或平均差异比）
     anomalies: List[Dict[str, Any]] = field(default_factory=list)  # 异常列表
     notes: str = ""                                  # 备注
@@ -432,6 +433,7 @@ class DataQualityReport:
             'missing_days': self.missing_days,
             'completeness_ratio': self.completeness_ratio,
             'adjustment_consistent': self.adjustment_consistent,
+            'unknown_missing_days': self.unknown_missing_days,
             'source_consistency': self.source_consistency,
             'anomalies': self.anomalies,
             'notes': self.notes,
@@ -447,6 +449,7 @@ class DataQualityReport:
             missing_days=int(data['missing_days']),
             completeness_ratio=float(data['completeness_ratio']),
             adjustment_consistent=bool(data['adjustment_consistent']),
+            unknown_missing_days=int(data.get('unknown_missing_days', 0)),
             source_consistency=float(data['source_consistency']) if data.get('source_consistency') is not None else None,
             anomalies=list(data.get('anomalies', [])),
             notes=str(data.get('notes', '')),
@@ -455,15 +458,27 @@ class DataQualityReport:
 
 @dataclass
 class MarketDataBar:
-    """单根市场数据K线 — 带 provenance 的增强版OHLCV"""
+    """单根市场数据K线 — 带 provenance 的增强版OHLCV（provenance 必填，blocker5）"""
     date: str                              # 日期 YYYY-MM-DD
     open: float                            # 开盘价
     high: float                            # 最高价
     low: float                             # 最低价
     close: float                           # 收盘价
     volume: float                          # 成交量
-    amount: Optional[float] = None         # 成交额（可选）
-    provenance: Optional[DataProvenance] = None  # 数据溯源
+    provenance: DataProvenance            # 数据溯源（必填，不可为 None）
+    amount: Optional[float] = None        # 成交额（可选）
+
+    @staticmethod
+    def _legacy_provenance() -> 'DataProvenance':
+        """legacy 转换占位 provenance（MANUAL + 空字段）——会被校验标记为 untracked。"""
+        return DataProvenance(
+            source=DataSourceType.MANUAL,
+            url="",
+            fetched_at="",
+            raw_payload_hash="",
+            adjustment_applied=AdjustmentType.NONE,
+            quality_flag=DataQualityFlag.OK,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -480,6 +495,7 @@ class MarketDataBar:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'MarketDataBar':
         prov_data = data.get('provenance')
+        provenance = DataProvenance.from_dict(prov_data) if prov_data else cls._legacy_provenance()
         return cls(
             date=str(data['date']),
             open=float(data['open']),
@@ -487,8 +503,8 @@ class MarketDataBar:
             low=float(data['low']),
             close=float(data['close']),
             volume=float(data['volume']),
+            provenance=provenance,
             amount=float(data['amount']) if data.get('amount') is not None else None,
-            provenance=DataProvenance.from_dict(prov_data) if prov_data else None,
         )
 
     def to_ohlcv(self) -> OHLCV:
@@ -505,7 +521,7 @@ class MarketDataBar:
 
     @classmethod
     def from_ohlcv(cls, ohlcv: OHLCV, provenance: Optional[DataProvenance] = None) -> 'MarketDataBar':
-        """从 legacy OHLCV 构造"""
+        """从 legacy OHLCV 构造（未提供 provenance 时构造显式 legacy 占位，而非 None）"""
         return cls(
             date=ohlcv.date,
             open=ohlcv.open,
@@ -514,7 +530,7 @@ class MarketDataBar:
             close=ohlcv.close,
             volume=ohlcv.volume,
             amount=ohlcv.amount,
-            provenance=provenance,
+            provenance=provenance if provenance is not None else cls._legacy_provenance(),
         )
 
 
@@ -529,7 +545,16 @@ class MarketDataSeries:
     source: DataSourceType                   # 数据源
     fetched_at: str                         # 拉取时间 ISO8601
     bars: List[MarketDataBar]               # K线列表（按日期升序）
+    schema_version: str = "1.0"            # canonical schema 版本（blocker5）
     quality_report: Optional[DataQualityReport] = None  # 数据质量报告
+
+    @property
+    def last_bar_date(self) -> str:
+        """最后一根K线日期（派生自 bars[-1].date；空序列返回空串）。
+
+        该属性不参与 dataclass field parity（派生量），但必须出现在 to_dict 中。
+        """
+        return self.bars[-1].date if self.bars else ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -540,6 +565,8 @@ class MarketDataSeries:
             'trading_calendar': self.trading_calendar,
             'source': self.source.value,
             'fetched_at': self.fetched_at,
+            'schema_version': self.schema_version,
+            'last_bar_date': self.last_bar_date,
             'bars': [b.to_dict() for b in self.bars],
             'quality_report': self.quality_report.to_dict() if self.quality_report else None,
         }
@@ -556,6 +583,7 @@ class MarketDataSeries:
             source=DataSourceType(data['source']),
             fetched_at=str(data['fetched_at']),
             bars=[MarketDataBar.from_dict(b) for b in data.get('bars', [])],
+            schema_version=str(data.get('schema_version', '1.0')),
             quality_report=DataQualityReport.from_dict(qr_data) if qr_data else None,
         )
 

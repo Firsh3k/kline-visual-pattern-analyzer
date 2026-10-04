@@ -24,6 +24,12 @@ This directory is the version-controlled project knowledge base for product gove
 ### End-to-end governance
 - [`governance/OPERATING_MODEL.md`](governance/OPERATING_MODEL.md)
 
+### Architecture
+- [`architecture/README.md`](architecture/README.md)
+
+### QA & validation
+- [`qa-validation/README.md`](qa-validation/README.md)
+
 ### Existing evidence / historical documents
 - [`V5.0_RELEASE.md`](V5.0_RELEASE.md)
 - [`v5_pattern_migration_validation.md`](v5_pattern_migration_validation.md)

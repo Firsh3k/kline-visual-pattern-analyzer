@@ -122,3 +122,42 @@
 4. **V4 文件只读**：`kline_analyzer.html` / `pattern_scanner.py` 未被修改，仅提取 JS 逻辑到验证脚本。
 
 **总体判定**：在同口径（末端快照）对比下，V5 对 V4 已检出形态的 structural recall 为 11/19=57.9%，其中看涨的 w_bottom 召回 100%；V5 检出的形态 V4 覆盖率 11/15=73.3%。召回缺口集中在顶部形态，且全部可由"全局窗口极值 → 已确认 swing pivot"的预期收紧解释，符合 FIR-12 用确认 pivot 杜绝未来函数的设计目标。旧报告的 75% 已正名为 duplicate-alert reduction，不再冒称 false-positive reduction。
+
+---
+
+## 8. 质量审查附录（case-by-case rubric audit）
+
+> 逐例质量审查报告：[`reports/fir12_quality_audit.md`](../reports/fir12_quality_audit.md)。
+> 本节给出结论摘要；完整证据（每例的日期/价格/pivot 确认状态/geometry%）见该报告。
+
+### 8.1 为什么要做 quality-adjusted recall
+
+§4 的 raw structural recall = 11/19 = 57.9% 把 **V4-JS 是否检出**当作 ground truth。但 V4 端用 lookback=80 内全局极值、无右侧确认窗口，本身会产生伪结构。因此对 8 个 v4_only + 4 个 v5_only 用固定 4 维 rubric（结构 Pivot / 颈线合理 / geometry / 突破有效）逐例裁定，再以"结构质量"重新计算召回。
+
+### 8.2 分类结果
+
+| 集合 | N | 分类 |
+|---|---|---|
+| v4_only | 8 | valid_old_signal=**0**，low_quality_old_signal=**8**，ambiguous=**0** |
+| v5_only | 4 | valid_new_signal=**1**，low_quality_new_signal=**1**，ambiguous=**2** |
+
+8 个 v4_only 全部为 low_quality，根因：关键肩/顶在 (left=5,right=5) 下不是已确认 swing pivot（距头/峰仅 3–5 根）；4/8 的 H&S 颈线被线性外推到无意义水平（如 600519 外推到 1397，高于头部 1363；000858 hs_top 外推到 96.07，高于头部 78.84）；5/8 头-肩价差 <2%（rubric 要求 ≥3–5%）；000858 hs_bottom 的"右肩"=末根 K 线本身（未来函数），真实结构是 V5 已检出的 W 双底。
+
+### 8.3 quality-adjusted recall（明确分母）
+
+```
+adjudicated_valid_v4 = 11 (both，假设全部 valid) + 0 (valid_old_signal) = 11
+retained_valid_v4    = 11 (both 中 V5 也检出)
+quality_adjusted_recall = 11 / 11 = 100%
+```
+
+| 指标 | 分母 | 数值 |
+|---|---|---|
+| raw structural recall（§4） | 19 = 11 both + 8 v4_only | 11/19 = 57.9% |
+| **quality-adjusted recall** | **11 = 11 both + 0 valid_old_signal** | **11/11 = 100%** |
+
+### 8.4 对 §4/§7 结论的修正
+
+- raw recall 从 57.9% 看起来"偏低"，但经逐例审查，8 个 v4_only **没有一个是 materially valid 的 V4 形态被丢失**。用结构质量作 ground truth，V5 保留了 100% 的有效 V4 信号。
+- **不需要 tune pivot/pattern 规则**：valid_old_signal=0，召回缺口是有意的质量收紧（杜绝未来函数），不是漏检。
+- V5 新检出中 1 个 low_quality（002415 hs_bottom：头 29.21 仅比左肩 29.45 低 0.82%，实为 W 双底），属于 V5 自身弱检出，**不是被丢失的 V4 信号**，按 FIR-12 硬约束不在本次 tune；记录为 follow-up（可考虑给 H&S 头肩价差加最小 % 闸门）。

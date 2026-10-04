@@ -87,6 +87,8 @@ from .pivot_patterns import (
     MTopDetector,
     HSBottomDetector,
     HSTopDetector,
+    MIN_HS_HEAD_PROMINENCE,
+    MAX_NECKLINE_EXTRAPOLATION_RATIO,
 )
 
 # Version 语义说明：
@@ -153,4 +155,6 @@ __all__ = [
     "MTopDetector",
     "HSBottomDetector",
     "HSTopDetector",
+    "MIN_HS_HEAD_PROMINENCE",
+    "MAX_NECKLINE_EXTRAPOLATION_RATIO",
 ]

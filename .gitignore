@@ -10,6 +10,7 @@ build/
 
 # 输出文件（可重新生成）
 output/
+!data/calibration/output/
 
 # 环境
 .env
@@ -28,3 +29,6 @@ Thumbs.db
 
 # 日志
 *.log
+
+# FIR-13 校准数据缓存（可重新生成，保留 output/ 下的最终结果）
+data/calibration/*_qfq.json

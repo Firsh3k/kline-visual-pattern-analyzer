@@ -117,7 +117,13 @@ class CalibrationSignalGenerator:
         if provenance:
             data_source = provenance.get("data_source", data_source)
             adjustment = provenance.get("adjustment", adjustment)
-            data_quality = provenance.get("data_quality", data_quality)
+            dq = provenance.get("data_quality", data_quality)
+            # data_quality 在 provenance 中为详细 dict（fail-closed status + 子指标）；
+            # SignalOccurrence.data_quality 是字符串字段，只透传 status。
+            if isinstance(dq, dict):
+                data_quality = dq.get("status", "unknown")
+            else:
+                data_quality = dq
 
         signals: List[SignalOccurrence] = []
         n = len(klines)

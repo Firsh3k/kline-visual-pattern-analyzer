@@ -27,16 +27,36 @@ REGIME_MA_PERIOD = 60
 REGIME_MA_LOOKBACK = 5
 
 # ---------------------------------------------------------------------------
-# FIR-13/24 (P0-2): provenance 占位 —— 当 provenance 无法从 MarketDataSeries
-# 获取时，显式标记为 "unknown"，而不是硬编码假值（如 multi_source/qfq/OK）。
+# FIR-13/23 (P0-2): canonical provenance 占位 —— 当 provenance 无法从
+# MarketDataSeries 获取时，显式标记为 "unknown"，而不是硬编码假值（如
+# multi_source/qfq/OK）。字段集为完整 canonical provenance schema。
+#
+# 注意：data_quality 为详细 dict（fail-closed status + 子指标）。
+# signal_generator 会把该 dict 原样透传到 SignalOccurrence.data_quality；
+# provenance_manifest（dataset.metadata）保留完整结构化质量信息。
 # ---------------------------------------------------------------------------
 UNKNOWN_PROVENANCE: Dict[str, object] = {
     "data_source": "unknown",
     "adjustment": "unknown",
-    "data_quality": "unknown",
+    "frequency": "unknown",
+    "schema_version": "unknown",
+    "trading_calendar": "unknown",
     "fetched_at": "unknown",
     "last_bar_date": "unknown",
+    "bar_count": 0,
+    "date_range": {"start": "unknown", "end": "unknown"},
+    "data_quality": {
+        "status": "unknown",
+        "missing_days": None,
+        "suspended_days": None,
+        "ohlc_violations": None,
+        "adjustment_consistency": "unknown",
+        "source_consistency": "unknown",
+        "anomalies_count": None,
+        "completeness_ratio": None,
+    },
     "quality_detail": None,
+    "provenance_hash": "unknown",
 }
 
 
@@ -126,13 +146,15 @@ class CalibrationDataCollector:
             json.dump(payload, f, ensure_ascii=False)
 
     # ------------------------------------------------------------------
-    # provenance 提取（P0-2）
+    # provenance 提取（P0-2 / FIR-23 canonical）
     # ------------------------------------------------------------------
     @staticmethod
     def _build_provenance(series: Optional[MarketDataSeries]) -> dict:
-        """从 MarketDataSeries 提取真实 provenance 元数据。
+        """从 MarketDataSeries 提取完整 canonical provenance 元数据。
 
-        无法获取的字段一律标记为 "unknown"，绝不硬编码假值。
+        无法获取的字段一律标记为 "unknown" / None / 0，绝不硬编码假值。
+        data_quality 为详细 dict：status 由 fail-closed 规则推导，
+        子指标直接镜像 DataQualityReport。
         """
         if series is None:
             return dict(UNKNOWN_PROVENANCE)
@@ -144,11 +166,39 @@ class CalibrationDataCollector:
             except Exception:
                 return default
 
-        data_source = _safe(lambda: series.source.value if series.source is not None else None)
-        adjustment = _safe(lambda: series.adjustment.value if series.adjustment is not None else None)
+        # ---- 标量元数据 ----
+        data_source = _safe(
+            lambda: series.source.value if series.source is not None else None)
+        adjustment = _safe(
+            lambda: series.adjustment.value if series.adjustment is not None else None)
+        frequency = _safe(
+            lambda: series.frequency.value if series.frequency is not None else None)
+        schema_version = _safe(lambda: series.schema_version)
+        trading_calendar = _safe(lambda: series.trading_calendar)
         fetched_at = _safe(lambda: series.fetched_at)
         last_bar_date = _safe(lambda: series.last_bar_date)
 
+        # ---- bars 派生：bar_count / date_range / provenance_hash ----
+        try:
+            bars = list(series.bars or [])
+        except Exception:
+            bars = []
+        bar_count = len(bars)
+        if bars:
+            date_range = {"start": bars[0].date, "end": bars[-1].date}
+        else:
+            date_range = {"start": "unknown", "end": "unknown"}
+
+        provenance_hash = "unknown"
+        if bars:
+            try:
+                h = bars[0].provenance.raw_payload_hash
+                if h:
+                    provenance_hash = h
+            except Exception:
+                provenance_hash = "unknown"
+
+        # ---- quality_report ----
         qr = getattr(series, "quality_report", None)
         quality_detail = None
         if qr is not None:
@@ -157,26 +207,66 @@ class CalibrationDataCollector:
             except Exception:
                 quality_detail = None
 
-        # data_quality 推导：quality_report 缺失 / 完整率不足 / 未知缺失天数
+        # ---- data_quality fail-closed（核心）----
+        # 无 quality_report → status="unknown"，所有子字段为 None。
+        # 任一异常信号触发即在 status 中追加对应 tag；多项用逗号连接；
+        # 全部正常 → status="OK"。
         if qr is None:
-            data_quality = "unknown"
+            data_quality: Dict[str, object] = {
+                "status": "unknown",
+                "missing_days": None,
+                "suspended_days": None,
+                "ohlc_violations": None,
+                "adjustment_consistency": "unknown",
+                "source_consistency": "unknown",
+                "anomalies_count": None,
+                "completeness_ratio": None,
+            }
         else:
+            missing_days = getattr(qr, "missing_days", 0) or 0
+            unknown_missing_days = getattr(qr, "unknown_missing_days", 0) or 0
+            suspended_days = getattr(qr, "suspended_days", 0) or 0
+            anomalies = getattr(qr, "anomalies", None) or []
             cr = getattr(qr, "completeness_ratio", None)
-            umd = getattr(qr, "unknown_missing_days", 0) or 0
-            if umd > 0:
-                data_quality = "has_unknown_missing"
-            elif cr is not None and cr < 0.95:
-                data_quality = "low_completeness"
-            else:
-                data_quality = "OK"
+            adj_consistent = getattr(qr, "adjustment_consistent", False)
+
+            issues = []
+            if not adj_consistent:
+                issues.append("adjustment_unverified")
+            if missing_days > 0 or unknown_missing_days > 0:
+                issues.append("has_missing")
+            if suspended_days > 0:
+                issues.append("has_suspension")
+            if anomalies:
+                issues.append("has_anomalies")
+            if cr is not None and cr < 0.95:
+                issues.append("low_completeness")
+            status = ",".join(issues) if issues else "OK"
+
+            data_quality = {
+                "status": status,
+                "missing_days": missing_days,
+                "suspended_days": suspended_days,
+                "ohlc_violations": None,
+                "adjustment_consistency": "consistent" if adj_consistent else "unverified",
+                "source_consistency": getattr(qr, "source_consistency", None),
+                "anomalies_count": len(anomalies),
+                "completeness_ratio": cr,
+            }
 
         return {
             "data_source": data_source,
             "adjustment": adjustment,
-            "data_quality": data_quality,
+            "frequency": frequency,
+            "schema_version": schema_version,
+            "trading_calendar": trading_calendar,
             "fetched_at": fetched_at,
             "last_bar_date": last_bar_date,
+            "bar_count": bar_count,
+            "date_range": date_range,
+            "data_quality": data_quality,
             "quality_detail": quality_detail,
+            "provenance_hash": provenance_hash,
         }
 
     # ------------------------------------------------------------------

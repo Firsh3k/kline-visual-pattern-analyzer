@@ -353,12 +353,17 @@ def run_pipeline(args) -> CalibrationSummary:
 
         dataset.signals = signals
         dataset.backtests = backtests
-        # P0-2：汇总每只股票的真实 provenance 分布（不再硬编码 data_source）
+        # P0-2 / FIR-23：汇总每只股票的真实 provenance 分布（不再硬编码 data_source）
         from collections import Counter
         src_dist = Counter(
             p.get("data_source", "unknown") for p in provenance_by_code.values())
-        qual_dist = Counter(
-            p.get("data_quality", "unknown") for p in provenance_by_code.values())
+        # data_quality 现为详细 dict，分布按 status 字符串聚合
+        def _dq_status(p):
+            dq = p.get("data_quality", "unknown")
+            if isinstance(dq, dict):
+                return dq.get("status", "unknown")
+            return dq
+        qual_dist = Counter(_dq_status(p) for p in provenance_by_code.values())
         adj_dist = Counter(
             p.get("adjustment", "unknown") for p in provenance_by_code.values())
         dataset.metadata = {
@@ -370,6 +375,9 @@ def run_pipeline(args) -> CalibrationSummary:
                 "data_source_distribution": dict(src_dist),
                 "adjustment_distribution": dict(adj_dist),
                 "data_quality_distribution": dict(qual_dist),
+            },
+            "provenance_manifest": {
+                code: prov for code, prov in provenance_by_code.items()
             },
             "detector_versions": {
                 "w_bottom": "canonical_v5.2.0",

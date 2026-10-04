@@ -36,7 +36,21 @@ from core.calibration.data_collector import (  # noqa: E402
     UNKNOWN_PROVENANCE,
 )
 from core.calibration.signal_generator import CalibrationSignalGenerator  # noqa: E402
-from core.calibration.types import MarketRegime  # noqa: E402
+from core.calibration.types import MarketRegime, CalibrationDataset  # noqa: E402
+
+
+# canonical provenance 完整字段集（与 data_collector.UNKNOWN_PROVENANCE 对齐）
+CANONICAL_PROVENANCE_FIELDS = [
+    "data_source", "adjustment", "frequency", "schema_version",
+    "trading_calendar", "fetched_at", "last_bar_date", "bar_count",
+    "date_range", "data_quality", "quality_detail", "provenance_hash",
+]
+
+CANONICAL_DATA_QUALITY_FIELDS = [
+    "status", "missing_days", "suspended_days", "ohlc_violations",
+    "adjustment_consistency", "source_consistency",
+    "anomalies_count", "completeness_ratio",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +63,7 @@ def _make_bar(date: str, close: float) -> MarketDataBar:
         close=close, volume=1000000.0,
         provenance=DataProvenance(
             source=DataSourceType.SINA, url="", fetched_at="2026-09-01T15:00:00+08:00",
-            raw_payload_hash="", adjustment_applied=AdjustmentType.FORWARD,
+            raw_payload_hash="sha256:002415samplehash", adjustment_applied=AdjustmentType.FORWARD,
             quality_flag=DataQualityFlag.OK,
         ),
     )
@@ -88,7 +102,7 @@ class TestBuildProvenance:
         prov = CalibrationDataCollector._build_provenance(series)
         assert prov["data_source"] == "sina"
         assert prov["adjustment"] == "qfq"
-        assert prov["data_quality"] == "OK"
+        assert prov["data_quality"]["status"] == "OK"
         assert prov["fetched_at"] == "2026-09-01T15:30:00+08:00"
         assert prov["last_bar_date"] == "2026-09-01"
         # quality_detail 来自 quality_report.to_dict()
@@ -102,12 +116,12 @@ class TestBuildProvenance:
         prov = CalibrationDataCollector._build_provenance(series)
         assert prov["data_source"] == "tencent"
         assert prov["adjustment"] == "none"
-        assert prov["data_quality"] == "OK"
+        assert prov["data_quality"]["status"] == "OK"
 
     def test_no_quality_report_marks_unknown(self):
         series = _make_series(quality_report=None)
         prov = CalibrationDataCollector._build_provenance(series)
-        assert prov["data_quality"] == "unknown"
+        assert prov["data_quality"]["status"] == "unknown"
         assert prov["quality_detail"] is None
         # 其他字段仍从 series 真实提取
         assert prov["data_source"] == "sina"
@@ -117,22 +131,96 @@ class TestBuildProvenance:
         qr.completeness_ratio = 0.90  # < 0.95
         series = _make_series(quality_report=qr)
         prov = CalibrationDataCollector._build_provenance(series)
-        assert prov["data_quality"] == "low_completeness"
-        assert prov["data_quality"] != "OK"
+        assert "low_completeness" in prov["data_quality"]["status"]
+        assert prov["data_quality"]["status"] != "OK"
 
     def test_unknown_missing_days_not_ok(self):
         qr = _good_quality_report()
         qr.unknown_missing_days = 3
         series = _make_series(quality_report=qr)
         prov = CalibrationDataCollector._build_provenance(series)
-        assert prov["data_quality"] == "has_unknown_missing"
-        assert prov["data_quality"] != "OK"
+        # fail-closed：unknown_missing_days>0 归入 has_missing
+        assert "has_missing" in prov["data_quality"]["status"]
+        assert prov["data_quality"]["status"] != "OK"
 
     def test_none_series_returns_unknown(self):
         prov = CalibrationDataCollector._build_provenance(None)
-        for key in ("data_source", "adjustment", "data_quality",
-                    "fetched_at", "last_bar_date"):
+        # 标量字符串字段为 unknown
+        for key in ("data_source", "adjustment", "frequency",
+                    "schema_version", "trading_calendar",
+                    "fetched_at", "last_bar_date", "provenance_hash"):
             assert prov[key] == "unknown"
+        # 数值 / 容器字段取缺省
+        assert prov["bar_count"] == 0
+        assert prov["date_range"] == {"start": "unknown", "end": "unknown"}
+        assert prov["data_quality"]["status"] == "unknown"
+        assert prov["quality_detail"] is None
+
+    # ---- FIR-23 扩展 canonical 字段 ----
+    def test_extended_canonical_fields(self):
+        series = _make_series(quality_report=_good_quality_report())
+        prov = CalibrationDataCollector._build_provenance(series)
+        # 频率 / schema 版本 / 交易日历
+        assert prov["frequency"] == "daily"
+        assert prov["schema_version"] == "1.0"
+        assert prov["trading_calendar"] == "SSE"
+        # bar_count / date_range 派生自 bars
+        assert prov["bar_count"] == 2
+        assert prov["date_range"] == {"start": "2026-08-28", "end": "2026-09-01"}
+        # provenance_hash 从 bars[0].provenance.raw_payload_hash 提取
+        assert prov["provenance_hash"] == "sha256:002415samplehash"
+        # 完整 canonical 字段集齐全
+        for f in CANONICAL_PROVENANCE_FIELDS:
+            assert f in prov, f"missing canonical field: {f}"
+
+    def test_data_quality_fail_closed_missing(self):
+        qr = _good_quality_report()
+        qr.missing_days = 3
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        assert "has_missing" in prov["data_quality"]["status"]
+        assert prov["data_quality"]["status"] != "OK"
+        assert prov["data_quality"]["missing_days"] == 3
+
+    def test_data_quality_fail_closed_adjustment(self):
+        qr = _good_quality_report()
+        qr.adjustment_consistent = False
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        assert "adjustment_unverified" in prov["data_quality"]["status"]
+        assert prov["data_quality"]["adjustment_consistency"] == "unverified"
+
+    def test_data_quality_fail_closed_anomalies(self):
+        qr = _good_quality_report()
+        qr.anomalies = [{"type": "gap", "date": "2026-09-01"}]
+        series = _make_series(quality_report=qr)
+        prov = CalibrationDataCollector._build_provenance(series)
+        assert "has_anomalies" in prov["data_quality"]["status"]
+        assert prov["data_quality"]["anomalies_count"] == 1
+
+    def test_data_quality_ok_when_all_good(self):
+        series = _make_series(quality_report=_good_quality_report())
+        prov = CalibrationDataCollector._build_provenance(series)
+        assert prov["data_quality"]["status"] == "OK"
+        # 完整 data_quality 子字段集齐全
+        for f in CANONICAL_DATA_QUALITY_FIELDS:
+            assert f in prov["data_quality"], f"missing dq field: {f}"
+
+    def test_unknown_fields_when_series_none(self):
+        prov = CalibrationDataCollector._build_provenance(None)
+        # 所有新字段为 unknown / 0 / None，绝不硬编码假值
+        assert prov["frequency"] == "unknown"
+        assert prov["schema_version"] == "unknown"
+        assert prov["trading_calendar"] == "unknown"
+        assert prov["bar_count"] == 0
+        assert prov["date_range"] == {"start": "unknown", "end": "unknown"}
+        assert prov["provenance_hash"] == "unknown"
+        dq = prov["data_quality"]
+        assert dq["status"] == "unknown"
+        assert dq["missing_days"] is None
+        assert dq["suspended_days"] is None
+        assert dq["anomalies_count"] is None
+        assert dq["completeness_ratio"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +267,7 @@ class TestCacheFormat:
         # provenance 全部 unknown
         assert got_prov["data_source"] == "unknown"
         assert got_prov["adjustment"] == "unknown"
-        assert got_prov["data_quality"] == "unknown"
+        assert got_prov["data_quality"]["status"] == "unknown"
 
     def test_missing_cache_returns_none(self, tmp_path):
         c = _collector(tmp_path)
@@ -238,6 +326,7 @@ class TestGeneratorProvenancePassThrough:
         for s in sigs:
             assert s.data_source == "unknown"
             assert s.adjustment == "unknown"
+            # data_quality 在 SignalOccurrence 中为字符串（provenance dict 的 status 字段）
             assert s.data_quality == "unknown"
 
     def test_fetch_stock_data_backward_compat_returns_list(self, tmp_path, monkeypatch):
@@ -258,3 +347,54 @@ class TestGeneratorProvenancePassThrough:
             "002415", "2026-08-01", "2026-09-01")
         assert len(klines2) == 2
         assert prov["data_source"] == "sina"
+
+
+# ---------------------------------------------------------------------------
+# FIR-23: provenance_manifest 端到端保留（dataset.metadata）
+# ---------------------------------------------------------------------------
+
+class TestProvenanceManifest:
+    def _manifest_pair(self):
+        """构造两只股票的 provenance（一正常一 unknown）。"""
+        good = CalibrationDataCollector._build_provenance(
+            _make_series(quality_report=_good_quality_report()))
+        unknown = dict(UNKNOWN_PROVENANCE)
+        return {"600519": good, "000001": unknown}
+
+    def test_manifest_structure_in_dataset(self):
+        manifest = self._manifest_pair()
+        ds = CalibrationDataset(
+            stock_pool=["600519", "000001"],
+            start_date="2026-08-01", end_date="2026-09-01",
+            metadata={
+                "provenance_summary": {
+                    "data_source_distribution": {"sina": 1, "unknown": 1},
+                },
+                "provenance_manifest": manifest,
+            },
+        )
+        # 序列化 → 反序列化后结构完整
+        raw = ds.to_dict()
+        rt = CalibrationDataset.from_dict(raw)
+        got = rt.metadata["provenance_manifest"]
+        assert set(got.keys()) == {"600519", "000001"}
+        # JSON 往返（dict 可序列化）
+        text = json.dumps(raw, ensure_ascii=False)
+        again = json.loads(text)
+        assert "provenance_manifest" in again["metadata"]
+        assert again["metadata"]["provenance_manifest"]["600519"]["data_source"] == "sina"
+
+    def test_manifest_per_code_complete_fields(self):
+        manifest = self._manifest_pair()
+        for code, prov in manifest.items():
+            # 每只股票的 provenance 包含全部 canonical 字段
+            for f in CANONICAL_PROVENANCE_FIELDS:
+                assert f in prov, f"{code} 缺少 canonical 字段: {f}"
+            # data_quality 为 dict 且含全部子字段
+            dq = prov["data_quality"]
+            assert isinstance(dq, dict)
+            for f in CANONICAL_DATA_QUALITY_FIELDS:
+                assert f in dq, f"{code}.data_quality 缺少子字段: {f}"
+            # date_range 为 dict
+            assert isinstance(prov["date_range"], dict)
+            assert "start" in prov["date_range"] and "end" in prov["date_range"]

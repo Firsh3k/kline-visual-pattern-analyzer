@@ -77,17 +77,8 @@ from .registry import (
     get_registry,
 )
 
-# V5 Phase 1B — Swing Pivot Engine (FIR-12)
+# V5 Phase 1B — Swing Pivot Engine (FIR-12 Engine Foundation, already on main)
 from .swing_pivot import SwingPivotEngine, PivotUpdateResult, HistoricalDataMutationError
-
-# V5 FIR-12 — 基于 SwingPivotEngine 的经典形态识别器
-from .pivot_patterns import (
-    PivotPatternDetectorBase,
-    WBottomDetector,
-    MTopDetector,
-    HSBottomDetector,
-    HSTopDetector,
-)
 
 # Version 语义说明：
 # __version__ = "5.1.0" 是 Canonical Core internal/API version，
@@ -143,14 +134,8 @@ __all__ = [
     "DuplicateRegistrationError",
     "registry",
     "get_registry",
-    # V5 Phase 1B — Swing Pivot Engine (FIR-12)
+    # V5 Phase 1B — Swing Pivot Engine (FIR-12 Engine Foundation)
     "SwingPivotEngine",
     "PivotUpdateResult",
     "HistoricalDataMutationError",
-    # V5 FIR-12 — Pivot 形态识别器
-    "PivotPatternDetectorBase",
-    "WBottomDetector",
-    "MTopDetector",
-    "HSBottomDetector",
-    "HSTopDetector",
 ]

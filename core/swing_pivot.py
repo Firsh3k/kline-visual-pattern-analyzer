@@ -8,18 +8,39 @@ FIR-12 — Swing Pivot Engine (V5 Phase 1B)
 2. **确认机制** — Pivot 只有在右侧有完整确认窗口后才被标记为 confirmed
 3. **不可变性** — 已确认的历史 pivot 一旦确认就不可变，即使后续数据变化也不改变
 4. **待确认可变性** — 待确认的 pivot（右侧窗口不完整）可能随新数据变化或消失
+5. **严格 append-only contract** — update() 要求历史数据不可变，否则 raise HistoricalDataMutationError
 
 关键属性（由测试证明）：
 - 修改未来右侧 K 线，会影响尚未确认的 pivot，但不能改变已经确认的历史 pivot
+- 已确认 pivot 携带 confirmed_at_index/date，支持 FIR-13 无未来函数回测
+
+Version 语义说明：
+- core.__version__ = "5.1.0" 是 Canonical Core internal/API version
+- 不代表 GitHub product release 已经达到 V5.1.0
+- 正式产品 Release 版本由 Git tag / GitHub Release 决定（如 v4.0.0）
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Dict, Any
+from typing import List, Optional, Set, Dict, Any, Tuple
 
 from .types import OHLCV, PivotPoint
 from .interfaces import PivotDetector
+
+
+class HistoricalDataMutationError(Exception):
+    """
+    历史数据被修改/截断时抛出。
+
+    当 update() 检测到：
+    - 新数据长度小于上次处理长度（truncate）
+    - 旧历史区间的 OHLC 或 date 发生变化（rewrite）
+    时抛出此异常。
+
+    调用方应调用 engine.reset() 后重新加载完整数据。
+    """
+    pass
 
 
 @dataclass
@@ -38,21 +59,50 @@ class PivotUpdateResult:
         return len(self.pending)
 
 
+def _validate_bars_param(name: str, value: Any) -> int:
+    """
+    校验 left_bars / right_bars 参数。
+
+    必须是 int >= 1，不允许 0 / negative / float / invalid value。
+
+    Args:
+        name: 参数名（用于错误消息）
+        value: 参数值
+
+    Returns:
+        校验后的 int 值
+
+    Raises:
+        ValueError: 参数无效
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive integer, got {value!r} (type={type(value).__name__})")
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+    return value
+
+
 class SwingPivotEngine(PivotDetector):
     """
-    Swing Pivot 检测引擎 — 有状态、确定性、带确认机制
+    Swing Pivot 检测引擎 — 有状态、确定性、带确认机制、严格 append-only
 
     与 PILOT-001 (core/pivots.py) 的区别：
     - PILOT-001 是无状态函数，每次重新计算所有 pivot
     - SwingPivotEngine 是有状态引擎，维护已确认 pivot 的不可变历史
     - SwingPivotEngine 区分 confirmed / pending pivot
     - SwingPivotEngine 支持增量更新（新K线到来时只处理新增部分）
+    - SwingPivotEngine 严格要求 append-only，历史数据被修改时 raise HistoricalDataMutationError
 
-    确认机制：
+    确认机制（修正 off-by-one 后）：
     - 一个 pivot 在索引 i 处，需要左侧 left_bars 根 + 右侧 right_bars 根 K 线确认
-    - 如果 i + right_bars < len(klines) - 1（右侧窗口完整），则 confirmed=True
-    - 如果 i + right_bars >= len(klines) - 1（右侧窗口不完整），则 confirmed=False
-    - 已确认的 pivot 一旦确认就不可变
+    - 只要数据中已经存在 right_bars 根右侧 K 线，就应当 confirmed
+    - 即当 (i + right_bars) <= (n - 1) 时，confirmed=True
+    - 当 (i + right_bars) > (n - 1) 时，confirmed=False（待确认）
+
+    Point-in-Time confirmation metadata：
+    - 已确认 pivot：confirmed_at_index = i + right_bars，confirmed_at_date = klines[i + right_bars].date
+    - 待确认 pivot：confirmed_at_index = None，confirmed_at_date = None
+    - 这是该 Pivot 最早可被交易系统知道已经成立的时间，支持 FIR-13 无未来函数回测
     """
 
     def __init__(self, left_bars: int = 5, right_bars: int = 5):
@@ -60,60 +110,125 @@ class SwingPivotEngine(PivotDetector):
         初始化 Swing Pivot 引擎
 
         Args:
-            left_bars: 左侧确认K线数（必须 >= 1）
-            right_bars: 右侧确认K线数（必须 >= 1）
+            left_bars: 左侧确认K线数（必须 int >= 1）
+            right_bars: 右侧确认K线数（必须 int >= 1）
         """
-        if not isinstance(left_bars, int) or left_bars < 1:
-            raise ValueError(f"left_bars must be a positive integer, got {left_bars!r}")
-        if not isinstance(right_bars, int) or right_bars < 1:
-            raise ValueError(f"right_bars must be a positive integer, got {right_bars!r}")
-
-        self.left_bars = left_bars
-        self.right_bars = right_bars
+        self.left_bars = _validate_bars_param("left_bars", left_bars)
+        self.right_bars = _validate_bars_param("right_bars", right_bars)
 
         # 有状态：已确认的 pivot 历史（不可变）
         self._confirmed_pivots: List[PivotPoint] = []
         self._confirmed_indices: Set[int] = set()  # 快速查找已确认的索引
 
-        # 记录上次处理到的数据长度，用于增量更新
+        # 记录上次处理到的数据长度，用于增量更新和 append-only 校验
         self._last_data_length: int = 0
 
+        # 保存上次已处理历史数据的 fingerprint（用于 append-only 校验）
+        # fingerprint = tuple of (date, open, high, low, close, volume) for each bar
+        self._last_history_fingerprint: Optional[Tuple[Tuple, ...]] = None
+
     def reset(self) -> None:
-        """重置引擎状态，清除所有已确认的 pivot"""
+        """重置引擎状态，清除所有已确认的 pivot 和历史 fingerprint"""
         self._confirmed_pivots = []
         self._confirmed_indices = set()
         self._last_data_length = 0
+        self._last_history_fingerprint = None
 
     @property
     def confirmed_pivots(self) -> List[PivotPoint]:
         """所有已确认的 pivot（不可变历史）"""
         return list(self._confirmed_pivots)  # 返回副本，防止外部修改
 
-    def _is_swing_high(self, highs: List[float], i: int) -> bool:
-        """检查索引 i 是否为 swing high"""
-        high = highs[i]
-        left_window = highs[i - self.left_bars:i]
-        right_window = highs[i + 1:i + self.right_bars + 1]
+    def _compute_fingerprint(self, klines: List[OHLCV]) -> Tuple[Tuple, ...]:
+        """
+        计算历史数据的 fingerprint，用于 append-only 校验。
 
-        if not left_window or not right_window:
-            return False
+        Args:
+            klines: K线数据
 
-        return high > max(left_window) and high > max(right_window)
+        Returns:
+            tuple of (date, open, high, low, close, volume) for each bar
+        """
+        return tuple(
+            (k.date, k.open, k.high, k.low, k.close, k.volume)
+            for k in klines
+        )
 
-    def _is_swing_low(self, lows: List[float], i: int) -> bool:
-        """检查索引 i 是否为 swing low"""
-        low = lows[i]
-        left_window = lows[i - self.left_bars:i]
-        right_window = lows[i + 1:i + self.right_bars + 1]
+    def _validate_append_only(self, klines: List[OHLCV]) -> None:
+        """
+        严格 append-only contract 校验。
 
-        if not left_window or not right_window:
-            return False
+        检查：
+        1. 新长度不能小于旧长度（truncate → reject）
+        2. 旧历史区间的数据不能发生变化（rewrite → reject）
 
-        return low < min(left_window) and low < min(right_window)
+        如果发现历史被 rewrite/truncate，raise HistoricalDataMutationError。
 
-    def _make_pivot(self, klines: List[OHLCV], i: int, pivot_type: str, confirmed: bool) -> PivotPoint:
-        """创建 PivotPoint 对象"""
+        Args:
+            klines: 新的完整K线数据
+
+        Raises:
+            HistoricalDataMutationError: 历史数据被修改或截断
+        """
+        n = len(klines)
+        old_n = self._last_data_length
+
+        # 第一次 update 或 reset 后，没有历史可比较
+        if old_n == 0 or self._last_history_fingerprint is None:
+            return
+
+        # 检查 1: 新长度不能小于旧长度（truncate）
+        if n < old_n:
+            raise HistoricalDataMutationError(
+                f"Historical data truncated: previous length={old_n}, "
+                f"current length={n}. Call engine.reset() and reload full data."
+            )
+
+        # 检查 2: 旧历史区间的数据不能发生变化（rewrite）
+        new_fingerprint = self._compute_fingerprint(klines[:old_n])
+        if new_fingerprint != self._last_history_fingerprint:
+            # 找出第一个不同的位置，用于错误消息
+            diff_idx = None
+            for i in range(min(old_n, n)):
+                if new_fingerprint[i] != self._last_history_fingerprint[i]:
+                    diff_idx = i
+                    break
+            raise HistoricalDataMutationError(
+                f"Historical data mutated at index {diff_idx}: "
+                f"old={self._last_history_fingerprint[diff_idx] if diff_idx is not None else 'N/A'}, "
+                f"new={new_fingerprint[diff_idx] if diff_idx is not None else 'N/A'}. "
+                f"Call engine.reset() and reload full data."
+            )
+
+    def _make_pivot(
+        self,
+        klines: List[OHLCV],
+        i: int,
+        pivot_type: str,
+        confirmed: bool,
+    ) -> PivotPoint:
+        """
+        创建 PivotPoint 对象，包含 point-in-time confirmation metadata。
+
+        Args:
+            klines: K线数据
+            i: pivot 索引
+            pivot_type: "swing_high" / "swing_low"
+            confirmed: 是否已确认
+
+        Returns:
+            PivotPoint 对象
+        """
         price = klines[i].high if pivot_type == "swing_high" else klines[i].low
+
+        # Point-in-Time confirmation metadata
+        if confirmed:
+            confirmed_at_index = i + self.right_bars
+            confirmed_at_date = klines[confirmed_at_index].date
+        else:
+            confirmed_at_index = None
+            confirmed_at_date = None
+
         return PivotPoint(
             index=i,
             date=klines[i].date,
@@ -121,16 +236,20 @@ class SwingPivotEngine(PivotDetector):
             pivot_type=pivot_type,
             strength=min(self.left_bars, self.right_bars),
             confirmed=confirmed,
+            confirmed_at_index=confirmed_at_index,
+            confirmed_at_date=confirmed_at_date,
         )
 
     def _scan_range(self, klines: List[OHLCV], start: int, end: int) -> List[PivotPoint]:
         """
         扫描 [start, end) 范围内的 pivot（无状态计算）
 
-        确认机制：
-        - 已确认 pivot (confirmed=True)：左侧窗口完整 + 右侧窗口完整
-        - 待确认 pivot (confirmed=False)：左侧窗口完整 + 右侧窗口不完整，
+        确认机制（修正 off-by-one 后）：
+        - 已确认 pivot (confirmed=True)：左侧窗口完整 + 右侧有至少 right_bars 根K线
+          即 (i + right_bars) <= (n - 1)
+        - 待确认 pivot (confirmed=False)：左侧窗口完整 + 右侧窗口不完整（少于 right_bars 根），
           但基于已有右侧数据满足 swing high/low 条件
+          即 (i + right_bars) > (n - 1)
 
         Args:
             klines: K线数据
@@ -178,9 +297,10 @@ class SwingPivotEngine(PivotDetector):
             if is_swing_high and is_swing_low:
                 continue
 
-            # 判断是否已确认：右侧确认窗口是否完整
-            # i + right_bars < n - 1 意味着 i 右侧有至少 right_bars 根完整K线
-            confirmed = (i + self.right_bars) < (n - 1)
+            # 判断是否已确认（修正 off-by-one）：
+            # 只要数据中已经存在 right_bars 根右侧 K 线，就应当 confirmed
+            # 即当 (i + right_bars) <= (n - 1) 时，confirmed=True
+            confirmed = (i + self.right_bars) <= (n - 1)
 
             if is_swing_high:
                 pivots.append(self._make_pivot(klines, i, "swing_high", confirmed))
@@ -191,7 +311,12 @@ class SwingPivotEngine(PivotDetector):
 
     def update(self, klines: List[OHLCV]) -> PivotUpdateResult:
         """
-        增量更新：处理新到来的K线，确认新的 pivot
+        增量更新：处理新到来的K线，确认新的 pivot。
+
+        严格 append-only contract：
+        - 新长度不能小于旧长度（truncate → raise HistoricalDataMutationError）
+        - 旧历史区间的数据不能发生变化（rewrite → raise HistoricalDataMutationError）
+        - 如果发现历史被修改，调用方应 engine.reset() 后重新加载完整数据
 
         核心属性：
         - 已确认的历史 pivot 不可变，即使后续数据变化也不改变
@@ -203,14 +328,21 @@ class SwingPivotEngine(PivotDetector):
 
         Returns:
             PivotUpdateResult: 更新结果（新增已确认 + 当前待确认 + 所有已确认）
+
+        Raises:
+            HistoricalDataMutationError: 历史数据被修改或截断
         """
         n = len(klines)
+
+        # 严格 append-only 校验
+        self._validate_append_only(klines)
 
         # 至少需要左侧窗口 + 1根当前K线 + 1根右侧K线
         # 注意：对于 pending pivot，不需要完整的 right_bars 窗口
         if n < self.left_bars + 2:
-            # 数据不足，返回空结果
+            # 数据不足，更新 fingerprint 和长度，返回空结果
             self._last_data_length = n
+            self._last_history_fingerprint = self._compute_fingerprint(klines)
             return PivotUpdateResult(
                 new_confirmed=[],
                 pending=[],
@@ -243,8 +375,9 @@ class SwingPivotEngine(PivotDetector):
         pending.sort(key=lambda p: p.index)
         self._confirmed_pivots.sort(key=lambda p: p.index)
 
-        # 更新上次处理位置
+        # 更新上次处理位置和 fingerprint
         self._last_data_length = n
+        self._last_history_fingerprint = self._compute_fingerprint(klines)
 
         return PivotUpdateResult(
             new_confirmed=new_confirmed,
@@ -264,6 +397,10 @@ class SwingPivotEngine(PivotDetector):
         无状态检测：每次都重新计算所有 pivot（已确认 + 待确认）。
         不修改引擎内部状态。
 
+        参数 override 校验：
+        - 自定义 left_bars / right_bars 也必须走与 constructor 相同的校验
+        - 必须 int >= 1，不允许 0 / negative / float / invalid value
+
         Args:
             klines: K线数据列表
             left_bars: 左侧确认K线数（如不提供使用引擎默认值）
@@ -272,6 +409,12 @@ class SwingPivotEngine(PivotDetector):
         Returns:
             List[PivotPoint]: Pivot点列表（按索引升序，包含 confirmed 和 pending）
         """
+        # 参数 override 校验（与 constructor 相同的校验逻辑）
+        if left_bars is not None:
+            left_bars = _validate_bars_param("left_bars", left_bars)
+        if right_bars is not None:
+            right_bars = _validate_bars_param("right_bars", right_bars)
+
         # 临时使用自定义参数（不修改引擎状态）
         old_left = self.left_bars
         old_right = self.right_bars

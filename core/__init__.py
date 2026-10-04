@@ -69,8 +69,12 @@ from .registry import (
 )
 
 # V5 Phase 1B — Swing Pivot Engine (FIR-12)
-from .swing_pivot import SwingPivotEngine, PivotUpdateResult
+from .swing_pivot import SwingPivotEngine, PivotUpdateResult, HistoricalDataMutationError
 
+# Version 语义说明：
+# __version__ = "5.1.0" 是 Canonical Core internal/API version，
+# 不代表 GitHub product release 已经达到 V5.1.0。
+# 正式产品 Release 版本由 Git tag / GitHub Release 决定（如 v4.0.0）。
 __version__ = "5.1.0"
 __all__ = [
     # 向后兼容 (PILOT-001)
@@ -114,4 +118,5 @@ __all__ = [
     # V5 Phase 1B — Swing Pivot Engine (FIR-12)
     "SwingPivotEngine",
     "PivotUpdateResult",
+    "HistoricalDataMutationError",
 ]

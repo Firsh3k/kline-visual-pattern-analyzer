@@ -40,6 +40,26 @@ const CANONICAL_SCHEMA = {
       name: 'ConfidenceLevel',
       values: ['S', 'A', 'B', 'C', 'D'],
       members: { S: 'S', A: 'A', B: 'B', C: 'C', D: 'D' }
+    },
+    AdjustmentType: {
+      name: 'AdjustmentType',
+      values: ['none', 'qfq', 'hfq'],
+      members: { NONE: 'none', FORWARD: 'qfq', BACKWARD: 'hfq' }
+    },
+    FrequencyType: {
+      name: 'FrequencyType',
+      values: ['daily', 'weekly', 'monthly'],
+      members: { DAILY: 'daily', WEEKLY: 'weekly', MONTHLY: 'monthly' }
+    },
+    DataSourceType: {
+      name: 'DataSourceType',
+      values: ['sina', 'tencent', 'ifind', 'tongdaxin', 'manual'],
+      members: { SINA: 'sina', TENCENT: 'tencent', IFIND: 'ifind', TONGDAXIN: 'tongdaxin', MANUAL: 'manual' }
+    },
+    DataQualityFlag: {
+      name: 'DataQualityFlag',
+      values: ['ok', 'suspended', 'missing', 'adjusted', 'partial'],
+      members: { OK: 'ok', SUSPENDED: 'suspended', MISSING: 'missing', ADJUSTED: 'adjusted', PARTIAL: 'partial' }
     }
   },
 
@@ -232,6 +252,77 @@ const CANONICAL_SCHEMA = {
         { name: 'profit_factor', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
         { name: 'results', type: 'List[BacktestResult]', is_optional: false, has_default: true, default: [], nullable: false },
         { name: 'incomplete_count', type: 'int', is_optional: false, has_default: true, default: 0, nullable: false },
+        { name: 'notes', type: 'str', is_optional: false, has_default: true, default: '', nullable: false }
+      ]
+    },
+
+    DataProvenance: {
+      name: 'DataProvenance',
+      field_count: 6,
+      required_fields: ['source', 'url', 'fetched_at', 'raw_payload_hash', 'adjustment_applied', 'quality_flag'],
+      optional_fields: [],
+      fields: [
+        { name: 'source', type: 'DataSourceType', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'url', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'fetched_at', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'raw_payload_hash', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'adjustment_applied', type: 'AdjustmentType', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'quality_flag', type: 'DataQualityFlag', is_optional: false, has_default: false, default: null, nullable: false }
+      ]
+    },
+
+    MarketDataBar: {
+      name: 'MarketDataBar',
+      field_count: 8,
+      required_fields: ['date', 'open', 'high', 'low', 'close', 'volume', 'provenance'],
+      optional_fields: ['amount'],
+      fields: [
+        { name: 'date', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'open', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'high', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'low', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'close', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'volume', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'provenance', type: 'DataProvenance', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'amount', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true }
+      ]
+    },
+
+    MarketDataSeries: {
+      name: 'MarketDataSeries',
+      field_count: 10,
+      required_fields: ['symbol', 'name', 'frequency', 'adjustment', 'trading_calendar', 'source', 'fetched_at', 'bars'],
+      optional_fields: ['schema_version', 'quality_report'],
+      fields: [
+        { name: 'symbol', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'name', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'frequency', type: 'FrequencyType', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'adjustment', type: 'AdjustmentType', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'trading_calendar', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'source', type: 'DataSourceType', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'fetched_at', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'bars', type: 'List[MarketDataBar]', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'schema_version', type: 'str', is_optional: false, has_default: true, default: '1.0', nullable: false },
+        { name: 'quality_report', type: 'Optional[DataQualityReport]', is_optional: true, has_default: true, default: null, nullable: true }
+      ]
+    },
+
+    DataQualityReport: {
+      name: 'DataQualityReport',
+      field_count: 11,
+      required_fields: ['total_days', 'expected_trading_days', 'actual_bars', 'suspended_days', 'missing_days', 'completeness_ratio', 'adjustment_consistent'],
+      optional_fields: ['unknown_missing_days', 'source_consistency', 'anomalies', 'notes'],
+      fields: [
+        { name: 'total_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'expected_trading_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'actual_bars', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'suspended_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'missing_days', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'completeness_ratio', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'adjustment_consistent', type: 'bool', is_optional: false, has_default: false, default: null, nullable: false },
+        { name: 'unknown_missing_days', type: 'int', is_optional: false, has_default: true, default: 0, nullable: false },
+        { name: 'source_consistency', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
+        { name: 'anomalies', type: 'List[Dict[str, Any]]', is_optional: false, has_default: true, default: [], nullable: false },
         { name: 'notes', type: 'str', is_optional: false, has_default: true, default: '', nullable: false }
       ]
     }

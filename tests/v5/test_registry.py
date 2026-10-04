@@ -95,6 +95,15 @@ class TestAlgorithmRegistry:
             def get_sector_constituents(self, sector_code):
                 return []
 
+            def fetch_klines(self, symbol, start_date=None, end_date=None, frequency=None, adjustment=None):
+                raise NotImplementedError
+
+            def validate_data(self, series):
+                raise NotImplementedError
+
+            def get_trading_calendar(self, exchange, start_date, end_date):
+                return []
+
         clean_registry.register_data_provider("test", TestProvider)
 
         provider = clean_registry.get_data_provider("test")
@@ -141,6 +150,15 @@ class TestAlgorithmRegistry:
             def get_index_data(self, code, days=250):
                 return StockData(code=code, name="指数", klines=[])
             def get_sector_constituents(self, sector_code):
+                return []
+
+            def fetch_klines(self, symbol, start_date=None, end_date=None, frequency=None, adjustment=None):
+                raise NotImplementedError
+
+            def validate_data(self, series):
+                raise NotImplementedError
+
+            def get_trading_calendar(self, exchange, start_date, end_date):
                 return []
 
         provider = clean_registry.get_data_provider("decorated_provider")
@@ -248,6 +266,15 @@ class TestDuplicateRegistration:
                 return StockData(code=code, name="指数", klines=[])
             def get_sector_constituents(self, sector_code):
                 return []
+
+            def fetch_klines(self, symbol, start_date=None, end_date=None, frequency=None, adjustment=None):
+                raise NotImplementedError
+
+            def validate_data(self, series):
+                raise NotImplementedError
+
+            def get_trading_calendar(self, exchange, start_date, end_date):
+                return []
         clean_registry.register_data_provider("sina", ProvA)
 
         class ProvB(DataProvider):
@@ -256,6 +283,15 @@ class TestDuplicateRegistration:
             def get_index_data(self, code, days=250):
                 return StockData(code=code, name="指数", klines=[])
             def get_sector_constituents(self, sector_code):
+                return []
+
+            def fetch_klines(self, symbol, start_date=None, end_date=None, frequency=None, adjustment=None):
+                raise NotImplementedError
+
+            def validate_data(self, series):
+                raise NotImplementedError
+
+            def get_trading_calendar(self, exchange, start_date, end_date):
                 return []
         with pytest.raises(DuplicateRegistrationError):
             clean_registry.register_data_provider("sina", ProvB)

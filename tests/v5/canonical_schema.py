@@ -21,6 +21,8 @@ from core import (
     SignalResult, MarketRegime, FakeSignalRisk, AnalysisResult,
     BacktestResult, BacktestSummary,
     TrendDirection, PatternStage, SignalType, ConfidenceLevel,
+    AdjustmentType, FrequencyType, DataSourceType, DataQualityFlag,
+    DataProvenance, MarketDataBar, MarketDataSeries, DataQualityReport,
 )
 
 
@@ -96,6 +98,10 @@ def extract_full_schema():
         ('PatternStage', PatternStage),
         ('SignalType', SignalType),
         ('ConfidenceLevel', ConfidenceLevel),
+        ('AdjustmentType', AdjustmentType),
+        ('FrequencyType', FrequencyType),
+        ('DataSourceType', DataSourceType),
+        ('DataQualityFlag', DataQualityFlag),
     ]
 
     dataclasses = [
@@ -110,6 +116,10 @@ def extract_full_schema():
         ('AnalysisResult', AnalysisResult),
         ('BacktestResult', BacktestResult),
         ('BacktestSummary', BacktestSummary),
+        ('DataProvenance', DataProvenance),
+        ('MarketDataBar', MarketDataBar),
+        ('MarketDataSeries', MarketDataSeries),
+        ('DataQualityReport', DataQualityReport),
     ]
 
     schema = {

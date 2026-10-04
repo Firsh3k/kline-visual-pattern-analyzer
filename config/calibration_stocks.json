@@ -1,0 +1,100 @@
+{
+  "version": "1.0",
+  "description": "FIR-13 Empirical Calibration 股票池",
+  "created_at": "2026-10-04",
+  "stocks": [
+    {"code": "600519", "name": "贵州茅台", "sector": "白酒", "market_cap": "large", "liquidity": "high"},
+    {"code": "000858", "name": "五粮液", "sector": "白酒", "market_cap": "large", "liquidity": "high"},
+    {"code": "000568", "name": "泸州老窖", "sector": "白酒", "market_cap": "large", "liquidity": "high"},
+    {"code": "600809", "name": "山西汾酒", "sector": "白酒", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "600276", "name": "恒瑞医药", "sector": "医药", "market_cap": "large", "liquidity": "high"},
+    {"code": "300760", "name": "迈瑞医疗", "sector": "医疗器械", "market_cap": "large", "liquidity": "high"},
+    {"code": "600436", "name": "片仔癀", "sector": "中药", "market_cap": "large", "liquidity": "medium"},
+    {"code": "300015", "name": "爱尔眼科", "sector": "医疗服务", "market_cap": "large", "liquidity": "high"},
+    {"code": "000538", "name": "云南白药", "sector": "中药", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "603259", "name": "药明康德", "sector": "医药外包", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "688981", "name": "中芯国际", "sector": "半导体", "market_cap": "large", "liquidity": "high"},
+    {"code": "002371", "name": "北方华创", "sector": "半导体设备", "market_cap": "large", "liquidity": "high"},
+    {"code": "688012", "name": "中微公司", "sector": "半导体设备", "market_cap": "mid", "liquidity": "high"},
+    {"code": "300782", "name": "卓胜微", "sector": "半导体", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "603501", "name": "韦尔股份", "sector": "半导体", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "300750", "name": "宁德时代", "sector": "新能源电池", "market_cap": "large", "liquidity": "high"},
+    {"code": "002594", "name": "比亚迪", "sector": "新能源汽车", "market_cap": "large", "liquidity": "high"},
+    {"code": "300274", "name": "阳光电源", "sector": "光伏逆变", "market_cap": "large", "liquidity": "high"},
+    {"code": "002460", "name": "赣锋锂业", "sector": "锂电材料", "market_cap": "mid", "liquidity": "high"},
+    {"code": "601012", "name": "隆基绿能", "sector": "光伏", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "601318", "name": "中国平安", "sector": "保险", "market_cap": "large", "liquidity": "high"},
+    {"code": "600036", "name": "招商银行", "sector": "银行", "market_cap": "large", "liquidity": "high"},
+    {"code": "601398", "name": "工商银行", "sector": "银行", "market_cap": "large", "liquidity": "high"},
+    {"code": "601288", "name": "农业银行", "sector": "银行", "market_cap": "large", "liquidity": "high"},
+    {"code": "600030", "name": "中信证券", "sector": "证券", "market_cap": "large", "liquidity": "high"},
+    {"code": "601601", "name": "中国太保", "sector": "保险", "market_cap": "large", "liquidity": "medium"},
+
+    {"code": "000333", "name": "美的集团", "sector": "家电", "market_cap": "large", "liquidity": "high"},
+    {"code": "600887", "name": "伊利股份", "sector": "食品饮料", "market_cap": "large", "liquidity": "high"},
+    {"code": "600690", "name": "海尔智家", "sector": "家电", "market_cap": "large", "liquidity": "high"},
+    {"code": "000651", "name": "格力电器", "sector": "家电", "market_cap": "large", "liquidity": "high"},
+    {"code": "603288", "name": "海天味业", "sector": "调味品", "market_cap": "large", "liquidity": "high"},
+    {"code": "601888", "name": "中国中免", "sector": "免税零售", "market_cap": "large", "liquidity": "high"},
+    {"code": "000895", "name": "双汇发展", "sector": "食品加工", "market_cap": "mid", "liquidity": "medium"},
+
+    {"code": "002415", "name": "海康威视", "sector": "安防科技", "market_cap": "large", "liquidity": "high"},
+    {"code": "300059", "name": "东方财富", "sector": "互联网金融", "market_cap": "large", "liquidity": "high"},
+    {"code": "002230", "name": "科大讯飞", "sector": "人工智能", "market_cap": "mid", "liquidity": "high"},
+    {"code": "300033", "name": "同花顺", "sector": "金融科技", "market_cap": "mid", "liquidity": "high"},
+    {"code": "688111", "name": "金山办公", "sector": "软件服务", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "000977", "name": "浪潮信息", "sector": "服务器", "market_cap": "mid", "liquidity": "high"},
+    {"code": "600570", "name": "恒生电子", "sector": "金融软件", "market_cap": "mid", "liquidity": "medium"},
+
+    {"code": "601899", "name": "紫金矿业", "sector": "有色金属", "market_cap": "large", "liquidity": "high"},
+    {"code": "600028", "name": "中国石化", "sector": "石油化工", "market_cap": "large", "liquidity": "high"},
+    {"code": "601857", "name": "中国石油", "sector": "石油石化", "market_cap": "large", "liquidity": "high"},
+    {"code": "600585", "name": "海螺水泥", "sector": "建材", "market_cap": "large", "liquidity": "medium"},
+    {"code": "601600", "name": "中国铝业", "sector": "有色金属", "market_cap": "mid", "liquidity": "high"},
+    {"code": "600019", "name": "宝钢股份", "sector": "钢铁", "market_cap": "large", "liquidity": "medium"},
+
+    {"code": "000002", "name": "万科A", "sector": "房地产", "market_cap": "large", "liquidity": "high"},
+    {"code": "600048", "name": "保利发展", "sector": "房地产", "market_cap": "large", "liquidity": "high"},
+    {"code": "601668", "name": "中国建筑", "sector": "建筑装饰", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "600104", "name": "上汽集团", "sector": "汽车", "market_cap": "large", "liquidity": "medium"},
+    {"code": "601633", "name": "长城汽车", "sector": "汽车", "market_cap": "mid", "liquidity": "high"},
+    {"code": "000625", "name": "长安汽车", "sector": "汽车", "market_cap": "mid", "liquidity": "high"},
+
+    {"code": "600050", "name": "中国联通", "sector": "通信运营", "market_cap": "large", "liquidity": "medium"},
+    {"code": "000063", "name": "中兴通讯", "sector": "通信设备", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "002475", "name": "立讯精密", "sector": "消费电子", "market_cap": "large", "liquidity": "high"},
+    {"code": "000725", "name": "京东方A", "sector": "面板显示", "market_cap": "large", "liquidity": "high"},
+    {"code": "002241", "name": "歌尔股份", "sector": "消费电子", "market_cap": "mid", "liquidity": "high"},
+
+    {"code": "600760", "name": "中航沈飞", "sector": "军工航空", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "002179", "name": "中航光电", "sector": "军工电子", "market_cap": "mid", "liquidity": "medium"},
+
+    {"code": "600900", "name": "长江电力", "sector": "电力公用", "market_cap": "large", "liquidity": "high"},
+    {"code": "601985", "name": "中国核电", "sector": "电力公用", "market_cap": "large", "liquidity": "medium"},
+
+    {"code": "000876", "name": "新希望", "sector": "农牧饲渔", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "600598", "name": "北大荒", "sector": "农业种植", "market_cap": "mid", "liquidity": "low"},
+
+    {"code": "601006", "name": "大秦铁路", "sector": "铁路运输", "market_cap": "large", "liquidity": "medium"},
+    {"code": "601111", "name": "中国国航", "sector": "航空运输", "market_cap": "mid", "liquidity": "medium"},
+
+    {"code": "002602", "name": "世纪华通", "sector": "游戏传媒", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "300413", "name": "芒果超媒", "sector": "影视传媒", "market_cap": "mid", "liquidity": "medium"},
+
+    {"code": "600031", "name": "三一重工", "sector": "工程机械", "market_cap": "large", "liquidity": "high"},
+    {"code": "000425", "name": "徐工机械", "sector": "工程机械", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "300124", "name": "汇川技术", "sector": "工业自动化", "market_cap": "large", "liquidity": "high"},
+
+    {"code": "002236", "name": "大华股份", "sector": "安防科技", "market_cap": "mid", "liquidity": "medium"},
+    {"code": "002436", "name": "兴森科技", "sector": "PCB电子", "market_cap": "small", "liquidity": "medium"},
+    {"code": "300725", "name": "药石科技", "sector": "医药研发", "market_cap": "small", "liquidity": "low"},
+    {"code": "603127", "name": "昭衍新药", "sector": "临床前CRO", "market_cap": "small", "liquidity": "low"}
+  ],
+  "indices": ["sh000001", "sz399001", "sz399006"]
+}

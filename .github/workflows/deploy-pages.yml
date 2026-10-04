@@ -1,0 +1,54 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kline_analyzer.html'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy V4 stable web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+
+      - name: Build static site artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s kline_analyzer.html
+          mkdir -p dist
+          cp kline_analyzer.html dist/index.html
+          cp kline_analyzer.html dist/404.html
+          printf '%s\n' "commit=${GITHUB_SHA}" > dist/deployment-manifest.txt
+          printf '%s\n' "source=kline_analyzer.html" >> dist/deployment-manifest.txt
+          grep -q '<title>K线形态分析工具</title>' dist/index.html
+          grep -q 'K线形态分析工具' dist/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,429 @@
+{
+  "stocks": [
+    {
+      "code": "600519",
+      "name": "贵州茅台",
+      "industry": "白酒/消费",
+      "setcode": 1,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [],
+      "v5_counts": {
+        "w_bottom": 2,
+        "m_top": 5,
+        "hs_bottom": 1,
+        "hs_top": 1
+      },
+      "skipped": false
+    },
+    {
+      "code": "002594",
+      "name": "比亚迪",
+      "industry": "新能源汽车",
+      "setcode": 0,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [],
+      "v5_counts": {
+        "w_bottom": 2,
+        "m_top": 3,
+        "hs_bottom": 1,
+        "hs_top": 1
+      },
+      "skipped": false
+    },
+    {
+      "code": "300750",
+      "name": "宁德时代",
+      "industry": "新能源电池",
+      "setcode": 0,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [],
+      "v5_counts": {
+        "w_bottom": 0,
+        "m_top": 2,
+        "hs_bottom": 1,
+        "hs_top": 0
+      },
+      "skipped": false
+    },
+    {
+      "code": "601318",
+      "name": "中国平安",
+      "industry": "金融保险",
+      "setcode": 1,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [
+        {
+          "date": "2026-08-05",
+          "index": 60,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘53.0突破颈线"
+        },
+        {
+          "date": "2026-08-17",
+          "index": 68,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘50.8突破颈线"
+        },
+        {
+          "date": "2026-08-28",
+          "index": 77,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘54.9突破颈线"
+        },
+        {
+          "date": "2026-09-08",
+          "index": 84,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘54.7突破颈线"
+        }
+      ],
+      "v5_counts": {
+        "w_bottom": 2,
+        "m_top": 1,
+        "hs_bottom": 1,
+        "hs_top": 0
+      },
+      "skipped": false
+    },
+    {
+      "code": "000858",
+      "name": "五粮液",
+      "industry": "白酒/消费",
+      "setcode": 0,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [],
+      "v5_counts": {
+        "w_bottom": 3,
+        "m_top": 1,
+        "hs_bottom": 1,
+        "hs_top": 1
+      },
+      "skipped": false
+    },
+    {
+      "code": "002415",
+      "name": "海康威视",
+      "industry": "安防科技",
+      "setcode": 0,
+      "bars": 100,
+      "first_date": "2026-05-12",
+      "last_date": "2026-09-30",
+      "v4_w_signals": [],
+      "v5_counts": {
+        "w_bottom": 3,
+        "m_top": 1,
+        "hs_bottom": 2,
+        "hs_top": 2
+      },
+      "skipped": false
+    }
+  ],
+  "recall_rows": [
+    {
+      "code": "600519",
+      "name": "贵州茅台",
+      "v4_total": 0,
+      "v4_recent60": 0,
+      "v5_w_all": 2,
+      "v5_w_confirmed": 1,
+      "matched": 0,
+      "recall": null,
+      "struct_matched": 0,
+      "distinct_v4_patterns": 0,
+      "distinct_struct_matched": 0,
+      "v4_sigs": [],
+      "v5_w_anchors": [
+        {
+          "rb_index": 42,
+          "rb_date": "2026-07-10",
+          "breakout_index": 45,
+          "breakout_date": "2026-07-15",
+          "stage": "retest",
+          "score": 100,
+          "confidence": "S",
+          "neckline": 1215.52,
+          "target": 1280.03
+        },
+        {
+          "rb_index": 73,
+          "rb_date": "2026-08-24",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 80,
+          "confidence": "S",
+          "neckline": 1359.97,
+          "target": 1449.61
+        }
+      ]
+    },
+    {
+      "code": "002594",
+      "name": "比亚迪",
+      "v4_total": 0,
+      "v4_recent60": 0,
+      "v5_w_all": 2,
+      "v5_w_confirmed": 0,
+      "matched": 0,
+      "recall": null,
+      "struct_matched": 0,
+      "distinct_v4_patterns": 0,
+      "distinct_struct_matched": 0,
+      "v4_sigs": [],
+      "v5_w_anchors": [
+        {
+          "rb_index": 62,
+          "rb_date": "2026-08-07",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 96.59,
+          "target": 104.63
+        },
+        {
+          "rb_index": 70,
+          "rb_date": "2026-08-19",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 91.8,
+          "target": 95.16
+        }
+      ]
+    },
+    {
+      "code": "300750",
+      "name": "宁德时代",
+      "v4_total": 0,
+      "v4_recent60": 0,
+      "v5_w_all": 0,
+      "v5_w_confirmed": 0,
+      "matched": 0,
+      "recall": null,
+      "struct_matched": 0,
+      "distinct_v4_patterns": 0,
+      "distinct_struct_matched": 0,
+      "v4_sigs": [],
+      "v5_w_anchors": []
+    },
+    {
+      "code": "601318",
+      "name": "中国平安",
+      "v4_total": 4,
+      "v4_recent60": 4,
+      "v5_w_all": 2,
+      "v5_w_confirmed": 2,
+      "matched": 0,
+      "recall": 0.0,
+      "struct_matched": 4,
+      "distinct_v4_patterns": 1,
+      "distinct_struct_matched": 1,
+      "v4_sigs": [
+        {
+          "date": "2026-08-05",
+          "index": 60,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘53.0突破颈线"
+        },
+        {
+          "date": "2026-08-17",
+          "index": 68,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘50.8突破颈线"
+        },
+        {
+          "date": "2026-08-28",
+          "index": 77,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘54.9突破颈线"
+        },
+        {
+          "date": "2026-09-08",
+          "index": 84,
+          "desc": "第一低点45.9，第二低点47.5（不创新低），颈线位49.2，当前收盘54.7突破颈线"
+        }
+      ],
+      "v5_w_anchors": [
+        {
+          "rb_index": 19,
+          "rb_date": "2026-06-08",
+          "breakout_index": 23,
+          "breakout_date": "2026-06-12",
+          "stage": "retest",
+          "score": 85,
+          "confidence": "S",
+          "neckline": 51.85,
+          "target": 54.28
+        },
+        {
+          "rb_index": 44,
+          "rb_date": "2026-07-14",
+          "breakout_index": 45,
+          "breakout_date": "2026-07-15",
+          "stage": "post_break",
+          "score": 85,
+          "confidence": "S",
+          "neckline": 49.24,
+          "target": 52.56
+        }
+      ]
+    },
+    {
+      "code": "000858",
+      "name": "五粮液",
+      "v4_total": 0,
+      "v4_recent60": 0,
+      "v5_w_all": 3,
+      "v5_w_confirmed": 0,
+      "matched": 0,
+      "recall": null,
+      "struct_matched": 0,
+      "distinct_v4_patterns": 0,
+      "distinct_struct_matched": 0,
+      "v4_sigs": [],
+      "v5_w_anchors": [
+        {
+          "rb_index": 41,
+          "rb_date": "2026-07-09",
+          "breakout_index": 45,
+          "breakout_date": "2026-07-15",
+          "stage": "failed_break",
+          "score": 35,
+          "confidence": "C",
+          "neckline": 72.86,
+          "target": 77.78
+        },
+        {
+          "rb_index": 73,
+          "rb_date": "2026-08-24",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 78.84,
+          "target": 89.74
+        },
+        {
+          "rb_index": 91,
+          "rb_date": "2026-09-17",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 72.45,
+          "target": 76.03
+        }
+      ]
+    },
+    {
+      "code": "002415",
+      "name": "海康威视",
+      "v4_total": 0,
+      "v4_recent60": 0,
+      "v5_w_all": 3,
+      "v5_w_confirmed": 1,
+      "matched": 0,
+      "recall": null,
+      "struct_matched": 0,
+      "distinct_v4_patterns": 0,
+      "distinct_struct_matched": 0,
+      "v4_sigs": [],
+      "v5_w_anchors": [
+        {
+          "rb_index": 22,
+          "rb_date": "2026-06-11",
+          "breakout_index": 25,
+          "breakout_date": "2026-06-16",
+          "stage": "retest",
+          "score": 85,
+          "confidence": "S",
+          "neckline": 30.98,
+          "target": 32.75
+        },
+        {
+          "rb_index": 70,
+          "rb_date": "2026-08-19",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 38.63,
+          "target": 44.99
+        },
+        {
+          "rb_index": 90,
+          "rb_date": "2026-09-16",
+          "breakout_index": null,
+          "breakout_date": null,
+          "stage": "forming",
+          "score": 65,
+          "confidence": "A",
+          "neckline": 34.79,
+          "target": 37.48
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "v4_total_w_signals": 4,
+    "v5_w_bottom_all": 12,
+    "v5_w_bottom_confirmed": 4,
+    "v5_per_pattern": {
+      "w_bottom": 12,
+      "m_top": 13,
+      "hs_bottom": 7,
+      "hs_top": 5
+    },
+    "stage_dist": {
+      "retest": 7,
+      "forming": 15,
+      "pre_break": 5,
+      "post_break": 6,
+      "failed_break": 4
+    },
+    "confidence_dist": {
+      "S": 22,
+      "A": 11,
+      "C": 4
+    },
+    "score_dist": {
+      "35": 1,
+      "40": 3,
+      "65": 9,
+      "70": 2,
+      "80": 4,
+      "85": 8,
+      "100": 10
+    },
+    "overall_recent_v4_signals": 4,
+    "overall_matched": 0,
+    "overall_recall": 0.0,
+    "struct_signal_recall": 1.0,
+    "struct_pattern_recall": 1.0,
+    "total_distinct_v4_patterns": 1,
+    "total_distinct_struct_matched": 1,
+    "total_struct_signal_matched": 4,
+    "fp_ratio_confirmed_over_v4": 1.0,
+    "fp_reduction_pct_confirmed": 0.0,
+    "fp_ratio_all_over_v4": 3.0,
+    "match_tol_bars": 5,
+    "recent_window": 60,
+    "confirmed_stages": [
+      "breakout_day",
+      "complete",
+      "post_break",
+      "retest"
+    ]
+  },
+  "matched_pairs": []
+}

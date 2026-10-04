@@ -1,0 +1,200 @@
+name: Kline Pattern Analyzer CI
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy matplotlib pytest
+
+    - name: Python syntax check
+      run: |
+        python -m py_compile core/pivots.py
+        python -m py_compile core/types.py
+        python -m py_compile core/interfaces.py
+        python -m py_compile core/registry.py
+        python -m py_compile skill/scripts/analyze_stock.py
+        python -m py_compile skill/scripts/pattern_scanner.py
+        python -m py_compile skill/scripts/batch_scan.py
+        echo "Python syntax OK"
+
+    - name: Run V5 Canonical Core tests (FIR-14)
+      run: |
+        python -m pytest tests/v5/ -v --tb=short
+        echo "V5 Canonical Core tests passed"
+
+    - name: Run V5 Canonical Schema Cross-Runtime Parity (JS↔Python)
+      run: |
+        cd tests/v5
+        python run_canonical_parity.py
+        echo "Canonical schema cross-runtime parity passed (100%)"
+
+    - name: Run V5 canonical swing-pivot tests (PAIOS PILOT-001)
+      run: |
+        python tests/test_pivots.py
+
+    - name: Run Batch 1 regression tests
+      run: |
+        cd tests
+        python test_batch1_regression.py
+
+    - name: Run Batch 2-4 regression tests
+      run: |
+        cd tests
+        python test_batch2_4_regression.py
+
+    - name: Run JS/Python parity fixtures (#22)
+      run: |
+        cd tests
+        python run_parity_tests.py --output /tmp/parity_results.json
+        python -c "
+        import json
+        with open('/tmp/parity_results.json') as f:
+            data = json.load(f)
+        results = data['results']
+        print(f'Parity fixtures: {len(results)} groups')
+        for r in results:
+            if 'error' in r:
+                print(f'  ERROR: {r[\"fixture_id\"]}: {r[\"error\"]}')
+                exit(1)
+            print(f'  OK: {r[\"fixture_id\"]} (data_length={r[\"data_length\"]})')
+        print('All parity fixtures passed')
+        "
+
+    - name: Run sector data validation (#20/#21)
+      run: |
+        cd tests
+        python validate_sector_data.py
+
+    - name: Run backtest horizon tests (BUG-013)
+      run: |
+        cd tests
+        python test_backtest_horizons.py
+
+  js-syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: JS syntax check
+      run: |
+        node -e "
+        const fs = require('fs');
+        const html = fs.readFileSync('kline_analyzer.html', 'utf8');
+        const scripts = html.match(/<script[^>]*>([\s\S]*?)<\/script>/g);
+        let totalJS = '';
+        scripts.forEach(s => { totalJS += s.replace(/<\/?script[^>]*>/g, '') + '\n'; });
+        try { new Function(totalJS); console.log('JS syntax OK'); }
+        catch(e) { console.error('JS syntax error:', e.message); process.exit(1); }
+        "
+
+    - name: Run FIR-19 multi-device sync regression tests
+      run: |
+        cd tests
+        node test_fir19_sync.js
+
+    - name: Run FIR-20 delete resurrection regression tests
+      run: |
+        cd tests
+        node test_fir20_delete.js
+
+  cross-runtime-parity:
+    runs-on: ubuntu-latest
+    needs: [python-tests, js-syntax-check]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy matplotlib
+
+    - name: Run Cross-Runtime Parity Gate (Python vs Node/JS)
+      run: |
+        cd tests
+        python run_cross_parity.py
+        python -c "
+        import subprocess, sys
+        result = subprocess.run([sys.executable, 'run_cross_parity.py'], capture_output=True, text=True)
+        output = result.stdout
+        for line in output.split('\n'):
+            if '结果:' in line:
+                print(line)
+                parts = line.split(':')[1].strip().split('/')
+                passed = int(parts[0])
+                total = int(parts[1].split(' ')[0])
+                if passed != total:
+                    print(f'ERROR: pass rate {passed}/{total} != 100%')
+                    sys.exit(1)
+                print('Cross-runtime parity gate passed (100%)')
+                break
+        "
+
+  file-integrity:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check critical files exist
+      run: |
+        test -f kline_analyzer.html || (echo "ERROR: kline_analyzer.html missing" && exit 1)
+        test -f core/pivots.py || (echo "ERROR: core/pivots.py missing" && exit 1)
+        test -f core/__init__.py || (echo "ERROR: core/__init__.py missing" && exit 1)
+        test -f core/types.py || (echo "ERROR: core/types.py missing" && exit 1)
+        test -f core/interfaces.py || (echo "ERROR: core/interfaces.py missing" && exit 1)
+        test -f core/registry.py || (echo "ERROR: core/registry.py missing" && exit 1)
+        test -f tests/v5/__init__.py || (echo "ERROR: tests/v5/__init__.py missing" && exit 1)
+        test -f tests/v5/conftest.py || (echo "ERROR: tests/v5/conftest.py missing" && exit 1)
+        test -f tests/v5/test_types.py || (echo "ERROR: tests/v5/test_types.py missing" && exit 1)
+        test -f tests/v5/test_interfaces.py || (echo "ERROR: tests/v5/test_interfaces.py missing" && exit 1)
+        test -f tests/v5/test_registry.py || (echo "ERROR: tests/v5/test_registry.py missing" && exit 1)
+        test -f tests/v5/test_contract.py || (echo "ERROR: tests/v5/test_contract.py missing" && exit 1)
+        test -f tests/v5/test_backwards_compat.py || (echo "ERROR: tests/v5/test_backwards_compat.py missing" && exit 1)
+        test -f tests/v5/test_backtest_result.py || (echo "ERROR: tests/v5/test_backtest_result.py missing" && exit 1)
+        test -f tests/test_pivots.py || (echo "ERROR: tests/test_pivots.py missing" && exit 1)
+        test -f skill/scripts/analyze_stock.py || (echo "ERROR: analyze_stock.py missing" && exit 1)
+        test -f skill/scripts/pattern_scanner.py || (echo "ERROR: pattern_scanner.py missing" && exit 1)
+        test -f skill/scripts/batch_scan.py || (echo "ERROR: batch_scan.py missing" && exit 1)
+        test -f tests/test_batch1_regression.py || (echo "ERROR: test_batch1_regression.py missing" && exit 1)
+        test -f tests/test_batch2_4_regression.py || (echo "ERROR: test_batch2_4_regression.py missing" && exit 1)
+        echo "All critical files present"
+
+    - name: Check HTML file size (prevent accidental deletion)
+      run: |
+        SIZE=$(wc -c < kline_analyzer.html)
+        echo "kline_analyzer.html size: $SIZE bytes"
+        if [ "$SIZE" -lt 100000 ]; then
+          echo "ERROR: kline_analyzer.html too small ($SIZE bytes), possible deletion"
+          exit 1
+        fi
+        echo "HTML file size OK"

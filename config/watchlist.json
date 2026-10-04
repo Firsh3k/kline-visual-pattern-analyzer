@@ -1,7 +1,7 @@
 {
   "version": "1.1",
-  "exportDate": "2026-10-03",
-  "exportTime": "2026/10/3 22:12:14",
+  "exportDate": "2026-10-04",
+  "exportTime": "2026/10/4 19:20:04",
   "description": "K线形态分析工具 - 自选股云配置（多设备合并同步+Tombstone删除语义）",
   "watchlist": [
     "603068",
@@ -41,11 +41,25 @@
   "syncMeta": {
     "mergedFromRemote": true,
     "remoteCount": 13,
-    "localCount": 13,
+    "localCount": 0,
     "mergedCount": 13,
-    "onlyRemote": [],
+    "onlyRemote": [
+      "603068",
+      "688105",
+      "002119",
+      "600345",
+      "300684",
+      "301080",
+      "300647",
+      "688432",
+      "300170",
+      "002436",
+      "300602",
+      "301361",
+      "601288"
+    ],
     "onlyLocal": [],
     "resurrectedBlocked": [],
-    "mergedAt": "2026-10-03T14:12:14.540Z"
+    "mergedAt": "2026-10-04T11:20:04.556Z"
   }
 }

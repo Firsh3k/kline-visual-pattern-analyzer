@@ -39,8 +39,30 @@ from .registry import registry
 
 
 # ============================================================
-# 工具函数
+# FIR-24: H&S Guardrails（证据驱动阈值）
 # ============================================================
+#
+# 阈值来源：scripts/fir24_hs_prominence_analysis.py 在全部缓存 qfq 数据
+# （data/calibration/*_qfq.json，约 74 只股票；统计时临时中和本 guardrail，
+# 收集到所有通过既有结构闸门的候选，n=738 个 nl_now>0 的 H&S 候选）上统计：
+#
+#   head_prominence 分布（|head - avg_shoulder|/avg_shoulder，avg_shoulder=(ls+rs)/2）：
+#     P10=1.47%  P25=2.71%  P50=5.29%  P75=8.71%  P90=15.01%
+#     mean=6.94%  std=6.03%  min=0.33%  max=47.47%
+#   按任务规则「max(P25, median/2, floor 3%)」= max(2.71%, 2.65%, 3%) = 3%。
+#   该阈值拒绝「平头」候选（如 002415 某候选 prominence=2.72%），即头部与双肩
+#   几乎齐平、根本不是 H&S 而是普通双底/震荡的结构。
+#
+#   颈线外推比率分布（bottom: nl_now/head；top: head/nl_now，n=738，nl_now>0）：
+#     P50=1.12  P75=1.93  P90=3.37  P95=5.74  P99=12.55  max=69.9
+#   标准健康 fixture 的外推比率 ≈ 1.19（颈线仅比头部高 ~19%）。
+#   倾斜颈线一旦斜率较陡，外推到当前 bar 会漂移到远离结构的无意义水平
+#   （如 002415 弱候选 nl_now/head=1.82，外推颈线 53.04 远高于现价 32.46；
+#   退化候选甚至到 10.8x / 69.9x）。取 1.5：颈线最多比头部高/低 50%，
+#   超出即拒绝——健康结构（~1.1-1.3）不受影响。
+MIN_HS_HEAD_PROMINENCE: float = 0.03
+MAX_NECKLINE_EXTRAPOLATION_RATIO: float = 1.5
+
 
 def _avg_volume(klines: List[OHLCV], window: int) -> float:
     """计算最近 window 根K线的平均成交量（数据不足时用全部已有数据）"""
@@ -483,6 +505,15 @@ class HSBottomDetector(PivotPatternDetectorBase):
             if ls.price <= 0 or abs(ls.price - rs.price) / ls.price > 0.20:
                 continue
 
+            # --- FIR-24 guardrail 1a：最小头-肩突出度 ---
+            # head 必须相对双肩平均价有足够「突出」，否则是平头/普通双底而非 H&S。
+            avg_shoulder = (ls.price + rs.price) / 2.0
+            if avg_shoulder <= 0:
+                continue
+            head_prominence = abs(head.price - avg_shoulder) / avg_shoulder
+            if head_prominence < MIN_HS_HEAD_PROMINENCE:
+                continue
+
             # --- 颈线两点 ---
             left_between = [h for h in highs if ls.index < h.index < head.index]
             if not left_between:
@@ -505,6 +536,16 @@ class HSBottomDetector(PivotPatternDetectorBase):
 
             stage = self._classify_stage(klines, rs.index, nl_fn, bullish=True, breakout_mult=0.98)
             nl_now = nl_fn(len(klines) - 1)
+
+            # --- FIR-24 guardrail 1b：倾斜颈线外推合理性 ---
+            # 外推颈线必须为正；倾斜颈线（slope != 0）外推值不能远离结构
+            # （不能比头部高过 MAX_NECKLINE_EXTRAPOLATION_RATIO 倍）。
+            # 水平颈线（slope == 0）外推=常数，不受此限制。
+            if nl_now <= 0:
+                continue
+            if slope != 0.0 and nl_now > head.price * MAX_NECKLINE_EXTRAPOLATION_RATIO:
+                continue
+
             broken = klines[-1].close > nl_now * 0.98
 
             target = nl_now + (nl_now - head.price)
@@ -595,6 +636,14 @@ class HSTopDetector(PivotPatternDetectorBase):
             if ls.price <= 0 or abs(ls.price - rs.price) / ls.price > 0.20:
                 continue
 
+            # --- FIR-24 guardrail 1a：最小头-肩突出度（与头肩底对称） ---
+            avg_shoulder = (ls.price + rs.price) / 2.0
+            if avg_shoulder <= 0:
+                continue
+            head_prominence = abs(head.price - avg_shoulder) / avg_shoulder
+            if head_prominence < MIN_HS_HEAD_PROMINENCE:
+                continue
+
             # --- 颈线两点 ---
             left_between = [l for l in lows if ls.index < l.index < head.index]
             if not left_between:
@@ -617,6 +666,15 @@ class HSTopDetector(PivotPatternDetectorBase):
 
             stage = self._classify_stage(klines, rs.index, nl_fn, bullish=False, breakout_mult=1.02)
             nl_now = nl_fn(len(klines) - 1)
+
+            # --- FIR-24 guardrail 1b：倾斜颈线外推合理性（与头肩底对称） ---
+            # 头肩顶颈线应在头部下方；外推值必须为正，倾斜颈线外推不能比头部
+            # 低过 MAX_NECKLINE_EXTRAPOLATION_RATIO 倍（否则外推失控）。
+            if nl_now <= 0:
+                continue
+            if slope != 0.0 and nl_now < head.price / MAX_NECKLINE_EXTRAPOLATION_RATIO:
+                continue
+
             broken = klines[-1].close < nl_now * 1.02
 
             target = nl_now - (head.price - nl_now)

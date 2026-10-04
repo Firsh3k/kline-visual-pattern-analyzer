@@ -35,6 +35,8 @@ from core import (  # noqa: E402
     MTopDetector,
     HSBottomDetector,
     HSTopDetector,
+    MIN_HS_HEAD_PROMINENCE,
+    MAX_NECKLINE_EXTRAPOLATION_RATIO,
 )
 
 
@@ -527,3 +529,147 @@ class TestRawExtremaFallbackRemoved:
         assert raw_high_between > 90.0  # 原始窗口里确实存在价格高点
         results = WBottomDetector().detect(klines, pivots=[a, b])
         assert results == []
+
+
+# ============================================================
+# FIR-24: H&S Guardrails（最小头-肩突出度 + 颈线外推合理性）
+# ============================================================
+
+def _flat_klines_long(n=80, price=100.0):
+    """构造 n 根平盘K线（用于注入 pivot 的确定性测试夹具）"""
+    return make_klines([price] * n)
+
+
+def _swing_low(klines, idx, price, right=5):
+    return PivotPoint(index=idx, date=klines[idx].date, price=price,
+                      pivot_type="swing_low", confirmed=True,
+                      confirmed_at_index=idx + right, confirmed_at_date=None)
+
+
+def _swing_high(klines, idx, price, right=5):
+    return PivotPoint(index=idx, date=klines[idx].date, price=price,
+                      pivot_type="swing_high", confirmed=True,
+                      confirmed_at_index=idx + right, confirmed_at_date=None)
+
+
+class TestFIR24HeadProminenceGuardrail:
+    """1a — 最小头-肩突出度：头相对双肩平均价不够突出则拒绝"""
+
+    def test_hs_bottom_min_prominence(self):
+        """头几乎与双肩齐平（prominence < 3%）：头肩底被拒绝"""
+        klines = _flat_klines_long(80)
+        # ls=90, head=89.5（仅低 0.5%）, rs=90；avg=90 → prominence≈0.56% < 3%
+        pivots = [
+            _swing_low(klines, 10, 90.0),
+            _swing_low(klines, 25, 89.5),
+            _swing_low(klines, 40, 90.0),
+            _swing_high(klines, 17, 96.0),   # 水平颈线
+            _swing_high(klines, 32, 96.0),
+        ]
+        results = HSBottomDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+    def test_hs_top_min_prominence(self):
+        """头几乎与双肩齐平：头肩顶被拒绝"""
+        klines = _flat_klines_long(80)
+        pivots = [
+            _swing_high(klines, 10, 110.0),
+            _swing_high(klines, 25, 110.5),  # 仅高 0.45%
+            _swing_high(klines, 40, 110.0),
+            _swing_low(klines, 17, 104.0),
+            _swing_low(klines, 32, 104.0),
+        ]
+        results = HSTopDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+    def test_hs_bottom_valid_case_passes(self):
+        """标准 H&S 底（头突出足够、水平颈线）仍然通过"""
+        klines = _flat_klines_long(80)
+        # ls=90, head=84（prominence≈6.7%）, rs=90
+        pivots = [
+            _swing_low(klines, 10, 90.0),
+            _swing_low(klines, 25, 84.0),
+            _swing_low(klines, 40, 90.0),
+            _swing_high(klines, 17, 96.0),
+            _swing_high(klines, 32, 96.0),
+        ]
+        results = HSBottomDetector().detect(klines, pivots=pivots)
+        assert len(results) == 1
+        assert results[0].pattern_id == "hs_bottom"
+
+
+class TestFIR24NecklineExtrapolationGuardrail:
+    """1b — 倾斜颈线外推到当前 bar 不能远离结构"""
+
+    def test_hs_bottom_neckline_extrapolation_rejected(self):
+        """倾斜颈线外推 > 头部 * 1.5：头肩底被拒绝"""
+        klines = _flat_klines_long(80)
+        # 头=84 突出足够；但颈线 95@17 → 120@30，斜率陡峭，
+        # 外推到末根 bar 远高于 84*1.5=126
+        pivots = [
+            _swing_low(klines, 10, 90.0),
+            _swing_low(klines, 25, 84.0),
+            _swing_low(klines, 40, 90.0),
+            _swing_high(klines, 17, 95.0),
+            _swing_high(klines, 30, 120.0),
+        ]
+        results = HSBottomDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+    def test_hs_top_neckline_extrapolation_rejected(self):
+        """倾斜颈线外推 < 头部 / 1.5：头肩顶被拒绝"""
+        klines = _flat_klines_long(80)
+        # 头=116；颈线 105@17 → 70@30，外推到末根 bar 远低于 116/1.5≈77.3
+        pivots = [
+            _swing_high(klines, 10, 110.0),
+            _swing_high(klines, 25, 116.0),
+            _swing_high(klines, 40, 110.0),
+            _swing_low(klines, 17, 105.0),
+            _swing_low(klines, 30, 70.0),
+        ]
+        results = HSTopDetector().detect(klines, pivots=pivots)
+        assert results == []
+
+
+class TestFIR24Zero002415Regression:
+    """1c — 002415 海康威视弱/假 hs_bottom 案例回归"""
+
+    def test_hs_bottom_002415_weak_case_rejected(self):
+        """002415 弱候选（ls=29.45@555, head=29.21@562, rs=32.27@587）必须被拒绝"""
+        data_path = os.path.join(
+            PROJECT_ROOT, "data", "calibration",
+            "002415_2023-01-01_2026-09-30_qfq.json")
+        if not os.path.exists(data_path):
+            pytest.skip("002415 缓存数据文件不存在")
+        import json
+        with open(data_path) as f:
+            raw = json.load(f)
+        klines = [OHLCV.from_dict(b) for b in raw]
+        results = HSBottomDetector().detect(klines)
+        # 弱候选 ls@555/head@562/rs@587 不得出现在结果中
+        for r in results:
+            ls = next((kp for kp in r.key_points if kp.name == "左肩"), None)
+            head = next((kp for kp in r.key_points if kp.name == "头"), None)
+            rs = next((kp for kp in r.key_points if kp.name == "右肩"), None)
+            assert not (ls and head and rs and ls.index == 555
+                        and head.index == 562 and rs.index == 587), \
+                "002415 弱 hs_bottom 候选未被 guardrail 拒绝"
+
+
+class TestFIR24WMUnchanged:
+    """1e — W Bottom / M Top 行为不受 guardrails 影响"""
+
+    def test_w_m_unchanged(self):
+        """标准 W/M fixture 仍各识别出至少一个结果"""
+        w = WBottomDetector().detect(make_klines(W_PRICES))
+        m = MTopDetector().detect(make_klines(M_PRICES))
+        assert len(w) >= 1
+        assert len(m) >= 1
+        # 关键价格/阶段不变
+        assert w[0].direction == TrendDirection.BULL
+        assert m[0].direction == TrendDirection.BEAR
+
+    def test_thresholds_are_module_constants(self):
+        """阈值为模块级常量，且为正值"""
+        assert MIN_HS_HEAD_PROMINENCE > 0
+        assert MAX_NECKLINE_EXTRAPOLATION_RATIO > 1.0

@@ -125,6 +125,9 @@ class PivotPoint:
     price: float             # 价格（high for swing high, low for swing low）
     pivot_type: str          # "swing_high" / "swing_low"
     strength: int = 1        # 强度（左右各多少根K线确认）
+    confirmed: bool = True   # 是否已确认（右侧有完整确认窗口；False表示待确认，可能随新数据变化）
+    confirmed_at_index: Optional[int] = None  # 该Pivot最早可被交易系统知道已经成立的K线索引（i + right_bars）
+    confirmed_at_date: Optional[str] = None    # 该Pivot最早可被交易系统知道已经成立的日期
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

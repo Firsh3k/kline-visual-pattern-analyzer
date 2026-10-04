@@ -125,6 +125,7 @@ class PivotPoint:
     price: float             # 价格（high for swing high, low for swing low）
     pivot_type: str          # "swing_high" / "swing_low"
     strength: int = 1        # 强度（左右各多少根K线确认）
+    confirmed: bool = True   # 是否已确认（右侧有完整确认窗口；False表示待确认，可能随新数据变化）
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

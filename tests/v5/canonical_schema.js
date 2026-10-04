@@ -77,15 +77,16 @@ const CANONICAL_SCHEMA = {
 
     PivotPoint: {
       name: 'PivotPoint',
-      field_count: 5,
+      field_count: 6,
       required_fields: ['index', 'date', 'price', 'pivot_type'],
-      optional_fields: ['strength'],
+      optional_fields: ['strength', 'confirmed'],
       fields: [
         { name: 'index', type: 'int', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'date', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'price', type: 'float', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'pivot_type', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
-        { name: 'strength', type: 'int', is_optional: false, has_default: true, default: 1, nullable: false }
+        { name: 'strength', type: 'int', is_optional: false, has_default: true, default: 1, nullable: false },
+        { name: 'confirmed', type: 'bool', is_optional: false, has_default: true, default: true, nullable: false }
       ]
     },
 

@@ -68,7 +68,10 @@ from .registry import (
     get_registry,
 )
 
-__version__ = "5.0.0"
+# V5 Phase 1B — Swing Pivot Engine (FIR-12)
+from .swing_pivot import SwingPivotEngine, PivotUpdateResult
+
+__version__ = "5.1.0"
 __all__ = [
     # 向后兼容 (PILOT-001)
     "detect_swing_pivots",
@@ -108,4 +111,7 @@ __all__ = [
     "DuplicateRegistrationError",
     "registry",
     "get_registry",
+    # V5 Phase 1B — Swing Pivot Engine (FIR-12)
+    "SwingPivotEngine",
+    "PivotUpdateResult",
 ]

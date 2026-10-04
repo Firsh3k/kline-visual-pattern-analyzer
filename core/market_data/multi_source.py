@@ -1,8 +1,11 @@
 """
 MultiSourceDataProvider — 多源容错数据提供者
 
-主源 Sina，备源 Tencent。主源失败自动降级到备源。
-可选交叉验证：两源价格差异 >0.5% 时在 DataQualityReport 中标记异常。
+策略（Blocker 7）：
+- NONE（raw）：主源 Sina，失败降级到 Tencent。
+- qfq/hfq：仅 Tencent；失败则 raise DataProviderError（fail closed），
+  绝不静默回退到 Sina raw。
+- 可选交叉验证：两源 raw 收盘价差异 >0.5% 时标记异常。
 """
 
 from typing import List, Optional
@@ -34,9 +37,17 @@ class MultiSourceDataProvider(DataProvider):
         frequency: FrequencyType = FrequencyType.DAILY,
         adjustment: AdjustmentType = AdjustmentType.NONE,
     ) -> MarketDataSeries:
-        # Sina 不支持复权，复权请求直接走 Tencent
+        # Blocker 7：qfq/hfq 请求 —— 优先 Tencent；Tencent 失败则 fail closed，
+        # 绝不静默回退到 Sina raw（那样会把不复权数据伪装成已复权）。
         if adjustment != AdjustmentType.NONE:
-            return self.secondary.fetch_klines(symbol, start_date, end_date, frequency, adjustment)
+            try:
+                return self.secondary.fetch_klines(symbol, start_date, end_date, frequency, adjustment)
+            except Exception as e:
+                raise DataProviderError(
+                    f"Adjustment '{adjustment.value}' requested for {symbol}, but Tencent failed "
+                    f"and Sina is raw-only. Refusing to silently fall back to Sina raw (provider "
+                    f"identity + adjustment semantics would be violated). Original error: {e}"
+                ) from e
 
         # 尝试主源 Sina
         primary_series = None

@@ -22,6 +22,7 @@ from ..types import (
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
 from .trading_calendar import get_trading_days, is_trading_day
+from .validation import assess_series_quality, normalize_bars
 
 
 _SINA_URL = (
@@ -142,6 +143,9 @@ class SinaDataProvider(DataProvider):
         if not bars:
             raise MarketDataError(f"No bars after date filter for {full_symbol}")
 
+        # Blocker 6: 确定性去重 + 强制升序
+        bars, _ = normalize_bars(bars)
+
         series = MarketDataSeries(
             symbol=full_symbol,
             name=full_symbol,
@@ -156,54 +160,8 @@ class SinaDataProvider(DataProvider):
         return series
 
     def validate_data(self, series: MarketDataSeries) -> DataQualityReport:
-        """校验数据质量"""
-        if not series.bars:
-            return DataQualityReport(
-                total_days=0, expected_trading_days=0, actual_bars=0,
-                suspended_days=0, missing_days=0, completeness_ratio=0.0,
-                adjustment_consistent=True,
-                anomalies=[{"type": "empty", "msg": "No bars in series"}],
-            )
-
-        first_date = series.bars[0].date
-        last_date = series.bars[-1].date
-        expected = get_trading_days(first_date, last_date)
-        actual_dates = {b.date for b in series.bars}
-        missing = [d for d in expected if d not in actual_dates]
-
-        # 价格跳变检测 (>20%)
-        anomalies = []
-        for i in range(1, len(series.bars)):
-            prev_close = series.bars[i - 1].close
-            cur_close = series.bars[i].close
-            if prev_close > 0:
-                pct = abs(cur_close - prev_close) / prev_close
-                if pct > 0.20:
-                    anomalies.append({
-                        "type": "price_jump",
-                        "date": series.bars[i].date,
-                        "pct": round(pct, 4),
-                        "prev_close": prev_close,
-                        "cur_close": cur_close,
-                    })
-
-        total_days = (datetime.strptime(last_date, "%Y-%m-%d") -
-                      datetime.strptime(first_date, "%Y-%m-%d")).days + 1
-        expected_count = len(expected)
-        actual_count = len(series.bars)
-        completeness = actual_count / expected_count if expected_count > 0 else 0.0
-
-        return DataQualityReport(
-            total_days=total_days,
-            expected_trading_days=expected_count,
-            actual_bars=actual_count,
-            suspended_days=0,
-            missing_days=len(missing),
-            completeness_ratio=round(completeness, 4),
-            adjustment_consistent=(series.adjustment != AdjustmentType.NONE or True),
-            anomalies=anomalies,
-            notes=f"missing={len(missing)} days",
-        )
+        """校验数据质量（Blocker 2 & 6：真实校验，恒真重言式已移除）"""
+        return assess_series_quality(series)
 
     def get_trading_calendar(self, exchange: str, start_date: str, end_date: str) -> List[str]:
         return get_trading_days(start_date, end_date)

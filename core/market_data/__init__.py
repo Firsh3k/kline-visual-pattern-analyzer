@@ -15,6 +15,12 @@ from .trading_calendar import (
     count_trading_days,
 )
 from .adjustment import compute_adjustment_factors, apply_adjustment
+from .validation import (
+    validate_ohlc_invariants, normalize_bars, validate_adjustment_consistency,
+    AdjustmentConsistency, assess_series_quality,
+)
+from .aggregation import aggregate_daily_bars
+from .policy import UseCase, DEFAULT_POLICY, adjustment_for
 
 __all__ = [
     "SinaDataProvider",
@@ -27,4 +33,13 @@ __all__ = [
     "count_trading_days",
     "compute_adjustment_factors",
     "apply_adjustment",
+    "validate_ohlc_invariants",
+    "normalize_bars",
+    "validate_adjustment_consistency",
+    "AdjustmentConsistency",
+    "assess_series_quality",
+    "aggregate_daily_bars",
+    "UseCase",
+    "DEFAULT_POLICY",
+    "adjustment_for",
 ]

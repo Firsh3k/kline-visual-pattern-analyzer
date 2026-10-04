@@ -21,6 +21,8 @@ from ..types import (
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
 from .trading_calendar import get_trading_days
+from .validation import assess_series_quality, normalize_bars
+from .aggregation import aggregate_daily_bars
 
 
 _TENCENT_URL = (
@@ -66,10 +68,33 @@ class TencentDataProvider(DataProvider):
         frequency: FrequencyType = FrequencyType.DAILY,
         adjustment: AdjustmentType = AdjustmentType.NONE,
     ) -> MarketDataSeries:
-        freq_str = _FREQ_MAP.get(frequency)
-        if freq_str is None:
-            raise MarketDataError(f"Unsupported frequency: {frequency}")
+        # Blocker 4：WEEKLY/MONTHLY 不直接取 provider 周/月行（复权口径不可证明）。
+        # 而是先取带正确复权的 DAILY，再确定性聚合，保证调整语义与日线一致。
+        if frequency in (FrequencyType.WEEKLY, FrequencyType.MONTHLY):
+            daily = self._fetch_daily(symbol, start_date, end_date, adjustment)
+            bars = aggregate_daily_bars(daily.bars, frequency)
+            series = MarketDataSeries(
+                symbol=symbol,
+                name=symbol,
+                frequency=frequency,
+                adjustment=adjustment,
+                trading_calendar="SSE",
+                source=self.SOURCE,
+                fetched_at=daily.fetched_at,
+                bars=bars,
+            )
+            series.quality_report = self.validate_data(series)
+            return series
 
+        return self._fetch_daily(symbol, start_date, end_date, adjustment)
+
+    def _fetch_daily(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adjustment: AdjustmentType = AdjustmentType.NONE,
+    ) -> MarketDataSeries:
         adj_str = _ADJ_MAP.get(adjustment, "")
         datalen = 1023
         if start_date:
@@ -81,7 +106,7 @@ class TencentDataProvider(DataProvider):
             except ValueError:
                 pass
 
-        url = _TENCENT_URL.format(symbol=symbol, freq=freq_str, datalen=datalen, adjustment=adj_str)
+        url = _TENCENT_URL.format(symbol=symbol, freq="day", datalen=datalen, adjustment=adj_str)
         raw_text = _http_get(url)
         raw_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
         fetched_at = datetime.now(timezone.utc).isoformat()
@@ -92,7 +117,6 @@ class TencentDataProvider(DataProvider):
 
         sym_data = payload.get("data", {}).get(symbol, {})
         # 复权数据在 qfqday/hfqday 字段，不复权在 day 字段
-        # 腾讯 API 实际 key 命名: qfqday, hfqday, day, week, month
         rows = None
         if adj_str == "qfq" and "qfqday" in sym_data:
             rows = sym_data["qfqday"]
@@ -100,10 +124,8 @@ class TencentDataProvider(DataProvider):
             rows = sym_data["hfqday"]
         elif adj_str and adj_str + "day" in sym_data:
             rows = sym_data[adj_str + "day"]
-        elif freq_str in sym_data:
-            rows = sym_data[freq_str]
-        elif adj_str in sym_data:
-            rows = sym_data[adj_str]
+        elif "day" in sym_data:
+            rows = sym_data["day"]
         if rows is None:
             raise MarketDataError(f"No kline data for {symbol}, keys={list(sym_data.keys())}")
 
@@ -137,10 +159,13 @@ class TencentDataProvider(DataProvider):
         if not bars:
             raise MarketDataError(f"No bars after date filter for {symbol}")
 
+        # Blocker 6: 确定性去重 + 强制升序
+        bars, _ = normalize_bars(bars)
+
         series = MarketDataSeries(
             symbol=symbol,
             name=symbol,
-            frequency=frequency,
+            frequency=FrequencyType.DAILY,
             adjustment=adjustment,
             trading_calendar="SSE",
             source=self.SOURCE,
@@ -151,52 +176,8 @@ class TencentDataProvider(DataProvider):
         return series
 
     def validate_data(self, series: MarketDataSeries) -> DataQualityReport:
-        if not series.bars:
-            return DataQualityReport(
-                total_days=0, expected_trading_days=0, actual_bars=0,
-                suspended_days=0, missing_days=0, completeness_ratio=0.0,
-                adjustment_consistent=True,
-                anomalies=[{"type": "empty", "msg": "No bars in series"}],
-            )
-
-        first_date = series.bars[0].date
-        last_date = series.bars[-1].date
-        expected = get_trading_days(first_date, last_date)
-        actual_dates = {b.date for b in series.bars}
-        missing = [d for d in expected if d not in actual_dates]
-
-        anomalies = []
-        for i in range(1, len(series.bars)):
-            prev_close = series.bars[i - 1].close
-            cur_close = series.bars[i].close
-            if prev_close > 0:
-                pct = abs(cur_close - prev_close) / prev_close
-                if pct > 0.20:
-                    anomalies.append({
-                        "type": "price_jump",
-                        "date": series.bars[i].date,
-                        "pct": round(pct, 4),
-                        "prev_close": prev_close,
-                        "cur_close": cur_close,
-                    })
-
-        total_days = (datetime.strptime(last_date, "%Y-%m-%d") -
-                      datetime.strptime(first_date, "%Y-%m-%d")).days + 1
-        expected_count = len(expected)
-        actual_count = len(series.bars)
-        completeness = actual_count / expected_count if expected_count > 0 else 0.0
-
-        return DataQualityReport(
-            total_days=total_days,
-            expected_trading_days=expected_count,
-            actual_bars=actual_count,
-            suspended_days=0,
-            missing_days=len(missing),
-            completeness_ratio=round(completeness, 4),
-            adjustment_consistent=True,
-            anomalies=anomalies,
-            notes=f"missing={len(missing)} days",
-        )
+        """校验数据质量（Blocker 2 & 6：真实校验，硬编码 True 已移除）"""
+        return assess_series_quality(series)
 
     def get_trading_calendar(self, exchange: str, start_date: str, end_date: str) -> List[str]:
         return get_trading_days(start_date, end_date)

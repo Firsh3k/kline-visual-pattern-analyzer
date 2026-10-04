@@ -10,6 +10,7 @@ FIR-23: 数据质量与复权一致性校验
 """
 
 from enum import Enum
+from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional
 
 from ..types import (
@@ -225,3 +226,98 @@ def find_legacy_provenance_bars(bars: List[MarketDataBar]) -> List[str]:
         if p is not None and p.source == DataSourceType.MANUAL and p.fetched_at == "":
             out.append(b.date)
     return out
+
+
+def assess_series_quality(series: MarketDataSeries) -> "DataQualityReport":
+    """共享的 DataQualityReport 构造（Blocker 2 & 6）。
+
+    流程：
+      1. normalize_bars（去重 + 升序，确定性）。
+      2. 逐根 OHLC 不变量校验。
+      3. 预期交易日 vs 实际 bars 的缺口 —— 无停牌数据源，全部记为
+         unknown_missing_days（原因未知），不静默记为 OK。
+      4. 复权一致性：NONE -> NOT_APPLICABLE；qfq/hfq 无配对 raw -> UNVERIFIED(bool=False)。
+      5. provenance 缺失/legacy 占位标记。
+    """
+    # 延迟导入避免循环
+    from .trading_calendar import get_trading_days
+    from ..types import DataQualityReport
+
+    bars = series.bars
+    if not bars:
+        return DataQualityReport(
+            total_days=0, expected_trading_days=0, actual_bars=0,
+            suspended_days=0, missing_days=0, completeness_ratio=0.0,
+            adjustment_consistent=True, unknown_missing_days=0,
+            anomalies=[{"type": "empty", "msg": "No bars in series"}],
+        )
+
+    normalized, norm_anomalies = normalize_bars(bars)
+    first_date = normalized[0].date
+    last_date = normalized[-1].date
+
+    try:
+        expected = get_trading_days(first_date, last_date)
+    except Exception:
+        expected = []
+    actual_dates = {b.date for b in normalized}
+    missing = [d for d in expected if d not in actual_dates]
+    # 无停牌数据源：所有缺口原因未知（provider/数据失败）
+    unknown_missing = len(missing)
+
+    anomalies: List[Dict[str, Any]] = list(norm_anomalies)
+
+    # OHLC 不变量
+    for b in normalized:
+        anomalies.extend(validate_ohlc_invariants(b))
+
+    # 价格跳变启发式（>20%）
+    for i in range(1, len(normalized)):
+        prev_close = normalized[i - 1].close
+        cur_close = normalized[i].close
+        if prev_close > 0:
+            pct = abs(cur_close - prev_close) / prev_close
+            if pct > 0.20:
+                anomalies.append({
+                    "type": "price_jump",
+                    "date": normalized[i].date,
+                    "pct": round(pct, 4),
+                    "prev_close": prev_close,
+                    "cur_close": cur_close,
+                })
+
+    # 复权一致性（Blocker 2）
+    adj_state, adj_anomalies = validate_adjustment_consistency(series)
+    anomalies.extend(adj_anomalies)
+    adj_bool = ADJUSTMENT_CONSISTENT_BOOL[adj_state]
+
+    # provenance 检查（Blocker 5/6）
+    missing_prov = find_bars_missing_provenance(normalized)
+    legacy_prov = find_legacy_provenance_bars(normalized)
+    if missing_prov:
+        anomalies.append({"type": "missing_provenance", "dates": missing_prov})
+    if legacy_prov:
+        anomalies.append({"type": "legacy_provenance", "dates": legacy_prov})
+
+    total_days = (datetime.strptime(last_date, "%Y-%m-%d") -
+                  datetime.strptime(first_date, "%Y-%m-%d")).days + 1
+    expected_count = len(expected)
+    actual_count = len(normalized)
+    completeness = actual_count / expected_count if expected_count > 0 else 0.0
+
+    notes_parts = [f"unknown_missing={unknown_missing}", f"adjustment={adj_state.value}"]
+    if legacy_prov:
+        notes_parts.append(f"legacy_provenance_bars={len(legacy_prov)}")
+
+    return DataQualityReport(
+        total_days=total_days,
+        expected_trading_days=expected_count,
+        actual_bars=actual_count,
+        suspended_days=0,               # 无停牌数据源，无法归因
+        missing_days=0,                 # 已知原因缺失（停牌）——当前无数据
+        completeness_ratio=round(completeness, 4),
+        adjustment_consistent=adj_bool,
+        unknown_missing_days=unknown_missing,
+        anomalies=anomalies,
+        notes="; ".join(notes_parts),
+    )

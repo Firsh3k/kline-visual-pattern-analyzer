@@ -311,7 +311,11 @@ def run_pipeline(args) -> CalibrationSummary:
             regime_by_date = {}
             for k in klines:
                 regime_by_date[k.date] = collector.determine_market_regime(index_klines, k.date)
-            stock_signals = gen.generate_signals(klines, code, regime_by_date)
+            stock_signals = gen.generate_signals(
+                klines, code, regime_by_date,
+                data_source="multi_source",
+                adjustment="qfq",
+            )
             signals.extend(stock_signals)
         print(f"  共生成 {len(signals)} 个信号")
 
@@ -334,6 +338,21 @@ def run_pipeline(args) -> CalibrationSummary:
             "index": "sh000001",
             "stocks_collected": len(klines_by_code),
             "stocks_total": len(codes),
+            "detector_versions": {
+                "w_bottom": "canonical_v5.2.0",
+                "m_top": "canonical_v5.2.0",
+                "hs_bottom": "canonical_v5.2.0",
+                "hs_top": "canonical_v5.2.0",
+                "ma_bull": "builtin_v1",
+                "ma_bear": "builtin_v1",
+                "platform_break": "builtin_v1",
+                "platform_break_down": "builtin_v1",
+            },
+            "guardrails": {
+                "MIN_HS_HEAD_PROMINENCE": 0.03,
+                "MAX_NECKLINE_EXTRAPOLATION_RATIO": 1.5,
+                "DEDUP_WINDOW_DAYS": 20,
+            },
         }
 
     # 5. 统计校准

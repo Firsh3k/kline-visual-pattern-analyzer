@@ -18,7 +18,6 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 
-
 # ===========================================================================
 # 枚举定义
 # ===========================================================================
@@ -147,6 +146,13 @@ class SignalOccurrence:
     breakout_price: Optional[float] = None  # 突破价格（如有）
     neckline_price: Optional[float] = None  # 颈线价格（如有）
     notes: str = ""                   # 备注
+    # ---- FIR-24: provenance / quality manifest ----
+    data_source: str = ""             # "sina" / "tencent" / "multi_source"
+    adjustment: str = ""              # "qfq" / "hfq" / "raw"
+    data_quality: str = "OK"          # "OK" / "has_missing" / "has_suspension" / "unverified_calendar"
+    detector_version: str = ""        # "canonical_v5.2.0" / "builtin_v1" / "legacy"
+    pattern_confidence: str = ""       # "high" / "medium" / "low"
+    guardrail_flags: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -161,6 +167,12 @@ class SignalOccurrence:
             'breakout_price': self.breakout_price,
             'neckline_price': self.neckline_price,
             'notes': self.notes,
+            'data_source': self.data_source,
+            'adjustment': self.adjustment,
+            'data_quality': self.data_quality,
+            'detector_version': self.detector_version,
+            'pattern_confidence': self.pattern_confidence,
+            'guardrail_flags': list(self.guardrail_flags),
         }
 
     @classmethod
@@ -177,6 +189,12 @@ class SignalOccurrence:
             breakout_price=float(data['breakout_price']) if data.get('breakout_price') is not None else None,
             neckline_price=float(data['neckline_price']) if data.get('neckline_price') is not None else None,
             notes=str(data.get('notes', '')),
+            data_source=str(data.get('data_source', '')),
+            adjustment=str(data.get('adjustment', '')),
+            data_quality=str(data.get('data_quality', 'OK')),
+            detector_version=str(data.get('detector_version', '')),
+            pattern_confidence=str(data.get('pattern_confidence', '')),
+            guardrail_flags=list(data.get('guardrail_flags', [])),
         )
 
 

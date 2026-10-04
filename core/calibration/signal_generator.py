@@ -1,38 +1,63 @@
 """
-FIR-13: Empirical Calibration — 校准信号生成层
+FIR-13/FIR-24: Empirical Calibration — 校准信号生成层
 
 对每只股票的历史数据逐日生成形态信号，严格 point-in-time 防 look-ahead。
 
-注意：PR #36 (PivotPatternDetector) 未合并，此处使用 V4 pattern_scanner.py
-的形态逻辑，并改造成 point-in-time 版本：对每个检测日 i 只使用 klines[:i+1]。
-legacy pattern detector, will migrate after PR #36 merge.
+实现说明（FIR-24）：
+- W底 / M头 / 头肩底 / 头肩顶 已从 V4 legacy 内联检测迁移到
+  `core.pivot_patterns.py` 的 canonical detectors（FIR-12）。
+- MA 多头/空头、平台突破/破位仍使用本层内联逻辑（canonical detector 未覆盖）。
 
 核心防 look-ahead 约束：
-- 均线计算到 i 为止（含 i）：当天收盘后均线已知
-- high_20 / low_20 使用 shift(1) 语义，即 klines[i-20:i]，**不含**当天 i，
-  否则"当天突破前高"将永远成立（自引用）
-- W底 / M头 / 头肩 形态使用过去 60 天窗口 klines[i-60:i+1]，不含未来
+- 对每个检测日 i 只取 prefix `klines[:i+1]`，再交给 canonical detector。
+  detector 内部只使用已确认 pivot（confirmed_at_index <= i），杜绝未来函数。
+- 均线计算到 i 为止（含 i）；high_20 / low_20 使用 shift(1) 语义（不含当天 i）。
 """
 
 from __future__ import annotations
 
 from typing import List, Optional, Dict
 
-from core.types import OHLCV
+from core.types import OHLCV, PatternStage
+from core.pivot_patterns import (
+    WBottomDetector,
+    MTopDetector,
+    HSBottomDetector,
+    HSTopDetector,
+)
 from core.calibration.types import *  # noqa: F401,F403 (PatternType, ConfirmationState, MarketRegime, SignalOccurrence, make_signal_id)
 
 
-# 形态回看窗口（交易日）
+# 形态回看起点（交易日）：保留概念；canonical detector 内部用 pivot 引擎，不显式窗口
 PATTERN_WINDOW = 60
-# 颈线突破容差（1% / 1%）
-BREAKOUT_TOL = 1.01
-BREAKDOWN_TOL = 0.99
-# W底/M头两底/顶高度容差
-DOUBLE_TOL = 0.05
-# 头肩左右肩高度差容差
-HS_SHOULDER_TOL = 0.05
-# 两底/顶最小间距（交易日）
-DOUBLE_MIN_GAP = 10
+
+# 内联 MA/platform 形态评分
+SCORE = {
+    PatternType.MA_BULL: 70,
+    PatternType.MA_BEAR: 70,
+    PatternType.PLATFORM_BREAK: 80,
+    PatternType.PLATFORM_BREAK_DOWN: 80,
+}
+
+# canonical detector pattern_id -> PatternType
+_PATTERN_ID_MAP = {
+    "w_bottom": PatternType.W_BOTTOM,
+    "m_top": PatternType.M_TOP,
+    "hs_bottom": PatternType.HS_BOTTOM,
+    "hs_top": PatternType.HS_TOP,
+}
+
+# PatternStage -> ConfirmationState 映射
+_STAGE_TO_CONFIRMATION = {
+    PatternStage.BREAKOUT_DAY: ConfirmationState.BREAKOUT_DAY,
+    PatternStage.POST_BREAK: ConfirmationState.POST_BREAK,
+    PatternStage.RETEST: ConfirmationState.RETEST,
+    PatternStage.FAILED_BREAK: ConfirmationState.FAILED_BREAK,
+    PatternStage.PRE_BREAK: ConfirmationState.PRE_BREAK,
+}
+
+# 只对已突破/跌破的形态产生校准信号
+_EMIT_STAGES = frozenset({PatternStage.BREAKOUT_DAY, PatternStage.POST_BREAK})
 
 
 class CalibrationSignalGenerator:
@@ -41,17 +66,12 @@ class CalibrationSignalGenerator:
     # 最少需要的历史K线数：60 日窗口 + MA60
     MIN_START = PATTERN_WINDOW
 
-    # 形态评分：均线类 70，突破类 80，双底/双顶/头肩类 75
-    SCORE = {
-        PatternType.MA_BULL: 70,
-        PatternType.MA_BEAR: 70,
-        PatternType.PLATFORM_BREAK: 80,
-        PatternType.PLATFORM_BREAK_DOWN: 80,
-        PatternType.W_BOTTOM: 75,
-        PatternType.M_TOP: 75,
-        PatternType.HS_BOTTOM: 75,
-        PatternType.HS_TOP: 75,
-    }
+    def __init__(self) -> None:
+        # canonical detectors（FIR-12）
+        self._w_detector = WBottomDetector()
+        self._m_detector = MTopDetector()
+        self._hs_bottom_detector = HSBottomDetector()
+        self._hs_top_detector = HSTopDetector()
 
     # ==================================================================
     # 对外入口
@@ -61,6 +81,9 @@ class CalibrationSignalGenerator:
         klines: List[OHLCV],
         stock_code: str,
         market_regime_by_date: Dict[str, MarketRegime],
+        data_source: str = "multi_source",
+        adjustment: str = "qfq",
+        data_quality: str = "OK",
     ) -> List[SignalOccurrence]:
         """对一只股票的历史数据逐日生成信号
 
@@ -73,23 +96,19 @@ class CalibrationSignalGenerator:
         for i in range(self.MIN_START, n):
             date = klines[i].date
             close = klines[i].close
+            regime = market_regime_by_date.get(date, MarketRegime.RANGE)
 
-            detections = [
+            # ---- 1) 内联 MA/platform 形态（canonical detector 未覆盖，逻辑不变）----
+            inline = [
                 (PatternType.MA_BULL, self._detect_ma_bull(klines, i)),
                 (PatternType.PLATFORM_BREAK, self._detect_platform_break(klines, i)),
-                (PatternType.W_BOTTOM, self._detect_w_bottom(klines, i)),
-                (PatternType.HS_BOTTOM, self._detect_hs_bottom(klines, i)),
                 (PatternType.MA_BEAR, self._detect_ma_bear(klines, i)),
                 (PatternType.PLATFORM_BREAK_DOWN, self._detect_platform_break_down(klines, i)),
-                (PatternType.M_TOP, self._detect_m_top(klines, i)),
-                (PatternType.HS_TOP, self._detect_hs_top(klines, i)),
             ]
-
-            for ptype, detail in detections:
+            for ptype, detail in inline:
                 if detail is None:
                     continue
-                regime = market_regime_by_date.get(date, MarketRegime.RANGE)
-                signals.append(SignalOccurrence(
+                sig = SignalOccurrence(
                     signal_id=make_signal_id(stock_code, date, ptype.value, 0),
                     stock_code=stock_code,
                     signal_date=date,
@@ -97,11 +116,149 @@ class CalibrationSignalGenerator:
                     entry_price=close,
                     confirmation_state=ConfirmationState.BREAKOUT_DAY,
                     market_regime=regime,
-                    pattern_score=self.SCORE[ptype],
+                    pattern_score=SCORE[ptype],
                     breakout_price=detail.get("breakout_price"),
                     neckline_price=detail.get("neckline_price"),
-                ))
+                )
+                self._attach_provenance(sig, detector_version="builtin_v1",
+                                        data_source=data_source, adjustment=adjustment,
+                                        data_quality=data_quality)
+                signals.append(sig)
+
+            # ---- 2) canonical W/M/H&S detectors（point-in-time: 只用 prefix）----
+            prefix = klines[:i + 1]
+            for detector in (self._w_detector, self._m_detector,
+                            self._hs_bottom_detector, self._hs_top_detector):
+                results = detector.detect(prefix)
+                for idx, res in enumerate(results):
+                    if res.stage not in _EMIT_STAGES:
+                        continue
+                    ptype = _PATTERN_ID_MAP[res.pattern_id]
+                    sig = SignalOccurrence(
+                        signal_id=make_signal_id(stock_code, date, ptype.value, idx),
+                        stock_code=stock_code,
+                        signal_date=date,
+                        pattern_type=ptype,
+                        entry_price=close,
+                        confirmation_state=_STAGE_TO_CONFIRMATION[res.stage],
+                        market_regime=regime,
+                        pattern_score=res.score,
+                        breakout_price=res.breakout_price,
+                        neckline_price=res.neckline_price,
+                        notes=res.notes,
+                    )
+                    self._attach_provenance(sig, detector_version="canonical_v5.2.0",
+                                            data_source=data_source, adjustment=adjustment,
+                                            data_quality=data_quality,
+                                            pattern_score=res.score, result=res)
+                    signals.append(sig)
+
+        # ---- 3) 方向一致性检查 + 事件去重 ----
+        signals = self._filter_directional_consistency(signals)
+        signals = self._deduplicate_signals(signals)
         return signals
+
+    # ==================================================================
+    # Provenance / quality manifest（Phase 5）
+    # ==================================================================
+    @staticmethod
+    def _pattern_confidence(score: int) -> str:
+        if score >= 80:
+            return "high"
+        if score >= 50:
+            return "medium"
+        return "low"
+
+    def _attach_provenance(
+        self,
+        sig: SignalOccurrence,
+        detector_version: str,
+        data_source: str,
+        adjustment: str,
+        data_quality: str,
+        pattern_score: Optional[int] = None,
+        result=None,
+    ) -> None:
+        """填充 provenance/quality 元数据字段。"""
+        sig.data_source = data_source
+        sig.adjustment = adjustment
+        sig.data_quality = data_quality
+        sig.detector_version = detector_version
+        sig.pattern_confidence = self._pattern_confidence(
+            pattern_score if pattern_score is not None else sig.pattern_score)
+        # H&S borderline 提示
+        if result is not None and result.pattern_id in ("hs_bottom", "hs_top"):
+            head = next((kp for kp in result.key_points if kp.name == "头"), None)
+            ls = next((kp for kp in result.key_points if kp.name == "左肩"), None)
+            rs = next((kp for kp in result.key_points if kp.name == "右肩"), None)
+            if head is not None and ls is not None and rs is not None:
+                avg_sh = (ls.price + rs.price) / 2.0
+                if avg_sh > 0:
+                    prom = abs(head.price - avg_sh) / avg_sh
+                    from core.pivot_patterns import MIN_HS_HEAD_PROMINENCE
+                    if prom < MIN_HS_HEAD_PROMINENCE * 1.2:
+                        sig.guardrail_flags.append("head_prominence_borderline")
+
+    # ==================================================================
+    # 方向一致性（Phase 3）
+    # ==================================================================
+    def _filter_directional_consistency(self, signals: List[SignalOccurrence]) -> List[SignalOccurrence]:
+        """确保上升形态只在价格站上关键位、下降形态只在跌破关键位时触发。"""
+        kept: List[SignalOccurrence] = []
+        for s in signals:
+            nl = s.neckline_price
+            pt = s.pattern_type
+            if pt.is_bullish:
+                if nl is None:
+                    kept.append(s)
+                    continue
+                if pt in (PatternType.W_BOTTOM, PatternType.HS_BOTTOM):
+                    ok = s.entry_price >= nl * 0.98
+                else:  # platform_break / ma_bull: neckline = 前20日高点
+                    ok = s.entry_price >= nl
+                if ok:
+                    kept.append(s)
+            elif pt.is_bearish:
+                if nl is None:
+                    kept.append(s)
+                    continue
+                if pt in (PatternType.M_TOP, PatternType.HS_TOP):
+                    ok = s.entry_price <= nl * 1.02
+                else:  # platform_break_down / ma_bear: neckline = 前20日低点
+                    ok = s.entry_price <= nl
+                if ok:
+                    kept.append(s)
+            else:
+                kept.append(s)
+        return kept
+
+    # ==================================================================
+    # 事件去重（Phase 4）
+    # ==================================================================
+    @staticmethod
+    def _deduplicate_signals(signals: List[SignalOccurrence]) -> List[SignalOccurrence]:
+        """同一 (stock, pattern_type) 在 DEDUP_WINDOW 自然日内只保留最早信号。"""
+        from datetime import date as _date
+        DEDUP_WINDOW = 20
+        # 按 (stock, pattern_type) 分组，组内按 signal_date 排序
+        groups: Dict[tuple, List[SignalOccurrence]] = {}
+        for s in signals:
+            key = (s.stock_code, s.pattern_type)
+            groups.setdefault(key, []).append(s)
+
+        kept: List[SignalOccurrence] = []
+        for grp in groups.values():
+            grp.sort(key=lambda s: s.signal_date)
+            last_date: Optional[_date] = None
+            for s in grp:
+                d = _date.fromisoformat(s.signal_date)
+                if last_date is not None and (d - last_date).days <= DEDUP_WINDOW:
+                    continue
+                kept.append(s)
+                last_date = d
+        # 保持原始时间顺序输出
+        kept.sort(key=lambda s: (s.signal_date, s.stock_code, s.pattern_type.value))
+        return kept
 
     # ==================================================================
     # 基础指标辅助（全部 point-in-time：只用到 end_idx 及之前）
@@ -151,7 +308,7 @@ class CalibrationSignalGenerator:
         return sum(k.volume for k in window) / period
 
     # ==================================================================
-    # 看涨形态
+    # 看涨形态（内联）
     # ==================================================================
     def _detect_ma_bull(self, klines: List[OHLCV], i: int) -> Optional[dict]:
         """均线多头突破：MA5>MA10>MA20>MA60，收盘>前20日高点，当天收阳。"""
@@ -188,84 +345,8 @@ class CalibrationSignalGenerator:
             return {"breakout_price": bar.close, "neckline_price": high20}
         return None
 
-    def _detect_w_bottom(self, klines: List[OHLCV], i: int) -> Optional[dict]:
-        """W底：过去60日两个低点，第二底>=第一底97%，间距>=10，收盘突破颈线*1.01。"""
-        lo = i - PATTERN_WINDOW
-        if lo < 0:
-            return None
-        seg = klines[lo:i + 1]
-        m = len(seg)
-        lows = [k.low for k in seg]
-        highs = [k.high for k in seg]
-
-        first_rel = min(range(m), key=lambda x: lows[x])
-        # 第一底需留两侧确认边距
-        if first_rel < 5 or first_rel > m - 10:
-            return None
-        first_low = lows[first_rel]
-
-        after = lows[first_rel + 5:]
-        if len(after) < 5:
-            return None
-        second_rel = first_rel + 5 + min(range(len(after)), key=lambda x: after[x])
-        second_low = lows[second_rel]
-
-        # 第二底不创新低（>=第一底97%），且两底高度差<5%
-        if second_low < first_low * 0.97:
-            return None
-        if first_low > 0 and abs(second_low - first_low) / first_low > DOUBLE_TOL:
-            return None
-        if second_rel - first_rel < DOUBLE_MIN_GAP:
-            return None
-
-        neckline = max(highs[first_rel:second_rel + 1])
-        cur_close = seg[-1].close
-        if cur_close > neckline * BREAKOUT_TOL:
-            return {"breakout_price": cur_close, "neckline_price": neckline}
-        return None
-
-    def _detect_hs_bottom(self, klines: List[OHLCV], i: int) -> Optional[dict]:
-        """头肩底（简化）：三个低点（中间最低=头），左右肩差<5%，收盘突破颈线*1.01。"""
-        lo = i - PATTERN_WINDOW
-        if lo < 0:
-            return None
-        seg = klines[lo:i + 1]
-        m = len(seg)
-        lows = [k.low for k in seg]
-        highs = [k.high for k in seg]
-
-        # "头" = 全局最低点，须位于中段
-        head_rel = min(range(m), key=lambda x: lows[x])
-        if head_rel < m // 3 or head_rel > m - m // 3:
-            return None
-        head_low = lows[head_rel]
-
-        # 左肩 = 头左侧最低点；右肩 = 头右侧最低点
-        left_rel = min(range(0, head_rel), key=lambda x: lows[x]) if head_rel > 0 else -1
-        right_rel = head_rel + 1 + min(range(m - head_rel - 1), key=lambda x: lows[head_rel + 1 + x]) \
-            if head_rel < m - 1 else -1
-        if left_rel < 0 or right_rel < 0:
-            return None
-        left_low, right_low = lows[left_rel], lows[right_rel]
-
-        # 中间最低
-        if not (head_low < left_low and head_low < right_low):
-            return None
-        # 左右肩高度差 < 5%
-        denom = max(left_low, right_low)
-        if denom <= 0 or abs(left_low - right_low) / denom > HS_SHOULDER_TOL:
-            return None
-        if right_rel - left_rel < DOUBLE_MIN_GAP:
-            return None
-
-        neckline = max(highs[left_rel:right_rel + 1])
-        cur_close = seg[-1].close
-        if cur_close > neckline * BREAKOUT_TOL:
-            return {"breakout_price": cur_close, "neckline_price": neckline}
-        return None
-
     # ==================================================================
-    # 看跌形态
+    # 看跌形态（内联）
     # ==================================================================
     def _detect_ma_bear(self, klines: List[OHLCV], i: int) -> Optional[dict]:
         """均线空头破位：MA5<MA10<MA20<MA60，收盘<前20日低点，当天收阴。"""
@@ -300,75 +381,4 @@ class CalibrationSignalGenerator:
         pct = (bar.close - prev_close) / prev_close
         if bar.close < low20 and bar.volume > vma5 * 1.2 and pct < -0.03:
             return {"breakout_price": bar.close, "neckline_price": low20}
-        return None
-
-    def _detect_m_top(self, klines: List[OHLCV], i: int) -> Optional[dict]:
-        """M头：过去60日两个高点，第二顶<=第一顶103%，间距>=10，收盘跌破颈线*0.99。"""
-        lo = i - PATTERN_WINDOW
-        if lo < 0:
-            return None
-        seg = klines[lo:i + 1]
-        m = len(seg)
-        highs = [k.high for k in seg]
-        lows = [k.low for k in seg]
-
-        first_rel = max(range(m), key=lambda x: highs[x])
-        if first_rel < 5 or first_rel > m - 10:
-            return None
-        first_high = highs[first_rel]
-
-        after = highs[first_rel + 5:]
-        if len(after) < 5:
-            return None
-        second_rel = first_rel + 5 + max(range(len(after)), key=lambda x: after[x])
-        second_high = highs[second_rel]
-
-        # 第二顶不高于第一顶 103%，且两顶高度差 < 5%
-        if second_high > first_high * 1.03:
-            return None
-        if first_high > 0 and abs(second_high - first_high) / first_high > DOUBLE_TOL:
-            return None
-        if second_rel - first_rel < DOUBLE_MIN_GAP:
-            return None
-
-        neckline = min(lows[first_rel:second_rel + 1])
-        cur_close = seg[-1].close
-        if cur_close < neckline * BREAKDOWN_TOL:
-            return {"breakout_price": cur_close, "neckline_price": neckline}
-        return None
-
-    def _detect_hs_top(self, klines: List[OHLCV], i: int) -> Optional[dict]:
-        """头肩顶（简化）：三个高点（中间最高=头），左右肩差<5%，收盘跌破颈线*0.99。"""
-        lo = i - PATTERN_WINDOW
-        if lo < 0:
-            return None
-        seg = klines[lo:i + 1]
-        m = len(seg)
-        highs = [k.high for k in seg]
-        lows = [k.low for k in seg]
-
-        head_rel = max(range(m), key=lambda x: highs[x])
-        if head_rel < m // 3 or head_rel > m - m // 3:
-            return None
-        head_high = highs[head_rel]
-
-        left_rel = max(range(0, head_rel), key=lambda x: highs[x]) if head_rel > 0 else -1
-        right_rel = head_rel + 1 + max(range(m - head_rel - 1), key=lambda x: highs[head_rel + 1 + x]) \
-            if head_rel < m - 1 else -1
-        if left_rel < 0 or right_rel < 0:
-            return None
-        left_high, right_high = highs[left_rel], highs[right_rel]
-
-        if not (head_high > left_high and head_high > right_high):
-            return None
-        denom = max(left_high, right_high)
-        if denom <= 0 or abs(left_high - right_high) / denom > HS_SHOULDER_TOL:
-            return None
-        if right_rel - left_rel < DOUBLE_MIN_GAP:
-            return None
-
-        neckline = min(lows[left_rel:right_rel + 1])
-        cur_close = seg[-1].close
-        if cur_close < neckline * BREAKDOWN_TOL:
-            return {"breakout_price": cur_close, "neckline_price": neckline}
         return None

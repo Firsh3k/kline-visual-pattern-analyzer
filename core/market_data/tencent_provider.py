@@ -42,6 +42,15 @@ _ADJ_MAP = {
     AdjustmentType.BACKWARD: "hfq",
 }
 
+# FIR-23 P0-1: strict key selection. Each adjustment maps to exactly one expected
+# kline key in the Tencent response. We must NEVER silently fall back to raw "day"
+# when qfq/hfq was requested — that would return raw prices mislabeled as adjusted.
+_EXPECTED_KLINE_KEY = {
+    AdjustmentType.NONE: "day",        # 不复权 -> raw 日线
+    AdjustmentType.FORWARD: "qfqday",  # 前复权 -> qfqday
+    AdjustmentType.BACKWARD: "hfqday",  # 后复权 -> hfqday
+}
+
 
 def _http_get(url: str, timeout: int = 15) -> str:
     req = urllib.request.Request(url, headers={
@@ -116,18 +125,25 @@ class TencentDataProvider(DataProvider):
             raise MarketDataError(f"Tencent API error: {payload}")
 
         sym_data = payload.get("data", {}).get(symbol, {})
-        # 复权数据在 qfqday/hfqday 字段，不复权在 day 字段
-        rows = None
-        if adj_str == "qfq" and "qfqday" in sym_data:
-            rows = sym_data["qfqday"]
-        elif adj_str == "hfq" and "hfqday" in sym_data:
-            rows = sym_data["hfqday"]
-        elif adj_str and adj_str + "day" in sym_data:
-            rows = sym_data[adj_str + "day"]
-        elif "day" in sym_data:
-            rows = sym_data["day"]
-        if rows is None:
-            raise MarketDataError(f"No kline data for {symbol}, keys={list(sym_data.keys())}")
+        # FIR-23 P0-1: strict key selection.
+        #   adjustment==FORWARD  -> only accept "qfqday"
+        #   adjustment==BACKWARD -> only accept "hfqday"
+        #   adjustment==NONE     -> only accept raw "day"
+        # There is intentionally NO fallback to a different key: if the requested
+        # adjustment key is absent we raise. The previous `elif "day" in sym_data`
+        # fallback silently returned raw prices labeled as qfq/hfq when Tencent
+        # omitted the adjusted key — a correctness/trust bug (fail-open).
+        expected_key = _EXPECTED_KLINE_KEY.get(adjustment)
+        if expected_key is None or expected_key not in sym_data:
+            available_keys = list(sym_data.keys())
+            raise MarketDataError(
+                f"Tencent response for {symbol} is missing the required kline key "
+                f"'{expected_key}' for adjustment={adjustment.value!r} "
+                f"(adj_str={adj_str!r}). Available keys={available_keys}. "
+                f"Refusing to fall back to a different adjustment key, which would "
+                f"silently mislabel raw prices as adjusted."
+            )
+        rows = sym_data[expected_key]
 
         bars: List[MarketDataBar] = []
         for row in rows:

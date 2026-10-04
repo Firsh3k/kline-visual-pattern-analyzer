@@ -203,3 +203,34 @@ class TestAdjustmentConsistencyBlocker2:
         s.adjustment = AdjustmentType.BACKWARD
         state, _ = validate_adjustment_consistency(s, raw_closes=[10.0, 10.0])
         assert state == AdjustmentConsistency.INCONSISTENT
+
+
+class TestCalendarUnverifiedPropagationP02:
+    """FIR-23 P0-2: CalendarUnverifiedError must propagate through assess_series_quality.
+
+    A broad ``except Exception`` previously swallowed it, turning 2027+ ranges into
+    expected=[] / completeness=0 reports — silently defeating the fail-closed calendar.
+    """
+
+    def test_2027_date_range_raises_calendar_unverified(self):
+        from core.market_data.trading_calendar import CalendarUnverifiedError
+        from core.market_data.validation import assess_series_quality
+        bars = [
+            _bar("2027-01-04", 10, 10.5, 9.8, 10.2, 1000),
+            _bar("2027-01-05", 10.2, 10.8, 10.0, 10.6, 1100),
+        ]
+        s = _make_series(bars)
+        with pytest.raises(CalendarUnverifiedError):
+            assess_series_quality(s)
+
+    def test_2026_date_range_still_works(self):
+        from core.market_data.validation import assess_series_quality
+        bars = [
+            _bar("2026-01-05", 10, 10.5, 9.8, 10.2, 1000),
+            _bar("2026-01-06", 10.2, 10.8, 10.0, 10.6, 1100),
+        ]
+        s = _make_series(bars)
+        qr = assess_series_quality(s)
+        assert qr.actual_bars == 2
+        assert qr.expected_trading_days == 2
+        assert qr.completeness_ratio == 1.0

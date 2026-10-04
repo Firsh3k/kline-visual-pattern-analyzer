@@ -256,10 +256,22 @@ def assess_series_quality(series: MarketDataSeries) -> "DataQualityReport":
     first_date = normalized[0].date
     last_date = normalized[-1].date
 
+    # FIR-23 P0-2: strict calendar propagation.
+    # Previously a broad `except Exception` swallowed CalendarUnverifiedError, turning
+    # unverified-year ranges (2027+) into expected=[] / completeness==0 reports —
+    # silently defeating the fail-closed trading calendar. Now CalendarUnverifiedError
+    # propagates so callers cannot treat an unverified-year series as "complete".
+    # Only ValueError (malformed date strings inside the bars themselves) is recovered,
+    # recorded as an anomaly, and treated as unknown completeness.
     try:
         expected = get_trading_days(first_date, last_date)
-    except Exception:
+    except ValueError:
         expected = []
+        norm_anomalies = list(norm_anomalies) + [{
+            "type": "calendar_parse_error",
+            "msg": (f"could not resolve trading days between {first_date} and "
+                    f"{last_date}; completeness treated as unknown"),
+        }]
     actual_dates = {b.date for b in normalized}
     missing = [d for d in expected if d not in actual_dates]
     # 无停牌数据源：所有缺口原因未知（provider/数据失败）

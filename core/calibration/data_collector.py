@@ -14,9 +14,9 @@ from __future__ import annotations
 import os
 import json
 import time
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
-from core.types import OHLCV, AdjustmentType
+from core.types import OHLCV, AdjustmentType, MarketDataSeries
 from core.market_data import MultiSourceDataProvider
 from core.calibration.types import MarketRegime
 
@@ -25,6 +25,19 @@ from core.calibration.types import MarketRegime
 REGIME_MA_PERIOD = 60
 # MA60 方向判断的回看天数（"5日前MA60"）
 REGIME_MA_LOOKBACK = 5
+
+# ---------------------------------------------------------------------------
+# FIR-13/24 (P0-2): provenance 占位 —— 当 provenance 无法从 MarketDataSeries
+# 获取时，显式标记为 "unknown"，而不是硬编码假值（如 multi_source/qfq/OK）。
+# ---------------------------------------------------------------------------
+UNKNOWN_PROVENANCE: Dict[str, object] = {
+    "data_source": "unknown",
+    "adjustment": "unknown",
+    "data_quality": "unknown",
+    "fetched_at": "unknown",
+    "last_bar_date": "unknown",
+    "quality_detail": None,
+}
 
 
 def to_market_symbol(code: str) -> str:
@@ -69,40 +82,118 @@ class CalibrationDataCollector:
     def _cache_path(self, name: str) -> str:
         return os.path.join(self.cache_dir, f"{name}_qfq.json")
 
-    def _load_cache(self, path: str) -> Optional[List[OHLCV]]:
+    def _load_cache(self, path: str) -> Optional[Tuple[List[OHLCV], dict]]:
+        """读取缓存，返回 (klines, provenance_dict)。
+
+        新格式：{"provenance": {...}, "klines": [...]}
+        旧格式：纯 OHLCV 列表 —— 兼容加载，provenance 用 UNKNOWN_PROVENANCE 占位。
+        缓存损坏或未启用缓存 → 返回 None。
+        """
         if not (self.use_cache and os.path.exists(path)):
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return [OHLCV.from_dict(d) for d in data]
         except Exception:
             # 缓存损坏则忽略，重新拉取
             return None
 
-    def _save_cache(self, path: str, klines: List[OHLCV]) -> None:
+        # 新格式：dict 带 klines / provenance
+        if isinstance(data, dict) and "klines" in data:
+            klines = [OHLCV.from_dict(d) for d in data["klines"]]
+            prov = data.get("provenance")
+            if not isinstance(prov, dict):
+                prov = dict(UNKNOWN_PROVENANCE)
+            return klines, dict(prov)
+
+        # 旧格式：纯列表
+        if isinstance(data, list):
+            klines = [OHLCV.from_dict(d) for d in data]
+            return klines, dict(UNKNOWN_PROVENANCE)
+
+        return None
+
+    def _save_cache(self, path: str, klines: List[OHLCV],
+                    provenance: Optional[dict] = None) -> None:
         if not self.use_cache:
             return
         self._ensure_cache_dir()
+        payload = {
+            "provenance": dict(provenance) if provenance else dict(UNKNOWN_PROVENANCE),
+            "klines": [k.to_dict() for k in klines],
+        }
         with open(path, "w", encoding="utf-8") as f:
-            json.dump([k.to_dict() for k in klines], f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False)
+
+    # ------------------------------------------------------------------
+    # provenance 提取（P0-2）
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_provenance(series: Optional[MarketDataSeries]) -> dict:
+        """从 MarketDataSeries 提取真实 provenance 元数据。
+
+        无法获取的字段一律标记为 "unknown"，绝不硬编码假值。
+        """
+        if series is None:
+            return dict(UNKNOWN_PROVENANCE)
+
+        def _safe(fn, default="unknown"):
+            try:
+                val = fn()
+                return val if val not in (None, "") else default
+            except Exception:
+                return default
+
+        data_source = _safe(lambda: series.source.value if series.source is not None else None)
+        adjustment = _safe(lambda: series.adjustment.value if series.adjustment is not None else None)
+        fetched_at = _safe(lambda: series.fetched_at)
+        last_bar_date = _safe(lambda: series.last_bar_date)
+
+        qr = getattr(series, "quality_report", None)
+        quality_detail = None
+        if qr is not None:
+            try:
+                quality_detail = qr.to_dict()
+            except Exception:
+                quality_detail = None
+
+        # data_quality 推导：quality_report 缺失 / 完整率不足 / 未知缺失天数
+        if qr is None:
+            data_quality = "unknown"
+        else:
+            cr = getattr(qr, "completeness_ratio", None)
+            umd = getattr(qr, "unknown_missing_days", 0) or 0
+            if umd > 0:
+                data_quality = "has_unknown_missing"
+            elif cr is not None and cr < 0.95:
+                data_quality = "low_completeness"
+            else:
+                data_quality = "OK"
+
+        return {
+            "data_source": data_source,
+            "adjustment": adjustment,
+            "data_quality": data_quality,
+            "fetched_at": fetched_at,
+            "last_bar_date": last_bar_date,
+            "quality_detail": quality_detail,
+        }
 
     # ------------------------------------------------------------------
     # 单只股票
     # ------------------------------------------------------------------
-    def fetch_stock_data(
+    def fetch_stock_data_with_provenance(
         self,
         code: str,
         start_date: str,
         end_date: str,
-    ) -> List[OHLCV]:
-        """获取单只股票的 qfq 前复权日线数据
+    ) -> Tuple[List[OHLCV], dict]:
+        """获取单只股票的 qfq 前复权日线数据及其真实 provenance（P0-2）。
 
-        - 先查缓存（data/calibration/{code}_{start}_{end}_qfq.json）
-        - 缓存命中则直接加载
+        - 先查缓存（新格式含 provenance；旧格式纯列表视为 unknown 占位）
         - 未命中则通过 MultiSourceDataProvider.fetch_klines 获取
-        - 保存到缓存
-        - 返回 List[OHLCV]（通过 MarketDataSeries.to_ohlcv_list()）
+        - 从返回的 MarketDataSeries 提取真实 data_source/adjustment/data_quality
+        - 返回 (klines, provenance_dict)
         """
         cache_path = self._cache_path(f"{code}_{start_date}_{end_date}")
         cached = self._load_cache(cache_path)
@@ -117,7 +208,18 @@ class CalibrationDataCollector:
             adjustment=AdjustmentType.FORWARD,
         )
         klines = series.to_ohlcv_list()
-        self._save_cache(cache_path, klines)
+        provenance = self._build_provenance(series)
+        self._save_cache(cache_path, klines, provenance)
+        return klines, provenance
+
+    def fetch_stock_data(
+        self,
+        code: str,
+        start_date: str,
+        end_date: str,
+    ) -> List[OHLCV]:
+        """获取单只股票的 qfq 前复权日线数据（向后兼容，仅返回 klines）"""
+        klines, _ = self.fetch_stock_data_with_provenance(code, start_date, end_date)
         return klines
 
     # ------------------------------------------------------------------
@@ -136,7 +238,7 @@ class CalibrationDataCollector:
         cache_path = self._cache_path(f"index_{symbol}_{start_date}_{end_date}")
         cached = self._load_cache(cache_path)
         if cached is not None:
-            return cached
+            return cached[0]
 
         series = self.provider.fetch_klines(
             symbol=symbol,
@@ -145,7 +247,7 @@ class CalibrationDataCollector:
             adjustment=AdjustmentType.NONE,
         )
         klines = series.to_ohlcv_list()
-        self._save_cache(cache_path, klines)
+        self._save_cache(cache_path, klines, self._build_provenance(series))
         return klines
 
     # ------------------------------------------------------------------
@@ -163,6 +265,22 @@ class CalibrationDataCollector:
         for idx, code in enumerate(codes):
             result[code] = self.fetch_stock_data(code, start_date, end_date)
             # 非最后一只才延迟，避免多余等待
+            if delay_seconds > 0 and idx < len(codes) - 1:
+                time.sleep(delay_seconds)
+        return result
+
+    def fetch_batch_with_provenance(
+        self,
+        codes: List[str],
+        start_date: str,
+        end_date: str,
+        delay_seconds: float = 0.5,
+    ) -> Dict[str, Tuple[List[OHLCV], dict]]:
+        """批量获取多只股票数据，返回 {code: (klines, provenance_dict)}"""
+        result: Dict[str, Tuple[List[OHLCV], dict]] = {}
+        for idx, code in enumerate(codes):
+            result[code] = self.fetch_stock_data_with_provenance(
+                code, start_date, end_date)
             if delay_seconds > 0 and idx < len(codes) - 1:
                 time.sleep(delay_seconds)
         return result

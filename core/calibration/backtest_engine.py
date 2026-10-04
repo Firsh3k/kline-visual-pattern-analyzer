@@ -72,6 +72,10 @@ class FixedHorizonBacktester:
 
         entry_price = signal.entry_price
 
+        # 方向：看跌形态（is_bearish）的 outcome 语义反向 —— 价格下跌算赢
+        is_bearish = signal.pattern_type.is_bearish
+        direction = "bearish" if is_bearish else "bullish"
+
         # 前向窗口：signal_idx+1 到 signal_idx+horizon（不含端点）
         window_start = signal_idx + 1
         window_end = signal_idx + 1 + horizon
@@ -91,21 +95,35 @@ class FixedHorizonBacktester:
                 sufficient_data=False,
                 actual_bars=actual_bars,
                 final_price=None,
+                direction=direction,
+                directional_profit=None,
             )
 
         # 数据充足 — 计算前向指标
-        # forward_return 使用 horizon 结束时的收盘价
+        # forward_return 使用 horizon 结束时的收盘价（raw，始终表示价格实际涨跌方向）
         final_price = window[-1].close
         forward_return = (final_price - entry_price) / entry_price
 
-        # MFE: horizon 内最大有利波动（用 high 价）
-        mfe = max((k.high - entry_price) / entry_price for k in window)
-
-        # MAE: horizon 内最大不利波动（用 low 价）
-        mae = min((k.low - entry_price) / entry_price for k in window)
-
-        # win 标志
-        win = forward_return > self.win_threshold
+        if is_bearish:
+            # 看跌形态：价格下跌 = 有利
+            # directional_profit：下跌幅度为正收益
+            directional_profit = -forward_return
+            # win：价格下跌幅度超过阈值（对称阈值）
+            win = forward_return < -self.win_threshold
+            # MFE：horizon 内最大下跌幅度（正数 = 有利波动）
+            raw_low = min((k.low - entry_price) / entry_price for k in window)
+            mfe = -raw_low
+            # MAE：horizon 内最大上涨幅度（负数 = 不利波动）
+            raw_high = max((k.high - entry_price) / entry_price for k in window)
+            mae = -raw_high
+        else:
+            # 看涨形态：保持原有逻辑不变
+            directional_profit = forward_return
+            win = forward_return > self.win_threshold
+            # MFE: horizon 内最大有利波动（用 high 价，正数）
+            mfe = max((k.high - entry_price) / entry_price for k in window)
+            # MAE: horizon 内最大不利波动（用 low 价，负数）
+            mae = min((k.low - entry_price) / entry_price for k in window)
 
         return HorizonBacktest(
             signal_id=signal.signal_id,
@@ -117,6 +135,8 @@ class FixedHorizonBacktester:
             sufficient_data=True,
             actual_bars=actual_bars,
             final_price=final_price,
+            direction=direction,
+            directional_profit=directional_profit,
         )
 
     def backtest_all_horizons(
@@ -160,6 +180,7 @@ class FixedHorizonBacktester:
             klines = klines_by_code.get(signal.stock_code)
             if klines is None:
                 # 该股票无K线数据 — 所有 horizon 都标记为数据不足
+                no_data_direction = "bearish" if signal.pattern_type.is_bearish else "bullish"
                 for h in horizons:
                     results.append(HorizonBacktest(
                         signal_id=signal.signal_id,
@@ -171,6 +192,8 @@ class FixedHorizonBacktester:
                         sufficient_data=False,
                         actual_bars=0,
                         final_price=None,
+                        direction=no_data_direction,
+                        directional_profit=None,
                     ))
                 continue
 

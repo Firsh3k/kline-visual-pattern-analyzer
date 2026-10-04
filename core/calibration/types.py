@@ -209,12 +209,14 @@ class HorizonBacktest:
     signal_id: str                    # 关联 SignalOccurrence.signal_id
     horizon: int                      # 观察窗口交易日数（3/5/10/20/40）
     forward_return: Optional[float] = None   # 前向收益率（小数，如 0.05 = 5%）
-    mfe: Optional[float] = None              # Maximum Favorable Excursion（horizon 内最大涨幅，小数）
-    mae: Optional[float] = None              # Maximum Adverse Excursion（horizon 内最大跌幅，小数，负值）
-    win: Optional[bool] = None               # 是否盈利（forward_return > threshold）
+    mfe: Optional[float] = None              # Maximum Favorable Excursion（horizon 内最大有利波动，小数；方向感知：正数=有利）
+    mae: Optional[float] = None              # Maximum Adverse Excursion（horizon 内最大不利波动，小数；方向感知：负数=不利）
+    win: Optional[bool] = None               # 是否盈利（方向感知：看涨=forward_return>threshold；看跌=forward_return<-threshold）
     sufficient_data: bool = False            # 是否有足够的未来数据完成该 horizon
     actual_bars: Optional[int] = None        # 实际可用的未来K线数（可能不足 horizon）
     final_price: Optional[float] = None      # horizon 结束时的收盘价
+    direction: str = "bullish"               # 形态方向："bullish" 或 "bearish"
+    directional_profit: Optional[float] = None  # 方向调整后的收益（看涨=forward_return，看跌=-forward_return；正数=按形态方向盈利）
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -238,15 +240,16 @@ class CalibrationMetric:
     sample_size: int                              # 有效样本数（sufficient_data=True 的数量）
     total_signals: int                            # 总信号数（含数据不足的）
     confidence_label: ConfidenceLabel             # 证据置信度标签
-    win_rate: Optional[float] = None              # 胜率（0-1 小数）
-    avg_return: Optional[float] = None            # 平均前向收益（小数）
-    median_return: Optional[float] = None         # 中位数前向收益（小数）
-    avg_mfe: Optional[float] = None               # 平均 MFE（小数）
-    avg_mae: Optional[float] = None               # 平均 MAE（小数）
-    profit_factor: Optional[float] = None         # 盈亏比（总盈利/|总亏损|）
-    std_return: Optional[float] = None            # 收益标准差（小数）
-    max_return: Optional[float] = None            # 最大收益（小数）
-    min_return: Optional[float] = None            # 最小收益（小数）
+    win_rate: Optional[float] = None              # 胜率（0-1 小数，基于方向感知的 win）
+    avg_return: Optional[float] = None            # 平均前向收益（小数，raw forward_return，反映价格实际涨跌方向）
+    median_return: Optional[float] = None         # 中位数前向收益（小数，raw forward_return）
+    avg_mfe: Optional[float] = None               # 平均 MFE（小数，方向感知）
+    avg_mae: Optional[float] = None               # 平均 MAE（小数，方向感知，负值）
+    profit_factor: Optional[float] = None         # 盈亏比（总方向盈利/|总方向亏损|，基于 directional_profit）
+    std_return: Optional[float] = None            # 收益标准差（小数，raw forward_return）
+    max_return: Optional[float] = None            # 最大收益（小数，raw forward_return）
+    min_return: Optional[float] = None            # 最小收益（小数，raw forward_return）
+    avg_directional_profit: Optional[float] = None  # 平均方向调整收益（小数，directional_profit 均值；正数=按形态方向整体盈利）
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -263,6 +266,7 @@ class CalibrationMetric:
             'std_return': self.std_return,
             'max_return': self.max_return,
             'min_return': self.min_return,
+            'avg_directional_profit': self.avg_directional_profit,
         }
 
     @classmethod
@@ -281,6 +285,7 @@ class CalibrationMetric:
             std_return=float(data['std_return']) if data.get('std_return') is not None else None,
             max_return=float(data['max_return']) if data.get('max_return') is not None else None,
             min_return=float(data['min_return']) if data.get('min_return') is not None else None,
+            avg_directional_profit=float(data['avg_directional_profit']) if data.get('avg_directional_profit') is not None else None,
         )
 
 

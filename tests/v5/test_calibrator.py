@@ -67,6 +67,9 @@ def make_backtest(
         mae=mae if mae is not None else -abs(ret),
         win=(ret > 0),
         sufficient_data=sufficient,
+        # 这些 helper 构造的是看涨形态样本：directional_profit = forward_return
+        direction="bullish",
+        directional_profit=ret if sufficient else None,
     )
 
 

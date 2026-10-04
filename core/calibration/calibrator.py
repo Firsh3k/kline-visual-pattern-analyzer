@@ -185,34 +185,49 @@ class EmpiricalCalibrator:
         if sample_size < self.min_sample_size:
             return metric
 
-        # 前向收益序列（防御性剔除 None）
-        returns = [b.forward_return for b in valid if b.forward_return is not None]
-        if not returns:
+        # 配对剔除 forward_return 缺失的记录（防御性）
+        records = [
+            (b.forward_return, b.win, b.directional_profit)
+            for b in valid
+            if b.forward_return is not None
+        ]
+        if not records:
             return metric
 
+        returns = [r for r, _, _ in records]
         n = len(returns)
 
-        # 胜率：forward_return > win_threshold
-        win_count = sum(1 for r in returns if r > self.win_threshold)
+        # 胜率：直接使用 backtest 中已经方向感知的 win 标志
+        # （看涨：forward_return > threshold；看跌：forward_return < -threshold）
+        win_count = sum(1 for _, w, _ in records if w is True)
         metric.win_rate = win_count / n
+
+        # avg_return / median_return 保持 raw forward_return（反映价格实际涨跌方向）
         metric.avg_return = statistics.mean(returns)
         metric.median_return = statistics.median(returns)
 
-        # MFE / MAE 平均
+        # MFE / MAE 平均（已在 backtest 中方向感知，直接取平均）
         mfes = [b.mfe for b in valid if b.mfe is not None]
         maes = [b.mae for b in valid if b.mae is not None]
         metric.avg_mfe = statistics.mean(mfes) if mfes else None
         metric.avg_mae = statistics.mean(maes) if maes else None
 
-        # 盈亏比：总盈利 / |总亏损|，无亏损时返回 None
-        gross_profit = sum(max(0.0, r) for r in returns)
-        gross_loss = abs(sum(min(0.0, r) for r in returns))
-        if gross_loss > 0:
-            metric.profit_factor = gross_profit / gross_loss
+        # 方向调整收益：directional_profit 均值 + 盈亏比
+        # 盈亏比 = sum(winning directional profits) / abs(sum(losing directional losses))
+        dir_profits = [dp for _, _, dp in records if dp is not None]
+        if dir_profits:
+            metric.avg_directional_profit = statistics.mean(dir_profits)
+            gross_profit = sum(p for p in dir_profits if p > 0.0)
+            gross_loss = abs(sum(p for p in dir_profits if p < 0.0))
+            if gross_loss > 0.0:
+                metric.profit_factor = gross_profit / gross_loss
+            else:
+                metric.profit_factor = None
         else:
+            metric.avg_directional_profit = None
             metric.profit_factor = None
 
-        # 收益波动（样本标准差）
+        # 收益波动（样本标准差）/ 极值 — 保持 raw forward_return
         metric.std_return = statistics.stdev(returns) if n > 1 else 0.0
         metric.max_return = max(returns)
         metric.min_return = min(returns)

@@ -632,28 +632,45 @@ class TestFIR24NecklineExtrapolationGuardrail:
 
 
 class TestFIR24Zero002415Regression:
-    """1c — 002415 海康威视弱/假 hs_bottom 案例回归"""
+    """1c — 002415 海康威视弱/假 hs_bottom 案例回归（deterministic fixture，P0-3）
+
+    fixture: tests/v5/fixtures/002415_weak_hs_bottom.json
+      120 根K线（2026-03-11 ~ 2026-09-01），从 002415 真实数据提取。
+      弱候选：ls@55(low=29.45), head@62(low=29.21), rs@87(low=32.27)。
+      head_prominence≈5.35%，颈线外推比率≈1.82 > 1.5 → 应被 guardrail 拒绝。
+    """
+
+    FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "002415_weak_hs_bottom.json")
+
+    def _load_fixture_klines(self):
+        import json
+        with open(self.FIXTURE_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+        return [OHLCV.from_dict(b) for b in raw]
+
+    def test_fixture_file_exists(self):
+        """deterministic fixture 必须存在（不再依赖 data/calibration 缓存，CI 不允许 skip）"""
+        assert os.path.exists(self.FIXTURE_PATH), \
+            f"fixture 缺失: {self.FIXTURE_PATH}"
 
     def test_hs_bottom_002415_weak_case_rejected(self):
-        """002415 弱候选（ls=29.45@555, head=29.21@562, rs=32.27@587）必须被拒绝"""
-        data_path = os.path.join(
-            PROJECT_ROOT, "data", "calibration",
-            "002415_2023-01-01_2026-09-30_qfq.json")
-        if not os.path.exists(data_path):
-            pytest.skip("002415 缓存数据文件不存在")
-        import json
-        with open(data_path) as f:
-            raw = json.load(f)
-        klines = [OHLCV.from_dict(b) for b in raw]
+        """002415 弱候选（ls@55, head@62, rs@87）必须被 guardrail 拒绝 → detect 返回空"""
+        klines = self._load_fixture_klines()
+        assert len(klines) == 120
         results = HSBottomDetector().detect(klines)
-        # 弱候选 ls@555/head@562/rs@587 不得出现在结果中
-        for r in results:
-            ls = next((kp for kp in r.key_points if kp.name == "左肩"), None)
-            head = next((kp for kp in r.key_points if kp.name == "头"), None)
-            rs = next((kp for kp in r.key_points if kp.name == "右肩"), None)
-            assert not (ls and head and rs and ls.index == 555
-                        and head.index == 562 and rs.index == 587), \
-                "002415 弱 hs_bottom 候选未被 guardrail 拒绝"
+        # 弱候选（head_prominence 边缘 + 颈线外推比率 1.82>1.5）不得出现在结果中
+        assert results == [], (
+            f"002415 弱 hs_bottom 候选未被 guardrail 拒绝，实际返回 {len(results)} 个结果"
+        )
+
+    def test_fixture_pivots_present_in_data(self):
+        """fixture 中确实存在弱候选的三个 pivot 价格（证明我们测的就是该案例）"""
+        klines = self._load_fixture_klines()
+        # ls@55 low=29.45, head@62 low=29.21, rs@87 low=32.27
+        assert klines[55].low == pytest.approx(29.45, abs=1e-6)
+        assert klines[62].low == pytest.approx(29.21, abs=1e-6)
+        assert klines[87].low == pytest.approx(32.27, abs=1e-6)
 
 
 class TestFIR24WMUnchanged:

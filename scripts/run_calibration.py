@@ -110,25 +110,35 @@ def render_report_md(
     lines.append(f"- Horizons: {', '.join(f'T+{h}' for h in horizons)}")
     lines.append("")
 
+    # ---- 方向语义说明 ----
+    lines.append("## Outcome 方向定义")
+    lines.append("- **看涨形态** (ma_bull, w_bottom, hs_bottom, platform_break)：价格上涨 = 赢，`directional_profit = forward_return`")
+    lines.append("- **看跌形态** (ma_bear, m_top, hs_top, platform_break_down)：价格下跌 = 赢，`directional_profit = -forward_return`")
+    lines.append("- `avg_return` = 原始前向收益率（价格实际涨跌方向，看涨为正/看跌为负均可能）")
+    lines.append("- `avg_directional_profit` = 按形态方向调整后的收益（正数表示该形态方向盈利）")
+    lines.append("- `win_rate` 基于方向感知的 win（看涨=涨，看跌=跌）")
+    lines.append("- `profit_factor` 基于 directional_profit 计算")
+    lines.append("")
+
     # ---- 总体胜率表（按 horizon）----
     overall = summary.find_group("all", "all", "all")
     if overall is not None:
         lines.append("## 总体胜率")
-        lines.append("| Horizon | Sample Size | Win Rate | Avg Return | Avg MFE | Avg MAE | Confidence |")
-        lines.append("|---------|-------------|----------|------------|---------|---------|------------|")
+        lines.append("| Horizon | Sample Size | Win Rate | Avg Return | Avg Dir Profit | Avg MFE | Avg MAE | Confidence |")
+        lines.append("|---------|-------------|----------|------------|----------------|---------|---------|------------|")
         for h in horizons:
             m = overall.metrics_by_horizon.get(h)
             if m is None:
                 continue
             if m.confidence_label == ConfidenceLabel.INSUFFICIENT:
                 lines.append(
-                    f"| T+{h} | {m.sample_size:,} | N/A (insufficient sample) | N/A | N/A | N/A | insufficient |"
+                    f"| T+{h} | {m.sample_size:,} | N/A (insufficient sample) | N/A | N/A | N/A | N/A | insufficient |"
                 )
             else:
                 lines.append(
                     f"| T+{h} | {m.sample_size:,} | {_fmt_pct(m.win_rate)} | "
-                    f"{_fmt_pct(m.avg_return)} | {_fmt_pct(m.avg_mfe)} | "
-                    f"{_fmt_pct(m.avg_mae)} | {_confidence_display(m)} |"
+                    f"{_fmt_pct(m.avg_return)} | {_fmt_pct(m.avg_directional_profit)} | "
+                    f"{_fmt_pct(m.avg_mfe)} | {_fmt_pct(m.avg_mae)} | {_confidence_display(m)} |"
                 )
         lines.append("")
 
@@ -137,8 +147,8 @@ def render_report_md(
 
     # ---- 按形态分组 ----
     lines.append(f"## 按形态分组（T+{ref_h}）")
-    lines.append("| Pattern | Sample | Win Rate | Avg Return | Profit Factor | Confidence |")
-    lines.append("|---------|--------|----------|------------|---------------|------------|")
+    lines.append("| Pattern | Direction | Sample | Win Rate | Avg Return | Avg Dir Profit | Profit Factor | Confidence |")
+    lines.append("|---------|-----------|--------|----------|------------|----------------|---------------|------------|")
     for pt in PatternType:
         g = summary.find_group(pt.value, "all", "all")
         if g is None:
@@ -146,12 +156,14 @@ def render_report_md(
         m = g.metrics_by_horizon.get(ref_h)
         if m is None:
             continue
+        direction = "看跌" if pt.is_bearish else "看涨"
         if m.confidence_label == ConfidenceLabel.INSUFFICIENT:
-            lines.append(f"| {pt.value} | {m.sample_size:,} | N/A (insufficient sample) | N/A | N/A | insufficient |")
+            lines.append(f"| {pt.value} | {direction} | {m.sample_size:,} | N/A (insufficient sample) | N/A | N/A | N/A | insufficient |")
         else:
             lines.append(
-                f"| {pt.value} | {m.sample_size:,} | {_fmt_pct(m.win_rate)} | "
-                f"{_fmt_pct(m.avg_return)} | {_fmt_num(m.profit_factor)} | {_confidence_display(m)} |"
+                f"| {pt.value} | {direction} | {m.sample_size:,} | {_fmt_pct(m.win_rate)} | "
+                f"{_fmt_pct(m.avg_return)} | {_fmt_pct(m.avg_directional_profit)} | "
+                f"{_fmt_num(m.profit_factor)} | {_confidence_display(m)} |"
             )
     lines.append("")
 
@@ -207,7 +219,12 @@ def render_report_md(
     lines.append("- `low_confidence`: 30 ≤ sample_size < 100")
     lines.append("- `empirical`: sample_size ≥ 100")
     lines.append("")
-    lines.append("所有收益率为前向收益率（小数×100 显示为百分比）。")
+    lines.append("收益率说明：")
+    lines.append("- `avg_return` = 原始前向收益率 (close_horizon - entry) / entry，反映价格实际涨跌")
+    lines.append("- `avg_directional_profit` = 按形态方向调整后的收益：看涨=forward_return，看跌=-forward_return；正数表示该形态方向盈利")
+    lines.append("- `win_rate` 基于方向感知的 win：看涨=价格上涨，看跌=价格下跌")
+    lines.append("- `profit_factor` = sum(winning directional_profits) / |sum(losing directional_profits)|")
+    lines.append("- 所有收益率内部存储为小数（0.05 = 5%），显示为百分比")
 
     return "\n".join(lines)
 
@@ -288,12 +305,15 @@ def run_pipeline(args) -> CalibrationSummary:
         index_klines = collector.fetch_index_data("sh000001", args.start_date, args.end_date)
         print(f"  上证指数: {len(index_klines)} bars")
 
-        # 批量获取股票数据
+        # 批量获取股票数据（P0-2：携带真实 provenance，不再硬编码 multi_source/qfq）
         klines_by_code: dict = {}
+        provenance_by_code: dict = {}
         for idx, code in enumerate(codes):
             try:
-                klines = collector.fetch_stock_data(code, args.start_date, args.end_date)
+                klines, prov = collector.fetch_stock_data_with_provenance(
+                    code, args.start_date, args.end_date)
                 klines_by_code[code] = klines
+                provenance_by_code[code] = prov
                 if (idx + 1) % 10 == 0 or idx == len(codes) - 1:
                     print(f"  已采集 {idx + 1}/{len(codes)} 只")
             except Exception as e:
@@ -311,10 +331,10 @@ def run_pipeline(args) -> CalibrationSummary:
             regime_by_date = {}
             for k in klines:
                 regime_by_date[k.date] = collector.determine_market_regime(index_klines, k.date)
+            # 将真实 provenance 透传给信号生成器（不再硬编码 data_source/adjustment）
+            prov = provenance_by_code.get(code)
             stock_signals = gen.generate_signals(
-                klines, code, regime_by_date,
-                data_source="multi_source",
-                adjustment="qfq",
+                klines, code, regime_by_date, provenance=prov,
             )
             signals.extend(stock_signals)
         print(f"  共生成 {len(signals)} 个信号")
@@ -333,11 +353,24 @@ def run_pipeline(args) -> CalibrationSummary:
 
         dataset.signals = signals
         dataset.backtests = backtests
+        # P0-2：汇总每只股票的真实 provenance 分布（不再硬编码 data_source）
+        from collections import Counter
+        src_dist = Counter(
+            p.get("data_source", "unknown") for p in provenance_by_code.values())
+        qual_dist = Counter(
+            p.get("data_quality", "unknown") for p in provenance_by_code.values())
+        adj_dist = Counter(
+            p.get("adjustment", "unknown") for p in provenance_by_code.values())
         dataset.metadata = {
-            "data_source": "FIR-23 MultiSourceDataProvider (Sina/Tencent, qfq)",
+            "data_source": "FIR-23 MultiSourceDataProvider (Sina/Tencent)",
             "index": "sh000001",
             "stocks_collected": len(klines_by_code),
             "stocks_total": len(codes),
+            "provenance_summary": {
+                "data_source_distribution": dict(src_dist),
+                "adjustment_distribution": dict(adj_dist),
+                "data_quality_distribution": dict(qual_dist),
+            },
             "detector_versions": {
                 "w_bottom": "canonical_v5.2.0",
                 "m_top": "canonical_v5.2.0",

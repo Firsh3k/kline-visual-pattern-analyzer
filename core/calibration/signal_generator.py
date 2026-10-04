@@ -12,6 +12,16 @@ FIR-13/FIR-24: Empirical Calibration — 校准信号生成层
 - 对每个检测日 i 只取 prefix `klines[:i+1]`，再交给 canonical detector。
   detector 内部只使用已确认 pivot（confirmed_at_index <= i），杜绝未来函数。
 - 均线计算到 i 为止（含 i）；high_20 / low_20 使用 shift(1) 语义（不含当天 i）。
+
+Confirmation-state contract（P1 / FIR-24）：
+- canonical detector（core.pivot_patterns）在任意 prefix 上可输出
+  PRE_BREAK / FORMING / BREAKOUT_DAY / POST_BREAK / RETEST / FAILED_BREAK
+  六种 PatternStage。
+- 校准信号**只**发出其中四种可交易状态：
+    BREAKOUT_DAY（突破日）/ POST_BREAK（突破后）/
+    RETEST（突破后回踩颈线）/ FAILED_BREAK（假突破）。
+- PRE_BREAK（接近颈线但未突破）与 FORMING（形态未确认）被 `_EMIT_STAGES`
+  过滤掉——它们是突破前状态，不构成交易信号。
 """
 
 from __future__ import annotations
@@ -56,8 +66,14 @@ _STAGE_TO_CONFIRMATION = {
     PatternStage.PRE_BREAK: ConfirmationState.PRE_BREAK,
 }
 
-# 只对已突破/跌破的形态产生校准信号
-_EMIT_STAGES = frozenset({PatternStage.BREAKOUT_DAY, PatternStage.POST_BREAK})
+# 只对已突破/跌破（及其后续回踩/失败）的形态产生校准信号。
+# 不含 PRE_BREAK / FORMING —— 它们是突破前状态，不构成可交易信号（P1）。
+_EMIT_STAGES = frozenset({
+    PatternStage.BREAKOUT_DAY,
+    PatternStage.POST_BREAK,
+    PatternStage.RETEST,
+    PatternStage.FAILED_BREAK,
+})
 
 
 class CalibrationSignalGenerator:
@@ -84,12 +100,25 @@ class CalibrationSignalGenerator:
         data_source: str = "multi_source",
         adjustment: str = "qfq",
         data_quality: str = "OK",
+        provenance: Optional[dict] = None,
     ) -> List[SignalOccurrence]:
         """对一只股票的历史数据逐日生成信号
 
         对每个交易日 i（从 MIN_START 开始），使用 klines[:i+1] 判断看涨/看跌形态。
         信号只能使用当天及之前的数据。
+
+        Provenance 优先级（P0-2）：
+            provenance dict（来自 MarketDataSeries 真实提取）
+              > 显式参数 data_source/adjustment/data_quality
+              > 默认值。
+        传入 provenance 时不再硬编码 multi_source/qfq。
         """
+        # ---- 解析真实 provenance（dict > 显式参数 > 默认值）----
+        if provenance:
+            data_source = provenance.get("data_source", data_source)
+            adjustment = provenance.get("adjustment", adjustment)
+            data_quality = provenance.get("data_quality", data_quality)
+
         signals: List[SignalOccurrence] = []
         n = len(klines)
 

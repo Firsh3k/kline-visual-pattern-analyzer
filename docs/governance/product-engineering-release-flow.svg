@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">Kline Product × Engineering × Release Management Flow</title>
+  <desc id="desc">End-to-end governance flow connecting Linear product management, GitHub engineering management, QA gates, release candidates, production releases, hotfix and rollback.</desc>
+  <defs>
+    <style>
+      .bg{fill:#ffffff}.lane{fill:#f8fafc;stroke:#cbd5e1;stroke-width:2}.laneTitle{font:700 25px Arial,sans-serif;fill:#0f172a}.laneSub{font:500 16px Arial,sans-serif;fill:#64748b}.box{fill:#fff;stroke:#94a3b8;stroke-width:2;rx:14}.product{stroke:#2563eb}.eng{stroke:#7c3aed}.release{stroke:#059669}.decision{fill:#fff7ed;stroke:#f59e0b;stroke-width:2}.txt{font:600 16px Arial,sans-serif;fill:#0f172a;text-anchor:middle}.small{font:500 13px Arial,sans-serif;fill:#475569;text-anchor:middle}.arrow{stroke:#64748b;stroke-width:2.5;fill:none;marker-end:url(#arrow)}.dash{stroke-dasharray:8 6}.pillMust{fill:#fee2e2;stroke:#ef4444}.pillCand{fill:#fef3c7;stroke:#f59e0b}.pillV6{fill:#e5e7eb;stroke:#6b7280}.pillTxt{font:700 13px Arial,sans-serif;fill:#334155;text-anchor:middle}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#64748b"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="980"/>
+  <text x="800" y="48" style="font:700 32px Arial,sans-serif;fill:#0f172a;text-anchor:middle">Kline Product × Engineering × Release Operating Model</text>
+  <text x="800" y="78" style="font:500 16px Arial,sans-serif;fill:#64748b;text-anchor:middle">Linear manages product scope · GitHub manages engineering evidence and releases · Product Owner owns final scope and release authority</text>
+
+  <rect class="lane" x="40" y="120" width="1520" height="220" rx="18"/>
+  <text class="laneTitle" x="75" y="160">Product Management</text><text class="laneSub" x="75" y="188">Linear</text>
+  <rect class="box product" x="210" y="155" width="180" height="90"/><text class="txt" x="300" y="191">Idea / Bug / Feature</text><text class="small" x="300" y="218">Backlog intake</text>
+  <rect class="box product" x="450" y="155" width="180" height="90"/><text class="txt" x="540" y="191">Product Review</text><text class="small" x="540" y="218">WHAT / WHY / AC</text>
+  <rect class="decision" x="700" y="150" width="200" height="100" rx="16"/><text class="txt" x="800" y="187">Release Scope</text><text class="small" x="800" y="214">Classify every issue</text>
+  <rect class="box product" x="970" y="155" width="180" height="90"/><text class="txt" x="1060" y="191">Scope Freeze</text><text class="small" x="1060" y="218">Ship vs defer</text>
+  <rect class="box product" x="1210" y="155" width="180" height="90"/><text class="txt" x="1300" y="191">Release Gate</text><text class="small" x="1300" y="218">Final authority</text>
+  <path class="arrow" d="M390 200 H450"/><path class="arrow" d="M630 200 H700"/><path class="arrow" d="M900 200 H970"/><path class="arrow" d="M1150 200 H1210"/>
+  <rect class="pillMust" x="650" y="276" width="150" height="36" rx="18"/><text class="pillTxt" x="725" y="299">V5 Must-have</text>
+  <rect class="pillCand" x="815" y="276" width="150" height="36" rx="18"/><text class="pillTxt" x="890" y="299">V5 Candidate</text>
+  <rect class="pillV6" x="980" y="276" width="150" height="36" rx="18"/><text class="pillTxt" x="1055" y="299">V6 Deferred</text>
+
+  <rect class="lane" x="40" y="370" width="1520" height="230" rx="18"/>
+  <text class="laneTitle" x="75" y="412">Engineering Management</text><text class="laneSub" x="75" y="440">GitHub</text>
+  <rect class="box eng" x="210" y="420" width="180" height="95"/><text class="txt" x="300" y="457">Ready for Dev</text><text class="small" x="300" y="484">Scope defined</text>
+  <rect class="box eng" x="450" y="420" width="180" height="95"/><text class="txt" x="540" y="457">Branch / Implement</text><text class="small" x="540" y="484">1 issue → clear PR</text>
+  <rect class="box eng" x="690" y="420" width="200" height="95"/><text class="txt" x="790" y="452">Code Review + CI</text><text class="small" x="790" y="479">Independent QA Gate</text><text class="small" x="790" y="498">PASS / PARTIAL / FAIL</text>
+  <rect class="box eng" x="950" y="420" width="180" height="95"/><text class="txt" x="1040" y="457">Merge main</text><text class="small" x="1040" y="484">PASS only</text>
+  <rect class="box eng" x="1190" y="420" width="200" height="95"/><text class="txt" x="1290" y="452">Post-merge Smoke</text><text class="small" x="1290" y="479">Main CI + regression</text><text class="small" x="1290" y="498">Linear Done</text>
+  <path class="arrow" d="M390 468 H450"/><path class="arrow" d="M630 468 H690"/><path class="arrow" d="M890 468 H950"/><path class="arrow" d="M1130 468 H1190"/>
+  <path class="arrow dash" d="M790 515 C790 570 535 570 535 515"/><text class="small" x="665" y="562">Blocker found → Fix → READY FOR CODE REVIEW</text>
+
+  <rect class="lane" x="40" y="630" width="1520" height="260" rx="18"/>
+  <text class="laneTitle" x="75" y="673">Release Management</text><text class="laneSub" x="75" y="701">Git tags + GitHub Releases</text>
+  <rect class="box release" x="210" y="690" width="185" height="100"/><text class="txt" x="302" y="728">Integration QA</text><text class="small" x="302" y="755">Cross-module validation</text>
+  <rect class="box release" x="455" y="690" width="190" height="100"/><text class="txt" x="550" y="722">v5.0.0-rc.1</text><text class="small" x="550" y="748">GitHub Prerelease</text><text class="small" x="550" y="768">RC smoke / samples</text>
+  <rect class="decision" x="705" y="685" width="190" height="110" rx="16"/><text class="txt" x="800" y="725">Release Gate</text><text class="small" x="800" y="751">Must-have complete</text><text class="small" x="800" y="771">No P0/P1 blocker</text>
+  <rect class="box release" x="955" y="690" width="190" height="100"/><text class="txt" x="1050" y="722">Tag v5.0.0</text><text class="small" x="1050" y="748">Freeze exact SHA</text><text class="small" x="1050" y="768">Final GitHub Release</text>
+  <rect class="box release" x="1205" y="690" width="185" height="100"/><text class="txt" x="1297" y="722">Production</text><text class="small" x="1297" y="748">Validation</text><text class="small" x="1297" y="768">New baseline</text>
+  <path class="arrow" d="M395 740 H455"/><path class="arrow" d="M645 740 H705"/><path class="arrow" d="M895 740 H955"/><path class="arrow" d="M1145 740 H1205"/>
+
+  <rect class="box release" x="1190" y="820" width="200" height="48"/><text class="txt" x="1290" y="850">Hotfix → v5.0.1</text>
+  <rect class="box" x="955" y="820" width="190" height="48"/><text class="txt" x="1050" y="850">Rollback → v4.0.0</text>
+  <path class="arrow" d="M1297 790 V820"/><path class="arrow" d="M1250 790 C1210 808 1145 808 1110 820"/>
+
+  <path class="arrow" d="M800 250 C800 325 300 330 300 420"/>
+  <path class="arrow" d="M1290 515 C1290 610 302 605 302 690"/>
+  <path class="arrow" d="M1300 245 C1450 280 1450 620 895 700"/>
+  <text x="1440" y="455" style="font:600 13px Arial,sans-serif;fill:#64748b;text-anchor:middle">Product Owner final release authority</text>
+
+  <text x="800" y="935" style="font:600 16px Arial,sans-serif;fill:#334155;text-anchor:middle">Audit chain: Linear Issue → PR → Review Evidence → Merge SHA → CI → RC → Final Tag / Release → Production Validation / Rollback</text>
+  <text x="800" y="960" style="font:500 13px Arial,sans-serif;fill:#64748b;text-anchor:middle">Priority principle: Correctness &gt; Decision Quality &gt; Workflow Efficiency &gt; UX &gt; Feature Quantity</text>
+</svg>

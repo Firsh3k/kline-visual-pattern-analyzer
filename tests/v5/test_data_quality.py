@@ -6,7 +6,20 @@ import pytest
 from core import (
     MarketDataBar, MarketDataSeries, DataQualityReport,
     DataSourceType, AdjustmentType, FrequencyType,
+    DataProvenance, DataQualityFlag,
 )
+
+
+def _prov(adjustment=AdjustmentType.NONE):
+    return DataProvenance(
+        source=DataSourceType.MANUAL, url="", fetched_at="",
+        raw_payload_hash="", adjustment_applied=adjustment,
+        quality_flag=DataQualityFlag.OK,
+    )
+
+
+def _bar(date, o, h, l, c, v):
+    return MarketDataBar(date=date, open=o, high=h, low=l, close=c, volume=v, provenance=_prov())
 from core.market_data.sina_provider import SinaDataProvider
 
 
@@ -26,10 +39,10 @@ class TestDataQuality:
     def test_perfect_data_completeness(self):
         # 连续5个交易日，无缺失
         bars = [
-            MarketDataBar(date="2024-01-02", open=10, high=10.5, low=9.8, close=10.2, volume=1000),
-            MarketDataBar(date="2024-01-03", open=10.2, high=10.8, low=10.0, close=10.6, volume=1100),
-            MarketDataBar(date="2024-01-04", open=10.6, high=11.0, low=10.3, close=10.9, volume=1200),
-            MarketDataBar(date="2024-01-05", open=10.9, high=11.2, low=10.5, close=10.8, volume=900),
+            _bar("2024-01-02", 10, 10.5, 9.8, 10.2, 1000),
+            _bar("2024-01-03", 10.2, 10.8, 10.0, 10.6, 1100),
+            _bar("2024-01-04", 10.6, 11.0, 10.3, 10.9, 1200),
+            _bar("2024-01-05", 10.9, 11.2, 10.5, 10.8, 900),
         ]
         s = _make_series(bars)
         qr = self.provider.validate_data(s)
@@ -41,10 +54,10 @@ class TestDataQuality:
     def test_missing_data_detected(self):
         # 跳过中间一个交易日（2024-01-03 周三）
         bars = [
-            MarketDataBar(date="2024-01-02", open=10, high=10.5, low=9.8, close=10.2, volume=1000),
+            _bar("2024-01-02", 10, 10.5, 9.8, 10.2, 1000),
             # missing 2024-01-03
-            MarketDataBar(date="2024-01-04", open=10.6, high=11.0, low=10.3, close=10.9, volume=1200),
-            MarketDataBar(date="2024-01-05", open=10.9, high=11.2, low=10.5, close=10.8, volume=900),
+            _bar("2024-01-04", 10.6, 11.0, 10.3, 10.9, 1200),
+            _bar("2024-01-05", 10.9, 11.2, 10.5, 10.8, 900),
         ]
         s = _make_series(bars)
         qr = self.provider.validate_data(s)
@@ -54,8 +67,8 @@ class TestDataQuality:
     def test_price_jump_anomaly(self):
         # 制造一个 >20% 的跳变
         bars = [
-            MarketDataBar(date="2024-01-02", open=10, high=10.5, low=9.8, close=10.0, volume=1000),
-            MarketDataBar(date="2024-01-03", open=12, high=13, low=11.5, close=12.5, volume=2000),  # +25%
+            _bar("2024-01-02", 10, 10.5, 9.8, 10.0, 1000),
+            _bar("2024-01-03", 12, 13, 11.5, 12.5, 2000),  # +25%
         ]
         s = _make_series(bars)
         qr = self.provider.validate_data(s)
@@ -65,8 +78,8 @@ class TestDataQuality:
 
     def test_no_jump_for_normal_movement(self):
         bars = [
-            MarketDataBar(date="2024-01-02", open=10, high=10.5, low=9.8, close=10.2, volume=1000),
-            MarketDataBar(date="2024-01-03", open=10.2, high=10.8, low=10.0, close=10.6, volume=1100),
+            _bar("2024-01-02", 10, 10.5, 9.8, 10.2, 1000),
+            _bar("2024-01-03", 10.2, 10.8, 10.0, 10.6, 1100),
         ]
         s = _make_series(bars)
         qr = self.provider.validate_data(s)

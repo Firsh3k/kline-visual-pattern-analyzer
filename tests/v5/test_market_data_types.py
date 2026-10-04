@@ -90,11 +90,19 @@ class TestMarketDataBar:
         assert b2.provenance is not None
         assert b2.provenance.source == DataSourceType.SINA
 
-    def test_round_trip_no_provenance(self):
-        b = MarketDataBar(date="2026-10-04", open=1.0, high=1.1, low=0.9, close=1.05, volume=100.0)
-        b2 = MarketDataBar.from_dict(b.to_dict())
-        assert b2.provenance is None
-        assert b2.amount is None
+    def test_bar_requires_provenance(self):
+        # blocker5: provenance is now a required constructor arg
+        with pytest.raises(TypeError):
+            MarketDataBar(date="2026-10-04", open=1.0, high=1.1, low=0.9, close=1.05, volume=100.0)
+
+    def test_from_dict_without_provenance_uses_legacy_placeholder(self):
+        # legacy conversion: missing provenance becomes an explicit MANUAL placeholder (not None)
+        raw = {"date": "2026-10-04", "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.05, "volume": 100.0}
+        b = MarketDataBar.from_dict(raw)
+        assert b.provenance is not None
+        assert b.provenance.source == DataSourceType.MANUAL
+        assert b.provenance.fetched_at == ""
+        assert b.amount is None
 
     def test_to_ohlcv(self):
         b = self._sample_bar()
@@ -109,7 +117,10 @@ class TestMarketDataBar:
         b = MarketDataBar.from_ohlcv(o)
         assert b.date == o.date
         assert b.close == o.close
-        assert b.provenance is None
+        # blocker5: legacy conversion constructs an explicit MANUAL provenance, not None
+        assert b.provenance is not None
+        assert b.provenance.source == DataSourceType.MANUAL
+        assert b.provenance.adjustment_applied == AdjustmentType.NONE
 
 
 class TestDataQualityReport:
@@ -135,9 +146,14 @@ class TestDataQualityReport:
 
 class TestMarketDataSeries:
     def _sample_series(self):
+        prov = DataProvenance(
+            source=DataSourceType.MANUAL, url="", fetched_at="",
+            raw_payload_hash="", adjustment_applied=AdjustmentType.NONE,
+            quality_flag=DataQualityFlag.OK,
+        )
         bars = [
-            MarketDataBar(date="2026-10-01", open=10.0, high=10.5, low=9.8, close=10.2, volume=1000.0),
-            MarketDataBar(date="2026-10-02", open=10.2, high=10.8, low=10.0, close=10.6, volume=1200.0),
+            MarketDataBar(date="2026-10-01", open=10.0, high=10.5, low=9.8, close=10.2, volume=1000.0, provenance=prov),
+            MarketDataBar(date="2026-10-02", open=10.2, high=10.8, low=10.0, close=10.6, volume=1200.0, provenance=prov),
         ]
         return MarketDataSeries(
             symbol="sh600519", name="贵州茅台",
@@ -183,3 +199,14 @@ class TestMarketDataSeries:
         assert sd.name == "贵州茅台"
         assert len(sd.klines) == 2
         assert sd.source == "sina"
+
+    def test_schema_version_and_last_bar_date(self):
+        s = self._sample_series()
+        assert s.schema_version == "1.0"
+        assert s.last_bar_date == "2026-10-02"
+        d = s.to_dict()
+        assert d["schema_version"] == "1.0"
+        assert d["last_bar_date"] == "2026-10-02"
+        # round-trip ignores derived last_bar_date
+        s2 = MarketDataSeries.from_dict(d)
+        assert s2.last_bar_date == "2026-10-02"

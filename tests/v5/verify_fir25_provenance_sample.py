@@ -65,6 +65,8 @@ def main():
     ]
 
     all_pass = True
+    provider_skipped = False
+    provider_error = None
     for symbol, expected in test_cases:
         result = verify_symbol(symbol, expected)
         status = "PASS" if result["pass"] else "FAIL"
@@ -110,23 +112,42 @@ def main():
                   f"source={bar.provenance.source if bar.provenance else 'N/A'}")
 
     except Exception as e:
-        print(f"  [SKIP] 网络请求失败（可能在离线环境）: {e}")
-        print(f"  派生级验证已通过，provider 级验证需要网络环境。")
+        provider_skipped = True
+        provider_error = str(e)
+        print(f"  [SKIP] Provider live fetch failed: {e}")
+        print(f"  This is expected in offline CI environments.")
+        print(f"  Derivation-level verification is authoritative and has PASSED.")
 
     print()
     print("=" * 70)
-    if all_pass:
-        print("RESULT: ALL CHECKS PASSED")
+    if all_pass and not provider_skipped:
+        print("RESULT: ALL CHECKS PASSED (derivation + provider live)")
         print("  - 深圳股票派生为 SZSE（不是 SSE）")
         print("  - 上海股票派生为 SSE")
         print("  - 北京股票派生为 BSE（含 920xxx）")
-        print("  - 930xxx+ fail-closed 为 UNKNOWN")
+        print("  - 910xxx+ fail-closed 为 UNKNOWN")
+        print("  - Provider live fetch verified SZ stock trading_calendar = SZSE")
+        exit_code = 0
+    elif all_pass and provider_skipped:
+        print("RESULT: DERIVATION CHECKS PASSED — PROVIDER LIVE CHECK SKIPPED")
+        print("  - 深圳股票派生为 SZSE（不是 SSE）")
+        print("  - 上海股票派生为 SSE")
+        print("  - 北京股票派生为 BSE（含 920xxx）")
+        print("  - 910xxx+ fail-closed 为 UNKNOWN")
+        print(f"  - Provider live check SKIPPED: {provider_error}")
+        print("  - NOTE: This is NOT 'all checks passed'. Provider-level verification")
+        print("    requires network access and should be run manually before release.")
+        # In default CI mode, derivation pass is sufficient (exit 0).
+        # Use --require-provider to fail CI when provider check is skipped.
+        exit_code = 2 if require_provider else 0
     else:
         print("RESULT: SOME CHECKS FAILED")
+        exit_code = 1
     print("=" * 70)
 
-    return 0 if all_pass else 1
+    return exit_code
 
 
 if __name__ == "__main__":
+    require_provider = "--require-provider" in sys.argv
     sys.exit(main())

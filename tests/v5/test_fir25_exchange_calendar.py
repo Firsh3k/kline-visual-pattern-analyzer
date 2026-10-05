@@ -121,27 +121,28 @@ class TestDeriveCalendarId:
         ("bj920211", CALENDAR_BSE),
         ("sh920211", CALENDAR_BSE),  # 前缀错误但数字部分正确
         ("sz920211", CALENDAR_BSE),  # 前缀错误但数字部分正确
-        # 900xxx-919xxx → SSE（上海 B 股，必须保持不变）
+        # 900xxx → SSE（上海 B 股，权威范围 900000-900999）
         ("900901", CALENDAR_SSE),
         ("900957", CALENDAR_SSE),
         ("sh900901", CALENDAR_SSE),
-        ("910000", CALENDAR_SSE),
-        ("919999", CALENDAR_SSE),
-        # 930xxx+ → UNKNOWN（fail-closed，不默认 SSE）
+        ("900999", CALENDAR_SSE),  # 上边界
+        # 910xxx+ → UNKNOWN（fail-closed，不在权威上海 B 股范围内）
+        ("910000", CALENDAR_UNKNOWN),
+        ("919999", CALENDAR_UNKNOWN),
         ("930000", CALENDAR_UNKNOWN),
         ("950000", CALENDAR_UNKNOWN),
         ("999999", CALENDAR_UNKNOWN),
     ])
     def test_920_bse_vs_900_sse_boundary(self, symbol, expected):
-        """P0 回归：920→BSE, 900-919→SSE, 930+→UNKNOWN (fail-closed)"""
+        """P0 回归：920→BSE, 900→SSE, 910+→UNKNOWN (fail-closed)"""
         result = derive_calendar_id(symbol)
         assert result == expected, f"{symbol}: expected {expected}, got {result}"
         # 920xxx 绝对不能是 SSE
         digits = "".join(c for c in symbol if c.isdigit())
         if digits.startswith("920"):
             assert result != CALENDAR_SSE
-        # 930xxx+ 绝对不能是 SSE（fail-closed）
-        if digits >= "930" and not digits.startswith("920"):
+        # 910xxx+ 绝对不能是 SSE（fail-closed）
+        if digits >= "910" and not digits.startswith("920"):
             assert result == CALENDAR_UNKNOWN
             assert result != CALENDAR_SSE
 
@@ -161,10 +162,20 @@ class TestSinaMarketPrefix:
         assert _market_prefix("920999") == "bj"
 
     def test_900_still_routes_to_sh(self):
-        """回归：900xxx 上海 B 股仍然路由到 sh"""
+        """回归：900xxx 上海 B 股仍然路由到 sh（权威范围 900000-900999）"""
         from core.market_data.sina_provider import _market_prefix
         assert _market_prefix("900901") == "sh"
         assert _market_prefix("900957") == "sh"
+        assert _market_prefix("900999") == "sh"  # 上边界
+
+    def test_910plus_returns_none_fail_closed(self):
+        """910xxx+ 无法识别 → None（fail-closed，不在权威上海 B 股范围内）"""
+        from core.market_data.sina_provider import _market_prefix
+        assert _market_prefix("910000") is None
+        assert _market_prefix("919999") is None
+        assert _market_prefix("930000") is None
+        assert _market_prefix("950000") is None
+        assert _market_prefix("999999") is None
 
     def test_6xx_routes_to_sh(self):
         """6xx 上海主板路由到 sh"""
@@ -183,13 +194,6 @@ class TestSinaMarketPrefix:
         from core.market_data.sina_provider import _market_prefix
         assert _market_prefix("430047") == "bj"
         assert _market_prefix("830799") == "bj"
-
-    def test_930plus_returns_none_fail_closed(self):
-        """930xxx+ 无法识别 → None（fail-closed，不静默回退 sz）"""
-        from core.market_data.sina_provider import _market_prefix
-        assert _market_prefix("930000") is None
-        assert _market_prefix("950000") is None
-        assert _market_prefix("999999") is None
 
     def test_unrecognized_returns_none_fail_closed(self):
         """完全无法识别的代码 → None（fail-closed）"""

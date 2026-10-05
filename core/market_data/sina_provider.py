@@ -48,8 +48,9 @@ def _market_prefix(code: str) -> Optional[str]:
     # 上海: 6xx, 5xx
     if code.startswith(("6", "5")):
         return "sh"
-    # 上海 B 股: 仅 900xxx-919xxx（920 已排除，930+ 为未知）
-    if code.startswith("9") and code[:3] < "920":
+    # 上海 B 股: 仅 900xxx（权威范围 900000-900999）
+    # 920xxx 已排除为 BSE，910xxx+ 为未知（fail-closed）
+    if code.startswith("9") and code[:3] < "910":
         return "sh"
     # 深圳: 0xx, 3xx
     if code.startswith(("0", "3")):

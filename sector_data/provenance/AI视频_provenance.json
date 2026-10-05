@@ -1,0 +1,14 @@
+{
+  "sector_name": "AI视频",
+  "sector_code": "886068",
+  "source": "manual_refresh",
+  "source_url": "",
+  "fetched_at": "2026-10-05T04:47:40.992899+00:00",
+  "refresh_date": "2026-10-05",
+  "reconciliation_method": "not_reconciled",
+  "reconciliation_date": null,
+  "total_constituents": 1000,
+  "verified_count": 0,
+  "version": "1.0",
+  "notes": ""
+}

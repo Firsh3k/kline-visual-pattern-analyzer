@@ -1,0 +1,14 @@
+{
+  "sector_name": "细胞免疫治疗",
+  "sector_code": "885769",
+  "source": "manual_refresh",
+  "source_url": "",
+  "fetched_at": "2026-10-05T04:47:40.986949+00:00",
+  "refresh_date": "2026-10-05",
+  "reconciliation_method": "not_reconciled",
+  "reconciliation_date": null,
+  "total_constituents": 62,
+  "verified_count": 0,
+  "version": "1.0",
+  "notes": ""
+}

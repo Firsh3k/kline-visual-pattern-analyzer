@@ -86,6 +86,10 @@ jobs:
         cd tests
         python validate_sector_data.py
 
+    - name: Run FIR-15 sector membership validation
+      run: |
+        python scripts/refresh_sector_membership.py --validate-only
+
     - name: Run backtest horizon tests (BUG-013)
       run: |
         cd tests

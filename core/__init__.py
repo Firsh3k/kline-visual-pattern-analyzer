@@ -91,6 +91,33 @@ from .pivot_patterns import (
     MAX_NECKLINE_EXTRAPOLATION_RATIO,
 )
 
+# V5 FIR-15 — Authoritative Sector Membership Validation
+from .sector_validation import (
+    MembershipStatus,
+    ReconciliationMethod,
+    FreshnessLevel,
+    SectorConstituent,
+    SectorProvenance,
+    ReconciliationResult,
+    SectorValidationReport,
+    validate_code_format,
+    is_stock_code,
+    validate_constituent,
+    validate_sector,
+    validate_all_sectors,
+    get_validation_summary,
+    reconcile_codes,
+    apply_reconciliation_to_constituents,
+    generate_reconciliation_report,
+    load_provenance,
+    save_provenance,
+    update_provenance_after_refresh,
+    update_provenance_after_reconciliation,
+    check_freshness,
+    list_all_provenances,
+    get_stale_sectors,
+)
+
 # Version 语义说明：
 # __version__ = "5.1.0" 是 Canonical Core internal/API version，
 # 不代表 GitHub product release 已经达到 V5.1.0。
@@ -157,4 +184,28 @@ __all__ = [
     "HSTopDetector",
     "MIN_HS_HEAD_PROMINENCE",
     "MAX_NECKLINE_EXTRAPOLATION_RATIO",
+    # V5 FIR-15 — Authoritative Sector Membership Validation
+    "MembershipStatus",
+    "ReconciliationMethod",
+    "FreshnessLevel",
+    "SectorConstituent",
+    "SectorProvenance",
+    "ReconciliationResult",
+    "SectorValidationReport",
+    "validate_code_format",
+    "is_stock_code",
+    "validate_constituent",
+    "validate_sector",
+    "validate_all_sectors",
+    "get_validation_summary",
+    "reconcile_codes",
+    "apply_reconciliation_to_constituents",
+    "generate_reconciliation_report",
+    "load_provenance",
+    "save_provenance",
+    "update_provenance_after_refresh",
+    "update_provenance_after_reconciliation",
+    "check_freshness",
+    "list_all_provenances",
+    "get_stale_sectors",
 ]

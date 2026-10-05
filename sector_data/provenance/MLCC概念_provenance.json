@@ -1,0 +1,15 @@
+{
+  "sector_name": "MLCC概念",
+  "sector_code": "886112",
+  "source": "manual_refresh",
+  "source_url": "",
+  "fetched_at": "2026-10-05T04:47:41.005026+00:00",
+  "local_refresh_date": "2026-10-05",
+  "authoritative_reconciliation_date": null,
+  "reconciliation_method": "not_reconciled",
+  "reconciliation_result": "",
+  "total_constituents": 15,
+  "verified_count": 0,
+  "version": "2.0",
+  "notes": ""
+}

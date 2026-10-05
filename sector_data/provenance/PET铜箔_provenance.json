@@ -1,0 +1,15 @@
+{
+  "sector_name": "PET铜箔",
+  "sector_code": "886020",
+  "source": "manual_refresh",
+  "source_url": "",
+  "fetched_at": "2026-10-05T04:47:40.999597+00:00",
+  "local_refresh_date": "2026-10-05",
+  "authoritative_reconciliation_date": null,
+  "reconciliation_method": "not_reconciled",
+  "reconciliation_result": "",
+  "total_constituents": 47,
+  "verified_count": 0,
+  "version": "2.0",
+  "notes": ""
+}

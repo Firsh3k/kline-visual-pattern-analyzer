@@ -91,6 +91,13 @@ from .pivot_patterns import (
     MAX_NECKLINE_EXTRAPOLATION_RATIO,
 )
 
+# FIR-15 Sector Validation 模块说明：
+# 故意不从 core.__init__ 重新导出 FIR-15 的公共类型，以避免虚假的 JS↔Python parity 声明。
+# FIR-14 parity extractor 目前只覆盖 core/types.py 中的 canonical contracts。
+# FIR-15 类型是 Python-only/internal，通过 core.sector_validation 命名空间访问：
+#   from core.sector_validation import validate_sector, SectorProvenance, ...
+# 当 FIR-15 contracts 需要 JS parity 时，应单独扩展 parity extractor 并明确声明覆盖范围。
+
 # Version 语义说明：
 # __version__ = "5.1.0" 是 Canonical Core internal/API version，
 # 不代表 GitHub product release 已经达到 V5.1.0。
@@ -157,4 +164,7 @@ __all__ = [
     "HSTopDetector",
     "MIN_HS_HEAD_PROMINENCE",
     "MAX_NECKLINE_EXTRAPOLATION_RATIO",
+    # 注意：FIR-15 Sector Validation 类型故意不导出到 core.__init__，
+    # 保持 core.sector_validation 命名空间，避免虚假 JS↔Python parity 声明。
+    # 详见模块顶部注释。
 ]

@@ -112,7 +112,7 @@ class TestDeriveCalendarId:
         assert derive_calendar_id("  sh600519  ") == CALENDAR_SSE
         assert derive_calendar_id("  sz000858  ") == CALENDAR_SZSE
 
-    # --- P0 回归: 920xxx vs 900xxx 边界 ---
+    # --- P0 回归: 920xxx vs 900xxx vs 930+ 边界 ---
     @pytest.mark.parametrize("symbol,expected", [
         # 920xxx → BSE（北交所新代码段）
         ("920001", CALENDAR_BSE),
@@ -125,16 +125,24 @@ class TestDeriveCalendarId:
         ("900901", CALENDAR_SSE),
         ("900957", CALENDAR_SSE),
         ("sh900901", CALENDAR_SSE),
-        # 910xxx-919xxx → SSE（上海 B 股范围）
         ("910000", CALENDAR_SSE),
         ("919999", CALENDAR_SSE),
+        # 930xxx+ → UNKNOWN（fail-closed，不默认 SSE）
+        ("930000", CALENDAR_UNKNOWN),
+        ("950000", CALENDAR_UNKNOWN),
+        ("999999", CALENDAR_UNKNOWN),
     ])
     def test_920_bse_vs_900_sse_boundary(self, symbol, expected):
-        """P0 回归：920xxx 必须是 BSE，900xxx-919xxx 必须保持 SSE"""
+        """P0 回归：920→BSE, 900-919→SSE, 930+→UNKNOWN (fail-closed)"""
         result = derive_calendar_id(symbol)
         assert result == expected, f"{symbol}: expected {expected}, got {result}"
         # 920xxx 绝对不能是 SSE
-        if symbol.replace("sh", "").replace("sz", "").replace("bj", "").startswith("920"):
+        digits = "".join(c for c in symbol if c.isdigit())
+        if digits.startswith("920"):
+            assert result != CALENDAR_SSE
+        # 930xxx+ 绝对不能是 SSE（fail-closed）
+        if digits >= "930" and not digits.startswith("920"):
+            assert result == CALENDAR_UNKNOWN
             assert result != CALENDAR_SSE
 
 
@@ -175,6 +183,20 @@ class TestSinaMarketPrefix:
         from core.market_data.sina_provider import _market_prefix
         assert _market_prefix("430047") == "bj"
         assert _market_prefix("830799") == "bj"
+
+    def test_930plus_returns_none_fail_closed(self):
+        """930xxx+ 无法识别 → None（fail-closed，不静默回退 sz）"""
+        from core.market_data.sina_provider import _market_prefix
+        assert _market_prefix("930000") is None
+        assert _market_prefix("950000") is None
+        assert _market_prefix("999999") is None
+
+    def test_unrecognized_returns_none_fail_closed(self):
+        """完全无法识别的代码 → None（fail-closed）"""
+        from core.market_data.sina_provider import _market_prefix
+        assert _market_prefix("700000") is None
+        assert _market_prefix("200000") is None
+        assert _market_prefix("abc") is None
 
 
 # ---------------------------------------------------------------------------

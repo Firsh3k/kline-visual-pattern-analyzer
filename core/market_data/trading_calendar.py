@@ -267,9 +267,14 @@ def derive_calendar_id(symbol: str) -> str:
         return CALENDAR_UNKNOWN
 
     prefix1 = digits[:1]
+    prefix3 = digits[:3]
 
-    # 上海: 6xx, 5xx, 9xx（920 已在上面排除，剩余 900xxx-919xxx 为上海 B 股）
-    if prefix1 in ("6", "5", "9"):
+    # 上海: 6xx, 5xx
+    if prefix1 in ("6", "5"):
+        return CALENDAR_SSE
+
+    # 上海 B 股: 仅 900xxx-919xxx（920 已在上面排除为 BSE，930+ 为未知）
+    if prefix1 == "9" and prefix3 < "920":
         return CALENDAR_SSE
 
     # 深圳: 0xx, 3xx
@@ -280,4 +285,5 @@ def derive_calendar_id(symbol: str) -> str:
     if prefix1 in ("4", "8"):
         return CALENDAR_BSE
 
+    # 930xxx+ 及其他无法识别的代码 → UNKNOWN（fail-closed，不默认 SSE）
     return CALENDAR_UNKNOWN

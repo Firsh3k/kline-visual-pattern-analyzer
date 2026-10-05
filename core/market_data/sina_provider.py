@@ -33,12 +33,22 @@ _SINA_URL = (
 
 
 def _market_prefix(code: str) -> str:
-    """根据股票代码首位判断市场前缀"""
-    if code.startswith(("6", "9")):
+    """根据股票代码判断市场前缀
+
+    注意：920xxx 是北交所 2024-04-22 起启用的新代码段，必须在通用
+    9xx→sh 之前识别，否则北交所新股会被错误路由到上海。
+    """
+    # P0: 北交所 920xxx 新代码段优先识别
+    if code.startswith("920"):
+        return "bj"
+    # 上海: 6xx, 5xx, 9xx（920 已排除，900xxx-919xxx 为上海 B 股）
+    if code.startswith(("6", "5", "9")):
         return "sh"
+    # 深圳: 0xx, 3xx
     elif code.startswith(("0", "3")):
         return "sz"
-    elif code.startswith("8"):
+    # 北京: 4xx(历史), 8xx(历史)
+    elif code.startswith(("4", "8")):
         return "bj"
     return "sz"
 

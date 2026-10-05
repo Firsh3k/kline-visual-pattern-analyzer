@@ -228,9 +228,13 @@ def derive_calendar_id(symbol: str) -> str:
     2. 纯数字代码：600519, 000858, 430047
 
     A股代码前缀规则：
-    - 上海 (SSE): 600/601/603/605/688(科创板)/5xx(基金)/9xx(B股)
+    - 上海 (SSE): 600/601/603/605/688(科创板)/5xx(基金)/900xxx-909xxx(B股)
     - 深圳 (SZSE): 000/001/002/003/300/301(创业板)
-    - 北京 (BSE): 4xx/8xx(北交所)
+    - 北京 (BSE): 4xx/8xx(历史代码), 920xxx(2024-04-22起启用的新代码段，
+      2025-10-09起现有上市公司切换使用，当前2026年北交所主力代码段)
+
+    注意：920xxx 必须在通用 9xx→SSE 之前识别，否则北交所新股会被
+    错误标记为上海 B 股。
 
     Returns:
         "SSE" / "SZSE" / "BSE" / "UNKNOWN"
@@ -242,7 +246,15 @@ def derive_calendar_id(symbol: str) -> str:
 
     s = symbol.strip().lower()
 
-    # 格式1: 带前缀 sh/sz/bj
+    # 先提取纯数字部分（用于 920xxx 等需要精确匹配的判断）
+    digits = "".join(c for c in s if c.isdigit())
+
+    # P0: 北交所 920xxx 新代码段必须优先识别
+    # 无论前缀是 sh/sz/bj 还是纯数字，只要数字部分以 920 开头就是 BSE
+    if digits and digits.startswith("920"):
+        return CALENDAR_BSE
+
+    # 格式1: 带前缀 sh/sz/bj（920 已在上面处理，这里是其他代码）
     if s.startswith("sh"):
         return CALENDAR_SSE
     if s.startswith("sz"):
@@ -250,16 +262,13 @@ def derive_calendar_id(symbol: str) -> str:
     if s.startswith("bj"):
         return CALENDAR_BSE
 
-    # 格式2: 纯数字代码（去掉可能的非数字前缀）
-    digits = "".join(c for c in s if c.isdigit())
+    # 格式2: 纯数字代码
     if not digits:
         return CALENDAR_UNKNOWN
 
-    # 取前3位判断
-    prefix3 = digits[:3]
     prefix1 = digits[:1]
 
-    # 上海: 6xx, 5xx, 9xx
+    # 上海: 6xx, 5xx, 9xx（920 已在上面排除，剩余 900xxx-919xxx 为上海 B 股）
     if prefix1 in ("6", "5", "9"):
         return CALENDAR_SSE
 
@@ -267,7 +276,7 @@ def derive_calendar_id(symbol: str) -> str:
     if prefix1 in ("0", "3"):
         return CALENDAR_SZSE
 
-    # 北京: 4xx, 8xx
+    # 北京: 4xx, 8xx（历史代码，保留向后兼容）
     if prefix1 in ("4", "8"):
         return CALENDAR_BSE
 

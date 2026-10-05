@@ -205,3 +205,70 @@ def prev_trading_day(date_str: str) -> str:
 def count_trading_days(start: str, end: str) -> int:
     """统计 [start, end] 闭区间内的交易日数量"""
     return len(get_trading_days(start, end))
+
+
+# ---------------------------------------------------------------------------
+# FIR-25: Exchange calendar provenance — derive calendar ID from symbol
+# ---------------------------------------------------------------------------
+
+# Canonical exchange calendar identifiers.
+# 沪深北三所实际休市安排一致（统一公告），但 provenance 必须准确标识
+# 数据所属交易所，不能把深圳/北京股票标记为 SSE。
+CALENDAR_SSE = "SSE"    # Shanghai Stock Exchange (上海证券交易所)
+CALENDAR_SZSE = "SZSE"  # Shenzhen Stock Exchange (深圳证券交易所)
+CALENDAR_BSE = "BSE"    # Beijing Stock Exchange (北京证券交易所)
+CALENDAR_UNKNOWN = "UNKNOWN"
+
+
+def derive_calendar_id(symbol: str) -> str:
+    """根据股票代码派生 canonical 交易所日历标识符。
+
+    支持两种输入格式：
+    1. 带交易所前缀：sh600519, sz000858, bj430047
+    2. 纯数字代码：600519, 000858, 430047
+
+    A股代码前缀规则：
+    - 上海 (SSE): 600/601/603/605/688(科创板)/5xx(基金)/9xx(B股)
+    - 深圳 (SZSE): 000/001/002/003/300/301(创业板)
+    - 北京 (BSE): 4xx/8xx(北交所)
+
+    Returns:
+        "SSE" / "SZSE" / "BSE" / "UNKNOWN"
+
+    无法识别时返回 "UNKNOWN"（fail-closed，不静默回退到 SSE）。
+    """
+    if not symbol or not isinstance(symbol, str):
+        return CALENDAR_UNKNOWN
+
+    s = symbol.strip().lower()
+
+    # 格式1: 带前缀 sh/sz/bj
+    if s.startswith("sh"):
+        return CALENDAR_SSE
+    if s.startswith("sz"):
+        return CALENDAR_SZSE
+    if s.startswith("bj"):
+        return CALENDAR_BSE
+
+    # 格式2: 纯数字代码（去掉可能的非数字前缀）
+    digits = "".join(c for c in s if c.isdigit())
+    if not digits:
+        return CALENDAR_UNKNOWN
+
+    # 取前3位判断
+    prefix3 = digits[:3]
+    prefix1 = digits[:1]
+
+    # 上海: 6xx, 5xx, 9xx
+    if prefix1 in ("6", "5", "9"):
+        return CALENDAR_SSE
+
+    # 深圳: 0xx, 3xx
+    if prefix1 in ("0", "3"):
+        return CALENDAR_SZSE
+
+    # 北京: 4xx, 8xx
+    if prefix1 in ("4", "8"):
+        return CALENDAR_BSE
+
+    return CALENDAR_UNKNOWN

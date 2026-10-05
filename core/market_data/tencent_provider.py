@@ -20,7 +20,7 @@ from ..types import (
     DataProvenance, DataQualityFlag, DataSourceType,
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
-from .trading_calendar import get_trading_days
+from .trading_calendar import get_trading_days, derive_calendar_id
 from .validation import assess_series_quality, normalize_bars
 from .aggregation import aggregate_daily_bars
 
@@ -87,7 +87,7 @@ class TencentDataProvider(DataProvider):
                 name=symbol,
                 frequency=frequency,
                 adjustment=adjustment,
-                trading_calendar="SSE",
+                trading_calendar=derive_calendar_id(symbol),
                 source=self.SOURCE,
                 fetched_at=daily.fetched_at,
                 bars=bars,
@@ -183,7 +183,7 @@ class TencentDataProvider(DataProvider):
             name=symbol,
             frequency=FrequencyType.DAILY,
             adjustment=adjustment,
-            trading_calendar="SSE",
+            trading_calendar=derive_calendar_id(symbol),
             source=self.SOURCE,
             fetched_at=fetched_at,
             bars=bars,

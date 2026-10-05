@@ -21,7 +21,7 @@ from ..types import (
     DataProvenance, DataQualityFlag, DataSourceType,
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
-from .trading_calendar import get_trading_days, is_trading_day
+from .trading_calendar import get_trading_days, is_trading_day, derive_calendar_id
 from .validation import assess_series_quality, normalize_bars
 
 
@@ -151,7 +151,7 @@ class SinaDataProvider(DataProvider):
             name=full_symbol,
             frequency=frequency,
             adjustment=adjustment,
-            trading_calendar="SSE",
+            trading_calendar=derive_calendar_id(full_symbol),
             source=self.SOURCE,
             fetched_at=fetched_at,
             bars=bars,

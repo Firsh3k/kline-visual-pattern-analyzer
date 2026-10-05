@@ -125,8 +125,10 @@ class TestDeriveCalendarId:
         ("900901", CALENDAR_SSE),
         ("900957", CALENDAR_SSE),
         ("sh900901", CALENDAR_SSE),
-        ("900999", CALENDAR_SSE),  # 上边界
-        # 910xxx+ → UNKNOWN（fail-closed，不在权威上海 B 股范围内）
+        ("900999", CALENDAR_SSE),  # 上边界（权威范围最后一个）
+        # 901xxx+ → UNKNOWN（fail-closed，不在权威上海 B 股 900000-900999 范围内）
+        ("901000", CALENDAR_UNKNOWN),  # 第一个不在权威范围的代码
+        ("909999", CALENDAR_UNKNOWN),  # 909 段最后一个
         ("910000", CALENDAR_UNKNOWN),
         ("919999", CALENDAR_UNKNOWN),
         ("930000", CALENDAR_UNKNOWN),
@@ -134,7 +136,7 @@ class TestDeriveCalendarId:
         ("999999", CALENDAR_UNKNOWN),
     ])
     def test_920_bse_vs_900_sse_boundary(self, symbol, expected):
-        """P0 回归：920→BSE, 900→SSE, 910+→UNKNOWN (fail-closed)"""
+        """P0 回归：920→BSE, 900→SSE (权威900000-900999), 901+→UNKNOWN (fail-closed)"""
         result = derive_calendar_id(symbol)
         assert result == expected, f"{symbol}: expected {expected}, got {result}"
         # 920xxx 绝对不能是 SSE
@@ -168,9 +170,11 @@ class TestSinaMarketPrefix:
         assert _market_prefix("900957") == "sh"
         assert _market_prefix("900999") == "sh"  # 上边界
 
-    def test_910plus_returns_none_fail_closed(self):
-        """910xxx+ 无法识别 → None（fail-closed，不在权威上海 B 股范围内）"""
+    def test_901plus_returns_none_fail_closed(self):
+        """901xxx+ 无法识别 → None（fail-closed，不在权威上海 B 股 900000-900999 范围内）"""
         from core.market_data.sina_provider import _market_prefix
+        assert _market_prefix("901000") is None  # 第一个不在权威范围的代码
+        assert _market_prefix("909999") is None  # 909 段最后一个
         assert _market_prefix("910000") is None
         assert _market_prefix("919999") is None
         assert _market_prefix("930000") is None

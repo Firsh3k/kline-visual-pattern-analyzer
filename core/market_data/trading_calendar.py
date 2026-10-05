@@ -274,8 +274,8 @@ def derive_calendar_id(symbol: str) -> str:
         return CALENDAR_SSE
 
     # 上海 B 股: 仅 900xxx（权威范围 900000-900999）
-    # 920xxx 已在上面排除为 BSE，910xxx+ 为未知（fail-closed）
-    if prefix1 == "9" and prefix3 < "910":
+    # 901xxx+ 不在权威上海 B 股分配表中 → UNKNOWN（fail-closed）
+    if prefix1 == "9" and prefix3 < "901":
         return CALENDAR_SSE
 
     # 深圳: 0xx, 3xx

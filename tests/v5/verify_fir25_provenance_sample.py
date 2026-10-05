@@ -82,7 +82,7 @@ def main():
     provider = TencentDataProvider()
 
     # 只验证一只深圳股票，避免网络请求过多
-    test_symbol = "000858"  # 五粮液（深圳主板）
+    test_symbol = "sz000858"  # 五粮液（深圳主板，带前缀符合 Tencent API 要求）
     print(f"  拉取 {test_symbol} (五粮液) 最近 10 天数据...")
 
     try:
@@ -125,7 +125,7 @@ def main():
         print("  - 深圳股票派生为 SZSE（不是 SSE）")
         print("  - 上海股票派生为 SSE")
         print("  - 北京股票派生为 BSE（含 920xxx）")
-        print("  - 910xxx+ fail-closed 为 UNKNOWN")
+        print("  - 901xxx+ fail-closed 为 UNKNOWN")
         print("  - Provider live fetch verified SZ stock trading_calendar = SZSE")
         exit_code = 0
     elif all_pass and provider_skipped:
@@ -133,7 +133,7 @@ def main():
         print("  - 深圳股票派生为 SZSE（不是 SSE）")
         print("  - 上海股票派生为 SSE")
         print("  - 北京股票派生为 BSE（含 920xxx）")
-        print("  - 910xxx+ fail-closed 为 UNKNOWN")
+        print("  - 901xxx+ fail-closed 为 UNKNOWN")
         print(f"  - Provider live check SKIPPED: {provider_error}")
         print("  - NOTE: This is NOT 'all checks passed'. Provider-level verification")
         print("    requires network access and should be run manually before release.")

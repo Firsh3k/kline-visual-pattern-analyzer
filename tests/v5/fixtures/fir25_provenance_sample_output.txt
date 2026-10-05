@@ -17,18 +17,22 @@ FIR-25 Downstream Provenance Sample Verification
   [PASS] bj920211     → BSE    (expected BSE, not_SSE=True)
 
 --- Phase 2: TencentDataProvider 实际拉取验证 ---
-  拉取 000858 (五粮液) 最近 10 天数据...
-  [SKIP] Provider live fetch failed: 'list' object has no attribute 'get'
-  This is expected in offline CI environments.
-  Derivation-level verification is authoritative and has PASSED.
+  拉取 sz000858 (五粮液) 最近 10 天数据...
+  拉取成功: 11 根 K 线
+  trading_calendar = 'SZSE'
+  source = 'DataSourceType.TENCENT'
+  [PASS] 深圳股票 trading_calendar = SZSE (不是 SSE)
+
+  样本 K 线 provenance (前 3 根):
+    [0] 2026-09-15 close=69.70 source=DataSourceType.TENCENT
+    [1] 2026-09-16 close=69.26 source=DataSourceType.TENCENT
+    [2] 2026-09-17 close=69.13 source=DataSourceType.TENCENT
 
 ======================================================================
-RESULT: DERIVATION CHECKS PASSED — PROVIDER LIVE CHECK SKIPPED
+RESULT: ALL CHECKS PASSED (derivation + provider live)
   - 深圳股票派生为 SZSE（不是 SSE）
   - 上海股票派生为 SSE
   - 北京股票派生为 BSE（含 920xxx）
-  - 910xxx+ fail-closed 为 UNKNOWN
-  - Provider live check SKIPPED: 'list' object has no attribute 'get'
-  - NOTE: This is NOT 'all checks passed'. Provider-level verification
-    requires network access and should be run manually before release.
+  - 901xxx+ fail-closed 为 UNKNOWN
+  - Provider live fetch verified SZ stock trading_calendar = SZSE
 ======================================================================

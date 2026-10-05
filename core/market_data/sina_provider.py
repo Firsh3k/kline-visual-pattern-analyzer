@@ -49,8 +49,8 @@ def _market_prefix(code: str) -> Optional[str]:
     if code.startswith(("6", "5")):
         return "sh"
     # 上海 B 股: 仅 900xxx（权威范围 900000-900999）
-    # 920xxx 已排除为 BSE，910xxx+ 为未知（fail-closed）
-    if code.startswith("9") and code[:3] < "910":
+    # 901xxx+ 不在权威上海 B 股分配表中 → None（fail-closed）
+    if code.startswith("9") and code[:3] < "901":
         return "sh"
     # 深圳: 0xx, 3xx
     if code.startswith(("0", "3")):

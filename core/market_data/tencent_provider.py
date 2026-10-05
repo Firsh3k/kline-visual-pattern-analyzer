@@ -124,7 +124,28 @@ class TencentDataProvider(DataProvider):
         if payload.get("code") != 0:
             raise MarketDataError(f"Tencent API error: {payload}")
 
-        sym_data = payload.get("data", {}).get(symbol, {})
+        # FIR-25 defensive check: Tencent returns code=0 but msg="param error"
+        # and data=[] when the symbol lacks a market prefix (e.g. "000858"
+        # instead of "sz000858"). Without this check, payload.get("data", {})
+        # returns an empty list and .get(symbol) raises 'list' object has no
+        # attribute 'get' — an opaque error instead of a clear MarketDataError.
+        api_msg = payload.get("msg", "")
+        if api_msg:
+            raise MarketDataError(
+                f"Tencent API returned msg={api_msg!r} for symbol={symbol!r}. "
+                f"This usually means the symbol is missing a market prefix "
+                f"(e.g. use 'sz000858' instead of '000858')."
+            )
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise MarketDataError(
+                f"Tencent API returned unexpected data type "
+                f"{type(data).__name__} (expected dict) for symbol={symbol!r}. "
+                f"Raw payload keys: {list(payload.keys())}."
+            )
+
+        sym_data = data.get(symbol, {})
         # FIR-23 P0-1: strict key selection.
         #   adjustment==FORWARD  -> only accept "qfqday"
         #   adjustment==BACKWARD -> only accept "hfqday"

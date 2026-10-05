@@ -5,32 +5,8 @@ FIR-15 — Authoritative Sector Membership Validation
 验证板块成分股的代码格式、存在性和可交易性，
 与权威数据源对账，管理 provenance 元数据。
 
-## 模块结构
-
-- types.py — 数据结构定义（SectorConstituent, SectorProvenance, ReconciliationResult, SectorValidationReport）
-- validator.py — 离线验证器（代码格式、存在性、可交易性）
-- reconciler.py — 对账器（与权威数据源对账）
-- provenance_manager.py — Provenance 管理器（来源、刷新日期、新鲜度）
-
-## 使用示例
-
-```python
-from core.sector_validation import validate_sector, load_provenance, reconcile_codes
-
-# 离线验证
-report = validate_sector("创新药", ["000538", "600276", "invalid"])
-print(f"验证率: {report.verification_rate:.2%}")
-print(f"无效代码: {report.invalid}")
-
-# 加载 provenance
-provenance = load_provenance("创新药")
-if provenance:
-    print(f"刷新日期: {provenance.refresh_date}")
-
-# 对账
-result = reconcile_codes("创新药", local_codes, source_codes, source="ths_ifind")
-print(f"匹配率: {result.match_rate:.2%}")
-```
+FIR-15 contracts are Python-only/internal and intentionally live under
+``core.sector_validation`` rather than the FIR-14 JS↔Python canonical surface.
 """
 
 from .types import (
@@ -75,6 +51,15 @@ from .provenance_manager import (
     DEFAULT_PROVENANCE_DIR,
 )
 
+from .pipeline import (
+    AuthoritativeSnapshotError,
+    DEFAULT_EVIDENCE_DIR,
+    SNAPSHOT_SCHEMA_VERSION,
+    load_authoritative_snapshot,
+    finalize_authoritative_reconciliation,
+    reconcile_snapshot_to_reports,
+)
+
 __all__ = [
     # 数据结构
     "MembershipStatus",
@@ -110,4 +95,11 @@ __all__ = [
     "get_stale_sectors",
     "get_provenance_path",
     "DEFAULT_PROVENANCE_DIR",
+    # Shared authoritative pipeline
+    "AuthoritativeSnapshotError",
+    "DEFAULT_EVIDENCE_DIR",
+    "SNAPSHOT_SCHEMA_VERSION",
+    "load_authoritative_snapshot",
+    "finalize_authoritative_reconciliation",
+    "reconcile_snapshot_to_reports",
 ]

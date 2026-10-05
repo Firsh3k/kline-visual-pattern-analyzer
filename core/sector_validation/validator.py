@@ -151,11 +151,12 @@ def validate_constituent(code: str, name: str = "") -> SectorConstituent:
     notes = delisting_note if delisting_note else ""
 
     # 离线验证通过（格式正确、是股票代码、在已知交易所范围内）
-    # 注意：这不等同于"与权威源对账一致"，对账由 reconciler 处理
+    # 关键语义：离线验证通过 → UNVERIFIED，不是 VERIFIED
+    # VERIFIED 必须经过权威源对账 matched 后才能获得（由 reconciler 处理）
     return SectorConstituent(
         code=code,
         name=name,
-        status=MembershipStatus.VERIFIED,
+        status=MembershipStatus.UNVERIFIED,
         verified_at=now,
         source="offline_validator",
         notes=notes,
@@ -292,19 +293,27 @@ def get_validation_summary(reports: Dict[str, SectorValidationReport]) -> Dict[s
     """
     total_sectors = len(reports)
     total_constituents = sum(r.total for r in reports.values())
-    total_verified = sum(r.verified for r in reports.values())
+    total_verified = sum(r.verified for r in reports.values())  # 权威对账 matched
+    total_unverified = sum(r.unverified for r in reports.values())  # 离线验证通过但未对账
     total_invalid = sum(r.invalid for r in reports.values())
     total_duplicates = sum(len(r.duplicates) for r in reports.values())
     sectors_with_issues = [name for name, r in reports.items() if r.has_issues]
 
+    # 离线验证通过率 = (verified + unverified) / total
+    # 权威对账验证率 = verified / total
+    total_offline_valid = total_verified + total_unverified
+    offline_valid_rate = total_offline_valid / total_constituents if total_constituents > 0 else 0.0
     overall_rate = total_verified / total_constituents if total_constituents > 0 else 0.0
 
     return {
         'total_sectors': total_sectors,
         'total_constituents': total_constituents,
-        'total_verified': total_verified,
+        'total_verified': total_verified,  # 权威对账 matched
+        'total_unverified': total_unverified,  # 离线验证通过但未对账
+        'total_offline_valid': total_offline_valid,  # 离线验证通过总数
         'total_invalid': total_invalid,
         'total_duplicates': total_duplicates,
         'sectors_with_issues': sectors_with_issues,
-        'overall_verification_rate': round(overall_rate, 4),
+        'overall_offline_valid_rate': round(offline_valid_rate, 4),  # 离线验证通过率
+        'overall_verification_rate': round(overall_rate, 4),  # 权威对账验证率
     }

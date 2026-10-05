@@ -97,12 +97,20 @@ def update_provenance_after_refresh(
     provenance_dir: Optional[str] = None,
 ) -> SectorProvenance:
     """
-    刷新后更新 provenance。
+    本地文件刷新后更新 provenance。
+
+    关键语义：此函数只更新 local_refresh_date（本地文件刷新时间），
+    不更新 authoritative_reconciliation_date（权威对账时间）。
+    因此，未对账的数据集在调用此函数后仍然是 NOT_RECONCILED，
+    绝不会被错误地标记为 FRESH。
+
+    要更新权威对账新鲜度，必须使用 update_provenance_after_reconciliation()，
+    且只有在权威源对账成功后才能调用。
 
     Args:
         sector_name: 板块名称
         sector_code: 板块代码
-        source: 数据来源
+        source: 数据来源（如 "manual_refresh"、"offline_validator"）
         total_constituents: 成分股总数
         source_url: 数据来源 URL（可选）
         provenance_dir: provenance 存储目录（可选）
@@ -118,26 +126,27 @@ def update_provenance_after_refresh(
     existing = load_provenance(sector_name, provenance_dir)
 
     if existing:
-        # 更新现有 provenance
+        # 更新现有 provenance — 只更新本地刷新相关字段
+        # 不修改 authoritative_reconciliation_date（保持权威对账状态不变）
         existing.source = source
         existing.source_url = source_url
         existing.fetched_at = now_iso
-        existing.refresh_date = today
+        existing.local_refresh_date = today
         existing.total_constituents = total_constituents
         existing.sector_code = sector_code
         provenance = existing
     else:
-        # 创建新 provenance
+        # 创建新 provenance — authoritative_reconciliation_date 为 None（未对账）
         provenance = SectorProvenance(
             sector_name=sector_name,
             sector_code=sector_code,
             source=source,
             source_url=source_url,
             fetched_at=now_iso,
-            refresh_date=today,
+            local_refresh_date=today,
+            authoritative_reconciliation_date=None,  # 未对账，绝不能视为 FRESH
             reconciliation_method=ReconciliationMethod.NOT_RECONCILED,
             total_constituents=total_constituents,
-            version="1.0",
         )
 
     save_provenance(provenance, provenance_dir)
@@ -148,17 +157,26 @@ def update_provenance_after_reconciliation(
     sector_name: str,
     method: ReconciliationMethod,
     verified_count: int,
-    reconciliation_date: Optional[str] = None,
+    reconciliation_result: str = "",
+    authoritative_reconciliation_date: Optional[str] = None,
     provenance_dir: Optional[str] = None,
 ) -> Optional[SectorProvenance]:
     """
-    对账后更新 provenance。
+    权威对账成功后更新 provenance。
+
+    这是唯一能更新 authoritative_reconciliation_date 的函数。
+    只有在权威源（如同花顺 iFinD）对账成功后才能调用。
+    调用此函数后，get_freshness_level() 才可能返回 FRESH。
+
+    权威源不可用时绝不能调用此函数 — 应抛出 AuthoritativeSourceUnavailableError，
+    保持 authoritative_reconciliation_date 为 None，新鲜度为 NOT_RECONCILED。
 
     Args:
         sector_name: 板块名称
-        method: 对账方法
-        verified_count: 已验证数量
-        reconciliation_date: 对账日期（可选，默认今天）
+        method: 对账方法（如 THS_IFIND）
+        verified_count: 权威对账 matched 的成分股数量
+        reconciliation_result: 对账结果摘要（如 "matched=95, local_only=3, source_only=2"）
+        authoritative_reconciliation_date: 权威对账日期（可选，默认今天）
         provenance_dir: provenance 存储目录（可选）
 
     Returns:
@@ -168,11 +186,12 @@ def update_provenance_after_reconciliation(
     if not provenance:
         return None
 
-    if reconciliation_date is None:
-        reconciliation_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    if authoritative_reconciliation_date is None:
+        authoritative_reconciliation_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     provenance.reconciliation_method = method
-    provenance.reconciliation_date = reconciliation_date
+    provenance.authoritative_reconciliation_date = authoritative_reconciliation_date
+    provenance.reconciliation_result = reconciliation_result
     provenance.verified_count = verified_count
 
     save_provenance(provenance, provenance_dir)

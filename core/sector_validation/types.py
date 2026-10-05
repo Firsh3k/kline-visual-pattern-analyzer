@@ -30,21 +30,36 @@ class ReconciliationMethod(Enum):
 
 
 class FreshnessLevel(Enum):
-    """新鲜度等级"""
-    FRESH = "fresh"                 # 新鲜：7天内
-    AGING = "aging"                 # 老化：7-30天
-    STALE = "stale"                 # 过期：30天以上
-    UNKNOWN = "unknown"             # 未知：无刷新日期
+    """新鲜度等级 — 基于权威对账时间，不是本地文件刷新时间"""
+    FRESH = "fresh"                 # 新鲜：权威对账 7天内
+    AGING = "aging"                 # 老化：权威对账 7-30天
+    STALE = "stale"                 # 过期：权威对账 30天以上
+    NOT_RECONCILED = "not_reconciled"  # 未对账：从未进行过权威对账（绝不能视为 FRESH）
+    UNKNOWN = "unknown"             # 未知：provenance 不存在
 
 
 @dataclass
 class SectorConstituent:
-    """单只板块成分股"""
+    """单只板块成分股
+
+    状态流转：
+      INVALID (格式错误/非股票)
+        ↓ 离线格式验证通过
+      UNVERIFIED (格式正确但是股票，尚未与权威源对账)
+        ↓ 权威源对账 matched
+      VERIFIED (权威源确认成员关系，写入 reconciled_at/source)
+        ↓ 权威源对账 local-only
+      NOT_MEMBER (本地有但权威源不存在)
+
+    注意：离线验证通过 ≠ VERIFIED。VERIFIED 必须经过权威源对账。
+    """
     code: str                              # 股票代码 6位数字
     name: str = ""                         # 股票名称（可选，验证时填充）
     status: MembershipStatus = MembershipStatus.UNVERIFIED  # 验证状态
-    verified_at: Optional[str] = None     # 验证时间 ISO8601
-    source: str = ""                       # 数据来源
+    verified_at: Optional[str] = None     # 离线验证时间 ISO8601
+    reconciled_at: Optional[str] = None   # 权威对账时间 ISO8601（仅 VERIFIED 时有值）
+    reconciliation_source: str = ""       # 权威对账源（如 "ths_ifind"）
+    source: str = ""                       # 数据来源（离线验证源）
     notes: str = ""                        # 备注（如"ST"、"停牌"等）
 
     def to_dict(self) -> Dict[str, Any]:
@@ -53,6 +68,8 @@ class SectorConstituent:
             'name': self.name,
             'status': self.status.value,
             'verified_at': self.verified_at,
+            'reconciled_at': self.reconciled_at,
+            'reconciliation_source': self.reconciliation_source,
             'source': self.source,
             'notes': self.notes,
         }
@@ -64,6 +81,8 @@ class SectorConstituent:
             name=str(data.get('name', '')),
             status=MembershipStatus(data.get('status', 'unverified')),
             verified_at=data.get('verified_at'),
+            reconciled_at=data.get('reconciled_at'),
+            reconciliation_source=str(data.get('reconciliation_source', '')),
             source=str(data.get('source', '')),
             notes=str(data.get('notes', '')),
         )
@@ -71,18 +90,26 @@ class SectorConstituent:
 
 @dataclass
 class SectorProvenance:
-    """板块数据溯源 — 每个板块的 provenance 元数据"""
+    """板块数据溯源 — 每个板块的 provenance 元数据
+
+    关键语义：
+    - local_refresh_date: 本地文件刷新时间（可由离线验证更新）
+    - authoritative_reconciliation_date: 权威源对账时间（只有成功的权威对账才能更新）
+    - 新鲜度基于 authoritative_reconciliation_date，未对账时返回 NOT_RECONCILED
+    - 绝不能因为本地文件刷新就将未对账的数据集标记为 FRESH
+    """
     sector_name: str                       # 板块名称
     sector_code: str = ""                  # 同花顺板块代码（如 886015）
     source: str = ""                       # 数据来源（如 "ths_ifind"）
     source_url: str = ""                   # 数据来源 URL
     fetched_at: str = ""                   # 拉取时间 ISO8601
-    refresh_date: str = ""                 # 刷新日期 YYYY-MM-DD
+    local_refresh_date: str = ""           # 本地文件刷新日期 YYYY-MM-DD
+    authoritative_reconciliation_date: Optional[str] = None  # 权威对账日期（只有成功对账才有值）
     reconciliation_method: ReconciliationMethod = ReconciliationMethod.NOT_RECONCILED
-    reconciliation_date: Optional[str] = None  # 对账日期
+    reconciliation_result: str = ""        # 对账结果摘要（如 "matched=95, local_only=3, source_only=2"）
     total_constituents: int = 0            # 成分股总数
-    verified_count: int = 0                # 已验证数量
-    version: str = "1.0"                   # provenance 版本
+    verified_count: int = 0                # 已验证数量（权威对账 matched 的数量）
+    version: str = "2.0"                   # provenance 版本（v2.0: 区分本地/权威新鲜度）
     notes: str = ""                         # 备注
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,9 +119,10 @@ class SectorProvenance:
             'source': self.source,
             'source_url': self.source_url,
             'fetched_at': self.fetched_at,
-            'refresh_date': self.refresh_date,
+            'local_refresh_date': self.local_refresh_date,
+            'authoritative_reconciliation_date': self.authoritative_reconciliation_date,
             'reconciliation_method': self.reconciliation_method.value,
-            'reconciliation_date': self.reconciliation_date,
+            'reconciliation_result': self.reconciliation_result,
             'total_constituents': self.total_constituents,
             'verified_count': self.verified_count,
             'version': self.version,
@@ -103,30 +131,45 @@ class SectorProvenance:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SectorProvenance':
+        # 向后兼容：v1.0 使用 refresh_date，映射到 local_refresh_date
+        local_refresh = data.get('local_refresh_date', '')
+        if not local_refresh and data.get('refresh_date'):
+            local_refresh = data['refresh_date']
+
         return cls(
             sector_name=str(data['sector_name']),
             sector_code=str(data.get('sector_code', '')),
             source=str(data.get('source', '')),
             source_url=str(data.get('source_url', '')),
             fetched_at=str(data.get('fetched_at', '')),
-            refresh_date=str(data.get('refresh_date', '')),
+            local_refresh_date=local_refresh,
+            authoritative_reconciliation_date=data.get('authoritative_reconciliation_date'),
             reconciliation_method=ReconciliationMethod(data.get('reconciliation_method', 'not_reconciled')),
-            reconciliation_date=data.get('reconciliation_date'),
+            reconciliation_result=str(data.get('reconciliation_result', '')),
             total_constituents=int(data.get('total_constituents', 0)),
             verified_count=int(data.get('verified_count', 0)),
-            version=str(data.get('version', '1.0')),
+            version=str(data.get('version', '2.0')),
             notes=str(data.get('notes', '')),
         )
 
     def get_freshness_level(self, current_date: str, max_fresh_days: int = 7, max_aging_days: int = 30) -> FreshnessLevel:
-        """计算新鲜度等级"""
-        if not self.refresh_date:
-            return FreshnessLevel.UNKNOWN
+        """计算新鲜度等级 — 基于权威对账时间，不是本地文件刷新时间
+
+        关键规则：
+        - 从未进行过权威对账 → NOT_RECONCILED（绝不能视为 FRESH）
+        - 权威对账 7天内 → FRESH
+        - 权威对账 7-30天 → AGING
+        - 权威对账 30天以上 → STALE
+        """
+        # 未进行过权威对账 → NOT_RECONCILED（fail-closed，不虚假标记 FRESH）
+        if not self.authoritative_reconciliation_date:
+            return FreshnessLevel.NOT_RECONCILED
+
         try:
             from datetime import datetime
-            refresh = datetime.strptime(self.refresh_date, '%Y-%m-%d')
+            recon_date = datetime.strptime(self.authoritative_reconciliation_date, '%Y-%m-%d')
             current = datetime.strptime(current_date, '%Y-%m-%d')
-            days = (current - refresh).days
+            days = (current - recon_date).days
             if days <= max_fresh_days:
                 return FreshnessLevel.FRESH
             elif days <= max_aging_days:
@@ -197,17 +240,47 @@ class SectorValidationReport:
     validated_at: str = ""                 # 验证时间 ISO8601
 
     @property
+    def offline_valid_count(self) -> int:
+        """离线验证通过数量 = verified + unverified（格式正确且是股票）"""
+        return self.verified + self.unverified
+
+    @property
+    def offline_valid_rate(self) -> float:
+        """离线验证通过率 = (verified + unverified) / total
+        反映代码格式正确性，不代表权威成员关系已对账。
+        """
+        if self.total == 0:
+            return 0.0
+        return self.offline_valid_count / self.total
+
+    @property
     def verification_rate(self) -> float:
-        """验证率 = verified / total"""
+        """权威对账验证率 = verified / total
+        只有经过权威源对账 matched 的成分股才计入 verified。
+        离线验证通过但未对账的计入 unverified，不计入此比率。
+        """
         if self.total == 0:
             return 0.0
         return self.verified / self.total
 
     @property
+    def reconciliation_coverage(self) -> float:
+        """权威对账覆盖率 = verified / offline_valid_count
+        在离线验证通过的成分股中，有多少已经过权威对账确认。
+        """
+        if self.offline_valid_count == 0:
+            return 0.0
+        return self.verified / self.offline_valid_count
+
+    @property
     def has_issues(self) -> bool:
-        """是否存在问题（无效、过期、重复、未验证超过阈值）"""
+        """是否存在真正的问题（无效代码、过期、重复）
+
+        注意：未对账（unverified 多）不是问题，是正常状态。
+        只有 invalid > 0、duplicates > 0、stale > 0 才是真正的问题。
+        """
         return (self.invalid > 0 or self.stale > 0 or
-                len(self.duplicates) > 0 or self.verification_rate < 0.8)
+                len(self.duplicates) > 0)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -224,7 +297,10 @@ class SectorValidationReport:
             'provenance': self.provenance.to_dict() if self.provenance else None,
             'reconciliation': self.reconciliation.to_dict() if self.reconciliation else None,
             'validated_at': self.validated_at,
+            'offline_valid_count': self.offline_valid_count,
+            'offline_valid_rate': round(self.offline_valid_rate, 4),
             'verification_rate': round(self.verification_rate, 4),
+            'reconciliation_coverage': round(self.reconciliation_coverage, 4),
             'has_issues': self.has_issues,
         }
 

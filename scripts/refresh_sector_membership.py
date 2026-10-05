@@ -41,7 +41,11 @@ sys.path.insert(0, PROJECT_ROOT)
 from core.sector_validation import (
     validate_sector, validate_all_sectors, get_validation_summary,
     load_provenance, save_provenance, update_provenance_after_refresh,
+    update_provenance_after_reconciliation,
     check_freshness, list_all_provenances, get_stale_sectors,
+    reconcile_with_ths_ifind, reconcile_with_snapshot,
+    apply_reconciliation_to_constituents, get_source_only_candidates,
+    AuthoritativeSourceUnavailableError,
     SectorProvenance, ReconciliationMethod, FreshnessLevel,
 )
 
@@ -155,10 +159,15 @@ def print_human_readable_report(result: Dict):
     print("--- 汇总统计 ---")
     print(f"  板块数量: {summary['total_sectors']}")
     print(f"  成分股总数: {summary['total_constituents']}")
-    print(f"  已验证: {summary['total_verified']}")
+    print(f"  离线验证通过 (UNVERIFIED + VERIFIED): {summary.get('total_offline_valid', summary['total_verified'])}")
+    print(f"  权威对账 VERIFIED: {summary['total_verified']}")
     print(f"  无效: {summary['total_invalid']}")
     print(f"  重复: {summary['total_duplicates']}")
-    print(f"  整体验证率: {summary['overall_verification_rate']:.2%}")
+    print(f"  离线验证通过率: {summary.get('overall_offline_valid_rate', summary['overall_verification_rate']):.2%}")
+    print(f"  权威对账验证率: {summary['overall_verification_rate']:.2%}")
+    print()
+    print("  说明：离线验证通过 ≠ VERIFIED。VERIFIED 必须经过权威源对账 matched。")
+    print("  未对账的成分股状态为 UNVERIFIED，新鲜度为 NOT_RECONCILED。")
     print()
 
     if summary['sectors_with_issues']:
@@ -179,15 +188,18 @@ def print_human_readable_report(result: Dict):
                     print(f"    ... 还有 {len(invalid_codes) - 10} 个")
         print()
 
-    print("--- 新鲜度状态 ---")
+    print("--- 新鲜度状态（基于权威对账时间）---")
     for name, freshness in result['freshness'].items():
         status_icon = {
             'fresh': '✅',
             'aging': '⚠️',
             'stale': '❌',
+            'not_reconciled': '🔒',
             'unknown': '❓',
         }.get(freshness, '❓')
         print(f"  {status_icon} {name}: {freshness}")
+    print()
+    print("  🔒 NOT_RECONCILED = 从未进行过权威对账，绝不能视为 FRESH")
     print()
 
     if result['stale_sectors']:
@@ -219,11 +231,13 @@ def main():
         """,
     )
     parser.add_argument("--validate-only", action="store_true",
-                        help="仅运行离线验证（默认行为）")
+                        help="仅运行离线验证（结果为 UNVERIFIED，不等于权威对账 VERIFIED）")
     parser.add_argument("--update-provenance", action="store_true",
-                        help="验证后更新 provenance 元数据")
+                        help="验证后更新本地 provenance（只更新 local_refresh_date，不影响权威对账新鲜度）")
     parser.add_argument("--full-refresh", action="store_true",
-                        help="完整刷新（需要 iFinD MCP，暂未实现）")
+                        help="完整刷新：调用权威源（同花顺 iFinD）对账。权威源不可用时 fail-closed 非零退出，绝不静默降级。")
+    parser.add_argument("--reconcile-with-snapshot", type=str, default=None, metavar="SNAPSHOT_FILE",
+                        help="使用本地 snapshot JSON 文件进行受控对账（用于测试/CI/离线环境）。格式: {\"板块名\": [\"code1\", \"code2\"]}")
     parser.add_argument("--sector", type=str, default=None,
                         help="指定板块名称（默认验证所有板块）")
     parser.add_argument("--json", action="store_true",
@@ -249,19 +263,79 @@ def main():
     print(f"已加载 {len(sectors)} 个板块")
     print()
 
+    # === Fail-closed: --full-refresh 必须调用权威源，不可用时非零退出 ===
     if args.full_refresh:
-        print("注意：完整刷新需要 iFinD MCP 工具，当前版本暂未实现自动对账。")
-        print("将执行离线验证 + provenance 更新。")
+        print("=" * 70)
+        print("完整刷新模式：尝试调用同花顺 iFinD 权威源对账")
+        print("=" * 70)
+        print()
+
+        # 尝试对每个板块调用权威源
+        sectors_to_reconcile = [args.sector] if args.sector else list(sectors.keys())
+        reconciliation_failed = False
+
+        for sector_name in sectors_to_reconcile:
+            sector_code = SECTOR_CODE_MAP.get(sector_name, "")
+            local_codes = sectors.get(sector_name, [])
+            try:
+                recon = reconcile_with_ths_ifind(sector_name, sector_code, local_codes)
+                print(f"  ✅ {sector_name}: 权威对账成功 (matched={len(recon.matched)})")
+            except AuthoritativeSourceUnavailableError as e:
+                print(f"  ❌ {sector_name}: 权威源不可用 — fail-closed")
+                print(f"     {e}")
+                reconciliation_failed = True
+
+        if reconciliation_failed:
+            print()
+            print("=" * 70)
+            print("FAIL-CLOSED: 权威源不可用，完整刷新中止。")
+            print("未对账的数据集保持 NOT_RECONCILED 状态，绝不标记为 FRESH。")
+            print("请在有 iFinD MCP 工具的环境中运行，或使用 --reconcile-with-snapshot。")
+            print("=" * 70)
+            sys.exit(2)  # 非零退出码：权威源不可用
+
+    # === 受控 snapshot 对账（用于测试/CI/离线环境）===
+    if args.reconcile_with_snapshot:
+        print(f"使用 snapshot 文件对账: {args.reconcile_with_snapshot}")
+        if not os.path.exists(args.reconcile_with_snapshot):
+            print(f"错误：snapshot 文件不存在: {args.reconcile_with_snapshot}", file=sys.stderr)
+            sys.exit(1)
+
+        with open(args.reconcile_with_snapshot, 'r', encoding='utf-8') as f:
+            snapshot = json.load(f)
+
+        sectors_to_reconcile = [args.sector] if args.sector else list(sectors.keys())
+        for sector_name in sectors_to_reconcile:
+            if sector_name not in snapshot:
+                print(f"  ⚠️ {sector_name}: snapshot 中无此板块，跳过")
+                continue
+            source_codes = snapshot[sector_name]
+            local_codes = sectors.get(sector_name, [])
+            recon = reconcile_with_snapshot(sector_name, local_codes, source_codes,
+                                             source=f"snapshot:{os.path.basename(args.reconcile_with_snapshot)}")
+            print(f"  ✅ {sector_name}: matched={len(recon.matched)}, "
+                  f"local_only={len(recon.only_in_local)}, "
+                  f"source_only={len(recon.only_in_source)}")
+
+            # 更新 provenance（权威对账成功）
+            update_provenance_after_reconciliation(
+                sector_name=sector_name,
+                method=ReconciliationMethod.THS_IFIND,
+                verified_count=len(recon.matched),
+                reconciliation_result=f"matched={len(recon.matched)}, "
+                                       f"local_only={len(recon.only_in_local)}, "
+                                       f"source_only={len(recon.only_in_source)}",
+            )
         print()
 
     # 运行验证
     result = run_validation(sectors, sector_filter=args.sector)
 
-    # 更新 provenance（如果需要）
-    if args.update_provenance or args.full_refresh:
-        print("更新 provenance 元数据...")
+    # 更新本地 provenance（只更新 local_refresh_date，不影响权威新鲜度）
+    if args.update_provenance and not args.full_refresh:
+        print("更新本地 provenance（只更新 local_refresh_date，不影响权威对账新鲜度）...")
         updated = update_provenances(sectors, sector_filter=args.sector)
-        print(f"已更新 {len(updated)} 个板块的 provenance")
+        print(f"已更新 {len(updated)} 个板块的本地 provenance")
         print()
 
     # 输出报告
@@ -270,7 +344,8 @@ def main():
     else:
         print_human_readable_report(result)
 
-    # 如果有问题，返回非零退出码
+    # 如果有真正的问题（invalid/duplicates），返回非零退出码
+    # 注意：未对账（unverified 多）不是问题，是正常状态
     if result['summary']['total_invalid'] > 0 or result['summary']['sectors_with_issues']:
         sys.exit(1)
 

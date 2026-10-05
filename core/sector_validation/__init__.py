@@ -56,7 +56,10 @@ from .validator import (
 from .reconciler import (
     reconcile_codes,
     apply_reconciliation_to_constituents,
+    get_source_only_candidates,
     reconcile_with_ths_ifind,
+    reconcile_with_snapshot,
+    AuthoritativeSourceUnavailableError,
     generate_reconciliation_report,
 )
 
@@ -92,7 +95,10 @@ __all__ = [
     # 对账器
     "reconcile_codes",
     "apply_reconciliation_to_constituents",
+    "get_source_only_candidates",
     "reconcile_with_ths_ifind",
+    "reconcile_with_snapshot",
+    "AuthoritativeSourceUnavailableError",
     "generate_reconciliation_report",
     # Provenance 管理器
     "load_provenance",

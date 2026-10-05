@@ -4,11 +4,12 @@
   "source": "manual_refresh",
   "source_url": "",
   "fetched_at": "2026-10-05T04:47:40.986949+00:00",
-  "refresh_date": "2026-10-05",
+  "local_refresh_date": "2026-10-05",
+  "authoritative_reconciliation_date": null,
   "reconciliation_method": "not_reconciled",
-  "reconciliation_date": null,
+  "reconciliation_result": "",
   "total_constituents": 62,
   "verified_count": 0,
-  "version": "1.0",
+  "version": "2.0",
   "notes": ""
 }

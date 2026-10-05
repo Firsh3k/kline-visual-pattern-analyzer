@@ -20,7 +20,7 @@ from ..types import (
     DataProvenance, DataQualityFlag, DataSourceType,
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
-from .trading_calendar import get_trading_days
+from .trading_calendar import get_trading_days, derive_calendar_id
 from .validation import assess_series_quality, normalize_bars
 from .aggregation import aggregate_daily_bars
 
@@ -87,7 +87,7 @@ class TencentDataProvider(DataProvider):
                 name=symbol,
                 frequency=frequency,
                 adjustment=adjustment,
-                trading_calendar="SSE",
+                trading_calendar=derive_calendar_id(symbol),
                 source=self.SOURCE,
                 fetched_at=daily.fetched_at,
                 bars=bars,
@@ -124,7 +124,28 @@ class TencentDataProvider(DataProvider):
         if payload.get("code") != 0:
             raise MarketDataError(f"Tencent API error: {payload}")
 
-        sym_data = payload.get("data", {}).get(symbol, {})
+        # FIR-25 defensive check: Tencent returns code=0 but msg="param error"
+        # and data=[] when the symbol lacks a market prefix (e.g. "000858"
+        # instead of "sz000858"). Without this check, payload.get("data", {})
+        # returns an empty list and .get(symbol) raises 'list' object has no
+        # attribute 'get' — an opaque error instead of a clear MarketDataError.
+        api_msg = payload.get("msg", "")
+        if api_msg:
+            raise MarketDataError(
+                f"Tencent API returned msg={api_msg!r} for symbol={symbol!r}. "
+                f"This usually means the symbol is missing a market prefix "
+                f"(e.g. use 'sz000858' instead of '000858')."
+            )
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise MarketDataError(
+                f"Tencent API returned unexpected data type "
+                f"{type(data).__name__} (expected dict) for symbol={symbol!r}. "
+                f"Raw payload keys: {list(payload.keys())}."
+            )
+
+        sym_data = data.get(symbol, {})
         # FIR-23 P0-1: strict key selection.
         #   adjustment==FORWARD  -> only accept "qfqday"
         #   adjustment==BACKWARD -> only accept "hfqday"
@@ -183,7 +204,7 @@ class TencentDataProvider(DataProvider):
             name=symbol,
             frequency=FrequencyType.DAILY,
             adjustment=adjustment,
-            trading_calendar="SSE",
+            trading_calendar=derive_calendar_id(symbol),
             source=self.SOURCE,
             fetched_at=fetched_at,
             bars=bars,

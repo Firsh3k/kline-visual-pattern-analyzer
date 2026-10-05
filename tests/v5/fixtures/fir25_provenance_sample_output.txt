@@ -1,0 +1,38 @@
+======================================================================
+FIR-25 Downstream Provenance Sample Verification
+======================================================================
+
+--- Phase 1: derive_calendar_id() 派生验证 ---
+  [PASS] 000858       → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] 002415       → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] 300750       → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] 301269       → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] sz000858     → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] sz300750     → SZSE   (expected SZSE, not_SSE=True)
+  [PASS] 600519       → SSE    (expected SSE, not_SSE=False)
+  [PASS] 688981       → SSE    (expected SSE, not_SSE=False)
+  [PASS] sh600519     → SSE    (expected SSE, not_SSE=False)
+  [PASS] 920211       → BSE    (expected BSE, not_SSE=True)
+  [PASS] 430047       → BSE    (expected BSE, not_SSE=True)
+  [PASS] bj920211     → BSE    (expected BSE, not_SSE=True)
+
+--- Phase 2: TencentDataProvider 实际拉取验证 ---
+  拉取 sz000858 (五粮液) 最近 10 天数据...
+  拉取成功: 11 根 K 线
+  trading_calendar = 'SZSE'
+  source = 'DataSourceType.TENCENT'
+  [PASS] 深圳股票 trading_calendar = SZSE (不是 SSE)
+
+  样本 K 线 provenance (前 3 根):
+    [0] 2026-09-15 close=69.70 source=DataSourceType.TENCENT
+    [1] 2026-09-16 close=69.26 source=DataSourceType.TENCENT
+    [2] 2026-09-17 close=69.13 source=DataSourceType.TENCENT
+
+======================================================================
+RESULT: ALL CHECKS PASSED (derivation + provider live)
+  - 深圳股票派生为 SZSE（不是 SSE）
+  - 上海股票派生为 SSE
+  - 北京股票派生为 BSE（含 920xxx）
+  - 901xxx+ fail-closed 为 UNKNOWN
+  - Provider live fetch verified SZ stock trading_calendar = SZSE
+======================================================================

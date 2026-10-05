@@ -38,6 +38,11 @@ jobs:
         python -m pytest tests/v5/ -v --tb=short
         echo "V5 Canonical Core tests passed"
 
+    - name: Run FIR-25 exchange calendar provenance verifier
+      run: |
+        python tests/v5/verify_fir25_provenance_sample.py
+        echo "FIR-25 provenance derivation checks passed (provider live check skipped in CI)"
+
     - name: Run V5 Canonical Schema Cross-Runtime Parity (JS↔Python)
       run: |
         cd tests/v5

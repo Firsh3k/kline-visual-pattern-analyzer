@@ -21,7 +21,7 @@ from ..types import (
     DataProvenance, DataQualityFlag, DataSourceType,
     AdjustmentType, FrequencyType, StockData, OHLCV,
 )
-from .trading_calendar import get_trading_days, is_trading_day
+from .trading_calendar import get_trading_days, is_trading_day, derive_calendar_id
 from .validation import assess_series_quality, normalize_bars
 
 
@@ -32,15 +32,34 @@ _SINA_URL = (
 )
 
 
-def _market_prefix(code: str) -> str:
-    """根据股票代码首位判断市场前缀"""
-    if code.startswith(("6", "9")):
-        return "sh"
-    elif code.startswith(("0", "3")):
-        return "sz"
-    elif code.startswith("8"):
+def _market_prefix(code: str) -> Optional[str]:
+    """根据股票代码判断市场前缀
+
+    注意：920xxx 是北交所 2024-04-22 起启用的新代码段，必须在通用
+    9xx→sh 之前识别，否则北交所新股会被错误路由到上海。
+
+    Returns:
+        "sh" / "sz" / "bj" / None
+        无法识别时返回 None（fail-closed，调用方必须处理，不静默回退 sz）
+    """
+    # P0: 北交所 920xxx 新代码段优先识别
+    if code.startswith("920"):
         return "bj"
-    return "sz"
+    # 上海: 6xx, 5xx
+    if code.startswith(("6", "5")):
+        return "sh"
+    # 上海 B 股: 仅 900xxx（权威范围 900000-900999）
+    # 901xxx+ 不在权威上海 B 股分配表中 → None（fail-closed）
+    if code.startswith("9") and code[:3] < "901":
+        return "sh"
+    # 深圳: 0xx, 3xx
+    if code.startswith(("0", "3")):
+        return "sz"
+    # 北京: 4xx(历史), 8xx(历史)
+    if code.startswith(("4", "8")):
+        return "bj"
+    # 930xxx+ 及其他无法识别的代码 → None（fail-closed）
+    return None
 
 
 def _http_get(url: str, timeout: int = 15) -> str:
@@ -80,6 +99,11 @@ class SinaDataProvider(DataProvider):
         # 提取纯数字代码
         code = symbol.lstrip("shzabjSHZABJ")
         market = _market_prefix(code)
+        if market is None:
+            raise MarketDataError(
+                f"Sina provider cannot determine market prefix for symbol '{symbol}' "
+                f"(numeric code '{code}'). Unrecognized exchange code range."
+            )
         full_symbol = f"{market}{code}"
 
         # 新浪仅支持日线；其他频率暂不支持
@@ -151,7 +175,7 @@ class SinaDataProvider(DataProvider):
             name=full_symbol,
             frequency=frequency,
             adjustment=adjustment,
-            trading_calendar="SSE",
+            trading_calendar=derive_calendar_id(full_symbol),
             source=self.SOURCE,
             fetched_at=fetched_at,
             bars=bars,

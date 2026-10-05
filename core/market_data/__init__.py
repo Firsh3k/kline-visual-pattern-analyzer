@@ -13,6 +13,11 @@ from .trading_calendar import (
     next_trading_day,
     prev_trading_day,
     count_trading_days,
+    derive_calendar_id,
+    CALENDAR_SSE,
+    CALENDAR_SZSE,
+    CALENDAR_BSE,
+    CALENDAR_UNKNOWN,
 )
 from .adjustment import compute_adjustment_factors, apply_adjustment
 from .validation import (
@@ -31,6 +36,11 @@ __all__ = [
     "next_trading_day",
     "prev_trading_day",
     "count_trading_days",
+    "derive_calendar_id",
+    "CALENDAR_SSE",
+    "CALENDAR_SZSE",
+    "CALENDAR_BSE",
+    "CALENDAR_UNKNOWN",
     "compute_adjustment_factors",
     "apply_adjustment",
     "validate_ohlc_invariants",

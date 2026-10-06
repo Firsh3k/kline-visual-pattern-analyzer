@@ -26,7 +26,12 @@ from core.calibration.backtest_engine import FixedHorizonBacktester
 from core.calibration.calibrator import EmpiricalCalibrator
 from core.calibration.data_collector import CalibrationDataCollector, to_market_symbol
 from core.calibration.signal_generator import CalibrationSignalGenerator
-from core.calibration.types import MarketRegime
+from core.calibration.types import (
+    ConfirmationState,
+    MarketRegime,
+    PatternType,
+    SignalOccurrence,
+)
 from core.sector_validation import (
     MembershipStatus,
     load_authoritative_snapshot,
@@ -183,19 +188,26 @@ def test_authoritative_sector_member_flows_into_signal_and_calibration(tmp_path)
 def test_bearish_outcomes_remain_direction_normalized_end_to_end():
     """Bearish raw price returns are negative but trading outcome semantics are positive."""
     series = _series("sh600519", "SSE", rising=False)
-    provenance = CalibrationDataCollector._build_provenance(series)
-    signals = CalibrationSignalGenerator().generate_signals(
-        series.to_ohlcv_list(),
-        "600519",
-        {},
-        provenance=provenance,
+    klines = series.to_ohlcv_list()
+    signal_index = 60
+    signal = SignalOccurrence(
+        signal_id="fir26-bearish",
+        stock_code="600519",
+        signal_date=klines[signal_index].date,
+        pattern_type=PatternType.MA_BEAR,
+        entry_price=klines[signal_index].close,
+        confirmation_state=ConfirmationState.BREAKOUT_DAY,
+        market_regime=MarketRegime.BEAR,
+        pattern_score=70,
+        data_source="sina",
+        adjustment="qfq",
+        data_quality="OK",
+        detector_version="fir26-directional-fixture",
+        pattern_confidence="medium",
     )
-    bearish = [s for s in signals if s.pattern_type.is_bearish]
-    assert bearish
-    signal = bearish[0]
 
     result = FixedHorizonBacktester().backtest_signal(
-        signal, series.to_ohlcv_list(), horizon=3
+        signal, klines, horizon=3
     )
     assert result.sufficient_data
     assert result.direction == "bearish"

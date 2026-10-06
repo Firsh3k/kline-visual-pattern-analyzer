@@ -1,15 +1,15 @@
 {
   "sector_name": "创新药",
   "sector_code": "886015",
-  "source": "manual_refresh",
+  "source": "controlled_snapshot",
   "source_url": "",
-  "fetched_at": "2026-10-05T04:47:40.974821+00:00",
-  "local_refresh_date": "2026-10-05",
-  "authoritative_reconciliation_date": null,
-  "reconciliation_method": "not_reconciled",
-  "reconciliation_result": "",
-  "total_constituents": 106,
-  "verified_count": 0,
+  "fetched_at": "",
+  "local_refresh_date": "2026-10-06",
+  "authoritative_reconciliation_date": "2026-10-06",
+  "reconciliation_method": "ths_ifind",
+  "reconciliation_result": "snapshot: matched=2",
+  "total_constituents": 2,
+  "verified_count": 2,
   "version": "2.0",
   "notes": ""
 }

@@ -1,0 +1,15 @@
+{
+  "sector_name": "测试",
+  "sector_code": "886032",
+  "source": "controlled_snapshot",
+  "source_url": "",
+  "fetched_at": "",
+  "local_refresh_date": "2026-08-07",
+  "authoritative_reconciliation_date": "2026-08-07",
+  "reconciliation_method": "ths_ifind",
+  "reconciliation_result": "snapshot: matched=1",
+  "total_constituents": 1,
+  "verified_count": 1,
+  "version": "2.0",
+  "notes": ""
+}

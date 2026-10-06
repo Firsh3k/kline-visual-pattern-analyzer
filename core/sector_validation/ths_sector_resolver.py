@@ -9,20 +9,20 @@ FIR-22 — THS Sector Index Resolver
 - Fail-closed：如果板块代码无法解析、成分股数据不可用、新鲜度无法确认，
   抛出明确异常，绝不静默替换其他提供商
 - 记录 provenance（source, sectorCode, sectorName, constituentUpdatedAt）
-- 在有 iFinD MCP 的环境中实际调用，在没有的环境中 fail-closed
+- Provider 架构：支持 iFinD MCP 回调、受控 snapshot、自定义 provider
 - 提供 resolve_with_snapshot() 用于受控测试/CI/离线环境
 
 使用方式：
-    from core.sector_validation import THSSectorResolver
+    from core.sector_validation import THSSectorResolver, IFindMCPProvider
 
-    resolver = THSSectorResolver()
+    # 1. 使用 iFinD MCP provider（通过回调传入实际的 MCP 调用函数）
+    def ifind_search_fn(query):
+        # 调用 mcp__ifind_finance__search_securities
+        return result
 
-    # 1. 验证并解析板块元数据
-    try:
-        sector = resolver.resolve("886032")
-        print(f"板块: {sector.sector_name}, 成分股: {sector.constituent_count}")
-    except SectorResolutionError as e:
-        print(f"解析失败: {e}")
+    provider = IFindMCPProvider(search_fn=ifind_search_fn)
+    resolver = THSSectorResolver(provider=provider)
+    sector = resolver.resolve("886032")
 
     # 2. 受控 snapshot（用于测试）
     sector = resolver.resolve_with_snapshot(
@@ -33,8 +33,9 @@ FIR-22 — THS Sector Index Resolver
 
 import json
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .dynamic_sector import (
     DynamicSector,
@@ -46,7 +47,6 @@ from .dynamic_sector import (
 from .provenance_manager import (
     load_provenance,
     save_provenance,
-    update_provenance_after_reconciliation,
     DEFAULT_PROVENANCE_DIR,
 )
 from .reconciler import AuthoritativeSourceUnavailableError
@@ -57,55 +57,243 @@ from .types import (
 )
 
 
+# ============ Provider 接口 ============
+
+class THSDataProvider(ABC):
+    """
+    同花顺数据提供商接口。
+
+    所有 provider 必须返回权威的同花顺板块数据。
+    不允许使用非同花顺数据源（如东方财富）作为 ths_sector_index 的 provider。
+    """
+
+    @abstractmethod
+    def fetch_sector(self, sector_code: str) -> Dict[str, Any]:
+        """
+        获取板块元数据和成分股。
+
+        Args:
+            sector_code: 同花顺板块指数代码（如 "886032"）
+
+        Returns:
+            {
+                'sectorName': str,
+                'constituents': List[str],
+                'source': str,
+                'asOf': str (ISO8601),
+            }
+
+        Raises:
+            SectorResolutionError: 板块代码不存在或无法解析
+            ConstituentUnavailableError: 成分股数据不可用
+            AuthoritativeSourceUnavailableError: 权威源不可用
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Provider 名称"""
+        pass
+
+
+class IFindMCPProvider(THSDataProvider):
+    """
+    同花顺 iFinD MCP 数据提供商。
+
+    通过回调函数调用 iFinD MCP 的 search_securities 工具获取板块成分股。
+    这是生产环境的权威数据源。
+
+    使用方式：
+        def ifind_search_fn(query, market="股票"):
+            # 实际调用 mcp__ifind_finance__search_securities
+            return {'securities': [...]}
+
+        provider = IFindMCPProvider(search_fn=ifind_search_fn)
+    """
+
+    def __init__(self, search_fn: Callable[[str, str], Dict[str, Any]]):
+        """
+        初始化 iFinD MCP provider。
+
+        Args:
+            search_fn: 回调函数，接受 (query, market) 参数，返回 iFinD search_securities 结果。
+                       函数签名: search_fn(query: str, market: str = "股票") -> dict
+        """
+        self._search_fn = search_fn
+
+    @property
+    def name(self) -> str:
+        return "ths_ifind_mcp"
+
+    def fetch_sector(self, sector_code: str) -> Dict[str, Any]:
+        """
+        通过 iFinD MCP 获取板块成分股。
+
+        使用自然语言查询："同花顺板块代码{sector_code}的所有成分股"
+
+        Args:
+            sector_code: 同花顺板块指数代码
+
+        Returns:
+            标准化的板块数据
+
+        Raises:
+            AuthoritativeSourceUnavailableError: iFinD MCP 调用失败
+            ConstituentUnavailableError: 成分股列表为空
+        """
+        query = f"同花顺板块代码{sector_code}的所有成分股"
+
+        try:
+            result = self._search_fn(query, "股票")
+        except Exception as e:
+            raise AuthoritativeSourceUnavailableError(
+                f"iFinD MCP 调用失败: {e}"
+            ) from e
+
+        # 解析 iFinD search_securities 返回结果
+        # 结果格式可能是 {'securities': [...]} 或 {'data': [...]} 或直接列表
+        constituents = self._extract_constituents(result)
+
+        if not constituents:
+            raise ConstituentUnavailableError(
+                f"iFinD MCP 返回板块 {sector_code} 的成分股列表为空。"
+                f"请确认板块代码正确，或 iFinD 数据源是否包含该板块。"
+            )
+
+        # 尝试从结果中提取板块名称
+        sector_name = self._extract_sector_name(result, sector_code)
+
+        return {
+            'sectorName': sector_name,
+            'constituents': constituents,
+            'source': '同花顺 iFinD',
+            'asOf': datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _extract_constituents(self, result: Any) -> List[str]:
+        """从 iFinD search_securities 结果中提取股票代码列表"""
+        if not result:
+            return []
+
+        # 尝试多种可能的结果格式
+        securities = None
+
+        if isinstance(result, list):
+            securities = result
+        elif isinstance(result, dict):
+            for key in ('securities', 'data', 'results', 'items', 'list'):
+                if key in result and isinstance(result[key], list):
+                    securities = result[key]
+                    break
+
+        if not securities:
+            return []
+
+        codes = []
+        for item in securities:
+            if isinstance(item, str):
+                # 直接是股票代码字符串
+                if len(item) == 6 and item.isdigit():
+                    codes.append(item)
+            elif isinstance(item, dict):
+                # 字典格式，尝试提取代码字段
+                for key in ('code', 'securityCode', 'stock_code', 'thscode', 'symbol', 'id'):
+                    if key in item:
+                        code = str(item[key])
+                        # 清理可能的前缀（如 SH600519 -> 600519）
+                        code = ''.join(c for c in code if c.isdigit())
+                        if len(code) == 6:
+                            codes.append(code)
+                            break
+
+        # 去重并保持顺序
+        seen = set()
+        unique_codes = []
+        for code in codes:
+            if code not in seen:
+                seen.add(code)
+                unique_codes.append(code)
+
+        return unique_codes
+
+    def _extract_sector_name(self, result: Any, sector_code: str) -> str:
+        """从 iFinD 结果中尝试提取板块名称"""
+        if isinstance(result, dict):
+            for key in ('sectorName', 'sector_name', 'name', 'plateName', 'conceptName'):
+                if key in result and result[key]:
+                    return str(result[key])
+        # 无法提取时使用代码作为名称
+        return f"板块{sector_code}"
+
+
+class SnapshotProvider(THSDataProvider):
+    """
+    受控 snapshot 数据提供商。
+
+    用于测试、CI、离线环境。接受预先获取的板块数据 snapshot。
+    snapshot 必须有明确的来源和时间戳。
+    """
+
+    def __init__(self, snapshots: Dict[str, Dict[str, Any]]):
+        """
+        初始化 snapshot provider。
+
+        Args:
+            snapshots: {sector_code: {sectorName, constituents, source, asOf}}
+        """
+        self._snapshots = snapshots
+
+    @property
+    def name(self) -> str:
+        return "controlled_snapshot"
+
+    def fetch_sector(self, sector_code: str) -> Dict[str, Any]:
+        if sector_code not in self._snapshots:
+            raise SectorResolutionError(
+                f"Snapshot 中不包含板块 {sector_code}"
+            )
+        snap = self._snapshots[sector_code]
+        return {
+            'sectorName': snap.get('sectorName', f'板块{sector_code}'),
+            'constituents': list(snap.get('constituents', [])),
+            'source': snap.get('source', 'controlled_snapshot'),
+            'asOf': snap.get('asOf', datetime.now(timezone.utc).isoformat()),
+        }
+
+
+# ============ Resolver ============
+
 class THSSectorResolver:
     """
     同花顺板块指数解析器。
 
     负责：
     1. 验证板块指数代码格式
-    2. 解析板块名称和元数据
-    3. 获取成分股列表
-    4. 记录 provenance
-    5. Fail-closed 错误处理
+    2. 通过 provider 获取板块名称和成分股
+    3. 记录 provenance（与 FIR-15 对齐）
+    4. Fail-closed 错误处理
+    5. 缓存恢复
+
+    生产环境必须传入有效的 THSDataProvider（如 IFindMCPProvider）。
+    没有 provider 时 resolve() 会 fail-closed。
     """
 
     def __init__(
         self,
+        provider: Optional[THSDataProvider] = None,
         provenance_dir: Optional[str] = None,
-        ifind_available: Optional[bool] = None,
     ):
         """
         初始化解析器。
 
         Args:
-            provenance_dir: provenance 存储目录（可选，默认 DEFAULT_PROVENANCE_DIR）
-            ifind_available: iFinD MCP 是否可用（可选，None 表示自动检测）
+            provider: 同花顺数据提供商。生产环境必须传入 IFindMCPProvider。
+                     为 None 时 resolve() 会 fail-closed（AuthoritativeSourceUnavailableError）。
+            provenance_dir: provenance 存储目录（可选）
         """
+        self.provider = provider
         self.provenance_dir = provenance_dir or DEFAULT_PROVENANCE_DIR
-        self._ifind_available = ifind_available
-
-    def _detect_ifind_availability(self) -> bool:
-        """
-        检测 iFinD MCP 工具是否可用。
-
-        在当前环境中，iFinD MCP 工具通常不可用（需要特定的运行时连接）。
-        子类或调用方可以通过 ifind_available 参数覆盖。
-
-        Returns:
-            True 如果 iFinD MCP 可用
-        """
-        if self._ifind_available is not None:
-            return self._ifind_available
-
-        # 自动检测：尝试导入 iFinD 相关模块
-        # 在标准 Python 环境中，iFinD MCP 工具不可用
-        # 实际可用性需要在有 MCP 连接的运行时中确认
-        try:
-            # 尝试检测是否在 MCP 运行时环境中
-            # 这里使用保守策略：默认不可用，需要显式启用
-            return False
-        except Exception:
-            return False
 
     def resolve(self, sector_code: str) -> DynamicSector:
         """
@@ -113,7 +301,7 @@ class THSSectorResolver:
 
         Fail-closed：
         - 代码格式无效 → SectorCodeValidationError
-        - iFinD MCP 不可用 → AuthoritativeSourceUnavailableError
+        - 没有 provider → AuthoritativeSourceUnavailableError
         - 板块代码不存在 → SectorResolutionError
         - 成分股数据不可用 → ConstituentUnavailableError
 
@@ -125,7 +313,7 @@ class THSSectorResolver:
 
         Raises:
             SectorCodeValidationError: 代码格式无效
-            AuthoritativeSourceUnavailableError: iFinD MCP 不可用
+            AuthoritativeSourceUnavailableError: 没有 provider 或权威源不可用
             SectorResolutionError: 板块解析失败
             ConstituentUnavailableError: 成分股数据不可用
         """
@@ -136,29 +324,29 @@ class THSSectorResolver:
                 f"应为 6 位数字（如 886032）。"
             )
 
-        # 2. 检查 iFinD MCP 可用性（fail-closed）
-        if not self._detect_ifind_availability():
+        # 2. 检查 provider（fail-closed）
+        if self.provider is None:
             raise AuthoritativeSourceUnavailableError(
-                f"同花顺 iFinD 权威源不可用，无法解析板块 '{sector_code}'。"
-                f"请在有 iFinD MCP 工具的环境中运行，或使用 resolve_with_snapshot() 进行受控对账。"
+                f"THSSectorResolver 未配置数据 provider，无法解析板块 '{sector_code}'。"
+                f"生产环境必须传入 IFindMCPProvider 或其他 THSDataProvider 实现。"
+                f"受控测试请使用 resolve_with_snapshot()。"
             )
 
-        # 3. 实际调用 iFinD MCP 获取板块数据
-        # 注意：这部分需要在有 iFinD MCP 的运行时中实现
-        # 当前环境中不会执行到这里（因为 _detect_ifind_availability 返回 False）
-        sector_data = self._fetch_from_ifind(sector_code)
+        # 3. 通过 provider 获取板块数据
+        sector_data = self.provider.fetch_sector(sector_code)
 
         # 4. 构建 DynamicSector
         sector = DynamicSector(
             sector_code=sector_code,
             sector_name=sector_data.get('sectorName', ''),
-            source='同花顺',
+            source=sector_data.get('source', self.provider.name),
             constituents=sector_data.get('constituents', []),
             constituent_count=len(sector_data.get('constituents', [])),
         )
 
-        # 5. 记录 provenance
-        self._save_provenance(sector)
+        # 5. 记录 provenance（与 FIR-15 对齐）
+        as_of = sector_data.get('asOf', datetime.now(timezone.utc).isoformat())
+        self._save_provenance(sector, as_of)
 
         return sector
 
@@ -174,7 +362,7 @@ class THSSectorResolver:
         使用受控 snapshot 解析板块（用于测试/CI/离线环境）。
 
         与 resolve() 不同，此函数接受预先获取的板块数据，
-        不依赖实时 iFinD MCP 连接。snapshot 必须有明确的来源和时间戳。
+        不依赖实时 provider。snapshot 必须有明确的来源和时间戳。
 
         Args:
             sector_code: 同花顺板块指数代码
@@ -205,6 +393,7 @@ class THSSectorResolver:
         )
 
         # 记录 provenance（使用 snapshot 日期作为权威对账日期）
+        as_of = f"{snapshot_date}T00:00:00+00:00"
         provenance = SectorProvenance(
             sector_name=sector_name,
             sector_code=sector_code,
@@ -227,7 +416,7 @@ class THSSectorResolver:
         """
         刷新板块成分股数据。
 
-        重新从权威源获取成分股列表，更新 provenance。
+        重新通过 provider 获取成分股列表，更新 provenance。
 
         Args:
             sector: 要刷新的 DynamicSector
@@ -236,55 +425,38 @@ class THSSectorResolver:
             更新后的 DynamicSector
 
         Raises:
-            AuthoritativeSourceUnavailableError: iFinD MCP 不可用
+            AuthoritativeSourceUnavailableError: 没有 provider
         """
-        if not self._detect_ifind_availability():
+        if self.provider is None:
             raise AuthoritativeSourceUnavailableError(
-                f"同花顺 iFinD 权威源不可用，无法刷新板块 '{sector.sector_code}'。"
+                "THSSectorResolver 未配置数据 provider，无法刷新板块。"
             )
 
         # 重新获取数据
-        sector_data = self._fetch_from_ifind(sector.sector_code)
+        sector_data = self.provider.fetch_sector(sector.sector_code)
         sector.update_constituents(
             sector_data.get('constituents', []),
-            source='同花顺',
+            source=sector_data.get('source', self.provider.name),
         )
-        self._save_provenance(sector)
+        as_of = sector_data.get('asOf', datetime.now(timezone.utc).isoformat())
+        self._save_provenance(sector, as_of)
         return sector
 
-    def _fetch_from_ifind(self, sector_code: str) -> Dict[str, Any]:
+    def _save_provenance(self, sector: DynamicSector, as_of: str):
         """
-        从 iFinD MCP 获取板块数据。
-
-        注意：此方法需要在有 iFinD MCP 工具的运行时中实现。
-        当前环境中不会执行到这里（因为 _detect_ifind_availability 返回 False）。
-
-        实际实现应该：
-        1. 调用 iFinD MCP 的板块成分股接口
-        2. 解析返回的板块名称和成分股列表
-        3. 返回标准化的数据结构
-
-        Args:
-            sector_code: 板块指数代码
-
-        Returns:
-            {'sectorName': str, 'constituents': List[str]}
-        """
-        # 占位实现：在有 iFinD MCP 的环境中替换为实际调用
-        # 这里不应该被执行到（因为 fail-closed 检查会先抛出异常）
-        raise AuthoritativeSourceUnavailableError(
-            "_fetch_from_ifind 未在当前环境中实现。"
-            "需要在有 iFinD MCP 工具的运行时中实现此方法。"
-        )
-
-    def _save_provenance(self, sector: DynamicSector):
-        """
-        保存板块 provenance。
+        保存板块 provenance（与 FIR-15 对齐）。
 
         Args:
             sector: DynamicSector
+            as_of: 数据时间戳 ISO8601
         """
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+        # 从 as_of 提取日期部分
+        try:
+            recon_date = as_of[:10] if len(as_of) >= 10 else today
+        except (IndexError, TypeError):
+            recon_date = today
 
         if sector.provenance is None:
             sector.provenance = SectorProvenance(
@@ -292,9 +464,9 @@ class THSSectorResolver:
                 sector_code=sector.sector_code,
                 source=sector.source,
                 local_refresh_date=today,
-                authoritative_reconciliation_date=today,
+                authoritative_reconciliation_date=recon_date,
                 reconciliation_method=ReconciliationMethod.THS_IFIND,
-                reconciliation_result=f"matched={sector.constituent_count}",
+                reconciliation_result=f"matched={sector.constituent_count}, asOf={as_of}",
                 total_constituents=sector.constituent_count,
                 verified_count=sector.constituent_count,
             )
@@ -317,15 +489,7 @@ class THSSectorResolver:
         # 尝试直接用 sector_code 作为文件名查找
         provenance = load_provenance(sector_code, self.provenance_dir)
         if provenance is not None:
-            sector = DynamicSector(
-                sector_code=sector_code,
-                sector_name=provenance.sector_name,
-                source=provenance.source,
-                constituents=[],
-                constituent_count=provenance.total_constituents,
-            )
-            sector.provenance = provenance
-            return sector
+            return self._build_cached_sector(sector_code, provenance)
 
         # 遍历 provenance 目录，按 sector_code 字段匹配
         try:
@@ -342,15 +506,7 @@ class THSSectorResolver:
                     file_sector_code = data.get('sector_code') or data.get('sectorCode')
                     if file_sector_code == sector_code:
                         provenance = SectorProvenance.from_dict(data)
-                        sector = DynamicSector(
-                            sector_code=sector_code,
-                            sector_name=provenance.sector_name,
-                            source=provenance.source,
-                            constituents=[],
-                            constituent_count=provenance.total_constituents,
-                        )
-                        sector.provenance = provenance
-                        return sector
+                        return self._build_cached_sector(sector_code, provenance)
                 except (json.JSONDecodeError, IOError, KeyError):
                     continue
         except OSError:
@@ -358,6 +514,20 @@ class THSSectorResolver:
 
         return None
 
+    def _build_cached_sector(self, sector_code: str, provenance: SectorProvenance) -> DynamicSector:
+        """从 provenance 构建缓存的 DynamicSector（成分股为空，需要重新获取）"""
+        sector = DynamicSector(
+            sector_code=sector_code,
+            sector_name=provenance.sector_name,
+            source=provenance.source,
+            constituents=[],  # 成分股不存储在 provenance 中
+            constituent_count=provenance.total_constituents,
+        )
+        sector.provenance = provenance
+        return sector
+
+
+# ============ 配置加载/合并（从 dynamic_sector.py 迁移，保持向后兼容） ============
 
 def load_sectors_from_config(config_data: Any) -> Tuple[List[DynamicSector], List[Any]]:
     """
@@ -434,7 +604,6 @@ def merge_dynamic_sectors(
     for sector in local_sectors:
         identity = sector.sync_identity
         if identity in merged:
-            # 比较更新时间，使用较新的版本
             remote_updated = merged[identity].updated_at or ''
             local_updated = sector.updated_at or ''
             if local_updated > remote_updated:

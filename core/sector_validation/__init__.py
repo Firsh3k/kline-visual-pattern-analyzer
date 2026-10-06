@@ -72,6 +72,9 @@ from .dynamic_sector import (
 )
 from .ths_sector_resolver import (
     THSSectorResolver,
+    THSDataProvider,
+    IFindMCPProvider,
+    SnapshotProvider,
     load_sectors_from_config,
     merge_dynamic_sectors,
 )
@@ -122,6 +125,9 @@ __all__ = [
     "DynamicSector",
     "ManualCustomSector",
     "THSSectorResolver",
+    "THSDataProvider",
+    "IFindMCPProvider",
+    "SnapshotProvider",
     "SectorCodeValidationError",
     "SectorResolutionError",
     "ConstituentUnavailableError",

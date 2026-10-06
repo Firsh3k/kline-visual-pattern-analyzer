@@ -18,6 +18,12 @@ from typing import List, Optional, Dict, Tuple
 
 from core.types import OHLCV, AdjustmentType, MarketDataSeries
 from core.market_data import MultiSourceDataProvider
+from core.market_data.trading_calendar import (
+    CALENDAR_BSE,
+    CALENDAR_SSE,
+    CALENDAR_SZSE,
+    derive_calendar_id,
+)
 from core.calibration.types import MarketRegime
 
 
@@ -61,14 +67,33 @@ UNKNOWN_PROVENANCE: Dict[str, object] = {
 
 
 def to_market_symbol(code: str) -> str:
-    """6位股票代码 → 带市场前缀的 symbol
+    """6位股票代码 → canonical provider symbol（FIR-25/FIR-27）。
 
-    规则：6 开头（沪市主板/科创板/沪B）→ sh；0/3 开头（深市主板/创业板）→ sz。
+    交易所归属必须复用 FIR-25 的 ``derive_calendar_id``，避免 calibration
+    自己维护另一套前缀规则而发生 contract drift：
+    - SSE  -> ``sh``
+    - SZSE -> ``sz``
+    - BSE  -> ``bj``
+
+    无法权威识别的代码直接 fail-closed，不再静默回退到 SZSE。
     """
     code = code.strip()
-    if code.startswith("6"):
-        return f"sh{code}"
-    return f"sz{code}"
+    if len(code) != 6 or not code.isdigit():
+        raise ValueError(f"Invalid A-share stock code: {code!r}")
+
+    calendar_id = derive_calendar_id(code)
+    prefix_by_calendar = {
+        CALENDAR_SSE: "sh",
+        CALENDAR_SZSE: "sz",
+        CALENDAR_BSE: "bj",
+    }
+    prefix = prefix_by_calendar.get(calendar_id)
+    if prefix is None:
+        raise ValueError(
+            f"Unknown/unallocated exchange for stock code {code!r}; "
+            "refusing to guess a provider market prefix"
+        )
+    return f"{prefix}{code}"
 
 
 class CalibrationDataCollector:

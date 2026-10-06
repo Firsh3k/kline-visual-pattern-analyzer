@@ -21,6 +21,7 @@ from core import (
     FrequencyType,
     MarketDataBar,
     MarketDataSeries,
+    OHLCV,
 )
 from core.calibration.backtest_engine import FixedHorizonBacktester
 from core.calibration.calibrator import EmpiricalCalibrator
@@ -186,16 +187,31 @@ def test_authoritative_sector_member_flows_into_signal_and_calibration(tmp_path)
 
 
 def test_bearish_outcomes_remain_direction_normalized_end_to_end():
-    """Bearish raw price returns are negative but trading outcome semantics are positive."""
+    """Bearish raw returns are negative while directional trade outcomes stay positive."""
     series = _series("sh600519", "SSE", rising=False)
     klines = series.to_ohlcv_list()
     signal_index = 60
+    entry = klines[signal_index].close
+
+    # Preserve the falling close path but inject a real 1% adverse intraday spike
+    # on the first future bar. This makes bearish MAE exercise its intended
+    # negative, direction-normalized semantics instead of a no-adverse-excursion case.
+    first_future = klines[signal_index + 1]
+    klines[signal_index + 1] = OHLCV(
+        date=first_future.date,
+        open=first_future.open,
+        high=entry * 1.01,
+        low=first_future.low,
+        close=first_future.close,
+        volume=first_future.volume,
+    )
+
     signal = SignalOccurrence(
         signal_id="fir26-bearish",
         stock_code="600519",
         signal_date=klines[signal_index].date,
         pattern_type=PatternType.MA_BEAR,
-        entry_price=klines[signal_index].close,
+        entry_price=entry,
         confirmation_state=ConfirmationState.BREAKOUT_DAY,
         market_regime=MarketRegime.BEAR,
         pattern_score=70,
@@ -215,7 +231,7 @@ def test_bearish_outcomes_remain_direction_normalized_end_to_end():
     assert result.directional_profit is not None and result.directional_profit > 0
     assert result.win is True
     assert result.mfe is not None and result.mfe > 0
-    assert result.mae is not None and result.mae < 0
+    assert result.mae == pytest.approx(-0.01)
 
     summary = EmpiricalCalibrator(
         min_sample_size=1, empirical_threshold=1
@@ -224,7 +240,7 @@ def test_bearish_outcomes_remain_direction_normalized_end_to_end():
     assert metric.win_rate == 1.0
     assert metric.avg_directional_profit is not None and metric.avg_directional_profit > 0
     assert metric.avg_mfe is not None and metric.avg_mfe > 0
-    assert metric.avg_mae is not None and metric.avg_mae < 0
+    assert metric.avg_mae == pytest.approx(-0.01)
 
 
 def test_missing_market_data_provenance_stays_unknown():

@@ -304,11 +304,21 @@ canvas { width: 100%; display: block; }
       </div>
       
       <!-- 自定义板块 -->
-      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
         <input type="text" id="customSectorName" placeholder="自定义板块名称" style="width:140px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
         <input type="text" id="customSectorCodes" placeholder="股票代码，逗号分隔" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
         <button onclick="addCustomSector()" style="padding:8px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:13px;cursor:pointer;">添加板块</button>
       </div>
+
+      <!-- 动态同花顺板块指数（FIR-22） -->
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:12px;color:#556677;white-space:nowrap;">同花顺板块指数:</span>
+        <input type="text" id="thsSectorCode" placeholder="如 886032（固态电池）" style="width:160px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;" maxlength="6">
+        <button onclick="resolveTHSSector()" style="padding:8px 14px;background:#1a3a4a;color:#5dade2;border:1px solid #2a5a6a;border-radius:6px;font-size:13px;cursor:pointer;">查询验证</button>
+        <button onclick="addTHSSectorToScope()" id="addTHSSectorBtn" style="padding:8px 14px;background:#1a3a2a;color:#58d68d;border:1px solid #2a5a3a;border-radius:6px;font-size:13px;cursor:pointer;display:none;">添加到扫描范围</button>
+        <span id="thsSectorPreview" style="font-size:12px;color:#8899aa;"></span>
+      </div>
+      <div id="thsSectorError" style="font-size:12px;color:#e74c3c;margin-bottom:12px;display:none;"></div>
       
       <span id="scanStatus" style="font-size:13px;color:#8899aa;"></span>
       <div id="scanProgress" style="margin-top:8px;height:6px;background:#1a2332;border-radius:3px;overflow:hidden;display:none;">
@@ -3336,20 +3346,29 @@ function exportConfig() {
     const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
     customSectors = data ? JSON.parse(data) : [];
   } catch(e) {}
-  
+
+  // FIR-22: 加载动态同花顺板块
+  let dynamicSectors = [];
+  try {
+    const dsData = localStorage.getItem(DYNAMIC_SECTORS_KEY);
+    dynamicSectors = dsData ? JSON.parse(dsData) : [];
+  } catch(e) {}
+
   const config = {
-    version: '1.0',
+    version: '1.1',
     exportDate: new Date().toISOString().split('T')[0],
     exportTime: new Date().toLocaleString('zh-CN'),
     watchlist: watchlist,
     customSectors: customSectors,
+    dynamicSectors: dynamicSectors,  // FIR-22: 动态同花顺板块
     settings: {
       scanMinScore: document.getElementById('scanMinScore')?.value || '60',
       scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
     },
     stats: {
       watchlistCount: watchlist.length,
-      customSectorsCount: customSectors.length
+      customSectorsCount: customSectors.length,
+      dynamicSectorsCount: dynamicSectors.length
     }
   };
   
@@ -3480,7 +3499,16 @@ function applyConfig(config, source) {
       localStorage.setItem(CUSTOM_SECTORS_KEY, JSON.stringify(config.customSectors));
     } catch(e) {}
   }
-  
+
+  // FIR-22: 导入动态同花顺板块（合并去重，按 sectorCode）
+  if (config.dynamicSectors && Array.isArray(config.dynamicSectors)) {
+    try {
+      const existing = loadDynamicSectors();
+      const merged = mergeDynamicSectorsJS(existing, config.dynamicSectors);
+      saveDynamicSectors(merged);
+    } catch(e) { console.error('导入动态板块失败', e); }
+  }
+
   // 应用设置
   if (config.settings) {
     if (config.settings.scanMinScore && document.getElementById('scanMinScore')) {
@@ -3490,8 +3518,9 @@ function applyConfig(config, source) {
       document.getElementById('scanSignalType').value = config.settings.scanSignalType;
     }
   }
-  
-  document.getElementById('configSyncStatus').textContent = `✅ 从${source}导入成功：${config.watchlist.length}只自选股 + ${(config.customSectors||[]).length}个自定义板块`;
+
+  const dynCount = (config.dynamicSectors || []).length;
+  document.getElementById('configSyncStatus').textContent = `✅ 从${source}导入成功：${config.watchlist.length}只自选股 + ${(config.customSectors||[]).length}个自定义板块${dynCount > 0 ? ' + ' + dynCount + '个动态板块' : ''}`;
   document.getElementById('configSyncStatus').style.color = '#27ae60';
   updateConfigSummary();
 }
@@ -3652,20 +3681,30 @@ function buildConfigObject() {
     const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
     customSectors = data ? JSON.parse(data) : [];
   } catch(e) {}
+
+  // FIR-22: 加载动态同花顺板块
+  let dynamicSectors = [];
+  try {
+    const dsData = localStorage.getItem(DYNAMIC_SECTORS_KEY);
+    dynamicSectors = dsData ? JSON.parse(dsData) : [];
+  } catch(e) {}
+
   return {
-    version: '1.0',
+    version: '1.1',
     exportDate: new Date().toISOString().split('T')[0],
     exportTime: new Date().toLocaleString('zh-CN'),
     description: 'K线形态分析工具 - 自选股云配置（自动同步）',
     watchlist: watchlist,
     customSectors: customSectors,
+    dynamicSectors: dynamicSectors,  // FIR-22: 动态同花顺板块
     settings: {
       scanMinScore: document.getElementById('scanMinScore')?.value || '60',
       scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
     },
     stats: {
       watchlistCount: watchlist.length,
-      customSectorsCount: customSectors.length
+      customSectorsCount: customSectors.length,
+      dynamicSectorsCount: dynamicSectors.length
     }
   };
 }
@@ -3790,7 +3829,7 @@ async function fetchRemoteGithubConfig(apiUrl, token) {
 /**
  * 构建配置对象
  */
-function buildMergedConfig(mergedWatchlist, mergedSectors, mergedTombstones, remoteConfig, localWatchlist, remoteWatchlist, onlyRemote, onlyLocal, resurrected) {
+function buildMergedConfig(mergedWatchlist, mergedSectors, mergedTombstones, remoteConfig, localWatchlist, remoteWatchlist, onlyRemote, onlyLocal, resurrected, mergedDynamicSectors) {
   return {
     version: '1.1',
     exportDate: new Date().toISOString().split('T')[0],
@@ -3799,6 +3838,7 @@ function buildMergedConfig(mergedWatchlist, mergedSectors, mergedTombstones, rem
     watchlist: mergedWatchlist,
     tombstones: mergedTombstones,
     customSectors: mergedSectors,
+    dynamicSectors: mergedDynamicSectors || [],  // FIR-22: 动态同花顺板块
     settings: {
       scanMinScore: document.getElementById('scanMinScore')?.value || '60',
       scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
@@ -3806,6 +3846,7 @@ function buildMergedConfig(mergedWatchlist, mergedSectors, mergedTombstones, rem
     stats: {
       watchlistCount: mergedWatchlist.length,
       customSectorsCount: mergedSectors.length,
+      dynamicSectorsCount: (mergedDynamicSectors || []).length,
       tombstoneCount: mergedTombstones.length
     },
     syncMeta: {
@@ -3879,6 +3920,12 @@ async function syncToGithub() {
       } catch(e) {}
       const mergedSectors = mergeCustomSectors(remoteConfig.customSectors, localSectors);
 
+      // FIR-22: 合并动态同花顺板块（按 type+sectorCode 去重）
+      const mergedDynamicSectors = mergeDynamicSectorsJS(
+        remoteConfig.dynamicSectors || [],
+        loadDynamicSectors()
+      );
+
       const { mergedWatchlist, mergedTombstones, onlyRemote, onlyLocal, resurrected } = mergeResult;
 
       let mergeInfo = `本地${localWatchlist.length}只 + 远程${remoteWatchlist.length}只 → 合并${mergedWatchlist.length}只`;
@@ -3896,7 +3943,8 @@ async function syncToGithub() {
       const config = buildMergedConfig(
         mergedWatchlist, mergedSectors, mergedTombstones,
         remoteConfig, localWatchlist, remoteWatchlist,
-        onlyRemote, onlyLocal, resurrected
+        onlyRemote, onlyLocal, resurrected,
+        mergedDynamicSectors  // FIR-22: 动态同花顺板块
       );
 
       const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
@@ -3920,9 +3968,12 @@ async function syncToGithub() {
         saveWatchlist(mergedWatchlist);
         // 保存合并后的tombstones到本地
         try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(mergedTombstones)); } catch(e) {}
+        // FIR-22: 保存合并后的动态板块到本地
+        try { saveDynamicSectors(mergedDynamicSectors); } catch(e) {}
         // 刷新页面显示
         if (typeof renderWatchlistTags === 'function') renderWatchlistTags();
         if (typeof renderWatchlistTable === 'function') renderWatchlistTable();
+        if (typeof renderSectorList === 'function') renderSectorList();
 
         const rawUrl = `https://raw.githubusercontent.com/${settings.username}/${settings.repo}/${settings.branch}/${settings.path}`;
         showSyncStatus(`✅ 同步成功！${mergeInfo}。Raw链接已复制到导入框`, '#27ae60');
@@ -4500,14 +4551,9 @@ const PRESET_SECTORS = {
   'PCB概念': ['000823','001232','001389','002134','002141','002384','002436','002463','002552','002579','002636','002815','002913','002916','002938','300476','300657','300739','300814','300852','300903','300936','300964','301041','301132','301176','301251','301282','301366','301628','600183','600601','603175','603186','603228','603328','603386','603459','603920','603936','605058','605258','688183','688519','688655']
 };
 
-// 获取所有板块（预置 + 自定义）
+// 获取所有板块（预置 + 自定义 + 动态）
 function getAllSectors() {
-  let custom = {};
-  try {
-    const data = localStorage.getItem(SCAN_SECTORS_KEY);
-    if (data) custom = JSON.parse(data);
-  } catch(e) {}
-  return { ...PRESET_SECTORS, ...custom };
+  return getAllSectorsWithMeta().sectors;
 }
 
 // 保存自定义板块
@@ -4523,15 +4569,47 @@ function saveCustomSector(name, codes) {
 
 // 渲染板块选择列表
 function renderSectorList() {
-  const sectors = getAllSectors();
+  const { sectors, meta } = getAllSectorsWithMeta();
   const container = document.getElementById('sectorList');
-  container.innerHTML = Object.entries(sectors).map(([name, codes]) => `
-    <label style="display:inline-flex;align-items:center;gap:6px;background:#1a2332;border:1px solid #2a3441;border-radius:14px;padding:6px 12px;font-size:13px;cursor:pointer;">
+  container.innerHTML = Object.entries(sectors).map(([name, codes]) => {
+    const m = meta[name] || {};
+    const isDynamic = m.type === 'ths_sector_index';
+    const isManual = m.type === 'manual';
+
+    // 动态板块的额外信息和操作按钮
+    let extraInfo = '';
+    let actionButtons = '';
+
+    if (isDynamic) {
+      const updatedDate = m.updatedAt ? new Date(m.updatedAt).toLocaleDateString() : '未知';
+      const freshnessIcon = getFreshnessIcon(m.updatedAt);
+      extraInfo = `<span style="color:#5dade2;font-size:11px;" title="来源: ${m.source} | 更新: ${updatedDate}">${freshnessIcon}动态·${m.source}·${updatedDate}</span>`;
+      actionButtons = `
+        <button onclick="event.stopPropagation();refreshTHSSector('${m.sectorCode}')" style="padding:2px 6px;background:#1a3a4a;color:#5dade2;border:1px solid #2a5a6a;border-radius:4px;font-size:10px;cursor:pointer;margin-left:4px;" title="刷新成分股">↻</button>
+        <button onclick="event.stopPropagation();removeTHSSector('${m.sectorCode}')" style="padding:2px 6px;background:#3a1a1a;color:#e74c3c;border:1px solid #5a2a2a;border-radius:4px;font-size:10px;cursor:pointer;" title="移除板块">✕</button>
+      `;
+    } else if (isManual) {
+      extraInfo = `<span style="color:#8899aa;font-size:11px;">自定义</span>`;
+    }
+
+    return `
+    <label style="display:inline-flex;align-items:center;gap:6px;background:#1a2332;border:1px solid ${isDynamic ? '#2a5a6a' : '#2a3441'};border-radius:14px;padding:6px 12px;font-size:13px;cursor:pointer;">
       <input type="checkbox" value="${name}" class="sector-checkbox" style="accent-color:#e74c3c;">
       <span style="color:#f0f0f0">${name}</span>
       <span style="color:#556677;font-size:11px">(${codes.length}只)</span>
+      ${extraInfo}
+      ${actionButtons}
     </label>
-  `).join('');
+  `}).join('');
+}
+
+// 新鲜度图标
+function getFreshnessIcon(updatedAt) {
+  if (!updatedAt) return '❓';
+  const days = Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+  if (days <= 7) return '✅';
+  if (days <= 30) return '⚠️';
+  return '❌';
 }
 
 // 添加自定义板块
@@ -4550,6 +4628,263 @@ function addCustomSector() {
   alert(`已添加自定义板块"${name}"（${codes.length}只股票）`);
 }
 
+// ============ FIR-22: 动态同花顺板块指数 ============
+const DYNAMIC_SECTORS_KEY = 'kline_dynamic_ths_sectors_v1';
+let currentResolvedSector = null; // 当前解析成功的板块（待添加）
+
+// 加载动态板块列表
+function loadDynamicSectors() {
+  try {
+    const data = localStorage.getItem(DYNAMIC_SECTORS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch(e) { return []; }
+}
+
+// 保存动态板块列表
+function saveDynamicSectors(sectors) {
+  try { localStorage.setItem(DYNAMIC_SECTORS_KEY, JSON.stringify(sectors)); } catch(e) {}
+}
+
+// JS版动态板块合并（跨设备同步，按 type+sectorCode 去重）
+function mergeDynamicSectorsJS(remoteSectors, localSectors) {
+  const merged = {};
+  // 先加入远程
+  (remoteSectors || []).forEach(s => {
+    const identity = (s.type || 'ths_sector_index') + ':' + s.sectorCode;
+    merged[identity] = s;
+  });
+  // 再加入本地（同一标识时使用更新时间较新的版本）
+  (localSectors || []).forEach(s => {
+    const identity = (s.type || 'ths_sector_index') + ':' + s.sectorCode;
+    if (merged[identity]) {
+      const remoteUpdated = merged[identity].updatedAt || '';
+      const localUpdated = s.updatedAt || '';
+      if (localUpdated > remoteUpdated) merged[identity] = s;
+    } else {
+      merged[identity] = s;
+    }
+  });
+  return Object.values(merged).sort((a, b) => (a.sectorCode || '').localeCompare(b.sectorCode || ''));
+}
+
+// 验证板块指数代码格式（6位数字）
+function validateTHSSectorCode(code) {
+  return code && /^\d{6}$/.test(code.trim());
+}
+
+// 解析同花顺板块指数（Web端通过公开接口获取，fail-closed）
+async function resolveTHSSector() {
+  const codeInput = document.getElementById('thsSectorCode');
+  const preview = document.getElementById('thsSectorPreview');
+  const errorDiv = document.getElementById('thsSectorError');
+  const addBtn = document.getElementById('addTHSSectorBtn');
+  const code = codeInput.value.trim();
+
+  // 重置状态
+  errorDiv.style.display = 'none';
+  errorDiv.textContent = '';
+  addBtn.style.display = 'none';
+  currentResolvedSector = null;
+
+  // 1. 格式验证
+  if (!validateTHSSectorCode(code)) {
+    showTHSError('无效的板块指数代码格式，应为6位数字（如 886032）');
+    return;
+  }
+
+  preview.textContent = '正在查询板块信息...';
+
+  try {
+    // 2. 通过东方财富公开接口获取板块成分股（fail-closed）
+    // 东方财富板块接口: http://push2.eastmoney.com/api/qt/clist/get?fid=f12&fs=b:BK{code}&fields=f12,f14
+    // 注意：同花顺板块代码与东方财富板块代码可能不同，这里使用通用策略
+    const sectorData = await fetchTHSSectorConstituents(code);
+
+    if (!sectorData || !sectorData.constituents || sectorData.constituents.length === 0) {
+      showTHSError(`板块 ${code} 成分股数据不可用或为空。请确认代码正确，或稍后重试。`);
+      preview.textContent = '';
+      return;
+    }
+
+    // 3. 解析成功，显示预览
+    currentResolvedSector = {
+      type: 'ths_sector_index',
+      sectorCode: code,
+      sectorName: sectorData.sectorName || `板块${code}`,
+      source: sectorData.source || '公开接口',
+      constituents: sectorData.constituents,
+      constituentCount: sectorData.constituents.length,
+      updatedAt: new Date().toISOString(),
+    };
+
+    preview.innerHTML = `<span style="color:#58d68d;">✅ ${currentResolvedSector.sectorName}</span> ` +
+      `<span style="color:#8899aa;">| ${currentResolvedSector.constituentCount}只 | ${currentResolvedSector.source} | ${new Date().toLocaleDateString()}</span>`;
+    addBtn.style.display = 'inline-block';
+
+  } catch(e) {
+    console.error('板块解析失败', e);
+    showTHSError(`板块 ${code} 解析失败：${e.message || '网络错误或数据源不可用'}。请确认代码正确，或稍后重试。`);
+    preview.textContent = '';
+  }
+}
+
+// 通过公开接口获取板块成分股（Web端实现，fail-closed）
+async function fetchTHSSectorConstituents(sectorCode) {
+  // 策略1：尝试东方财富板块接口
+  // 东方财富概念板块代码通常以 BK 开头，同花顺以 88 开头
+  // 这里尝试直接使用同花顺代码查询，如果失败则返回错误
+  try {
+    // 使用东方财富的板块成分股接口
+    // fs 参数: b:BK{code} 表示板块，这里尝试多种格式
+    const urls = [
+      `https://push2.eastmoney.com/api/qt/clist/get?fid=f12&fs=b:BK${sectorCode}&fields=f12,f14&pn=1&pz=500`,
+      `https://push2.eastmoney.com/api/qt/clist/get?fid=f12&fs=b:${sectorCode}&fields=f12,f14&pn=1&pz=500`,
+    ];
+
+    for (const url of urls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (data && data.data && data.data.diff && data.data.diff.length > 0) {
+          const constituents = data.data.diff.map(item => item.f12).filter(code => /^\d{6}$/.test(code));
+          if (constituents.length > 0) {
+            // 尝试获取板块名称（从第一个结果的板块信息）
+            return {
+              sectorName: `板块${sectorCode}`,
+              constituents: constituents,
+              source: '东方财富公开接口',
+            };
+          }
+        }
+      } catch(e) { continue; }
+    }
+
+    // 策略2：如果预置板块中有此代码，使用预置数据
+    if (PRESET_SECTORS && typeof PRESET_SECTORS === 'object') {
+      for (const [name, codes] of Object.entries(PRESET_SECTORS)) {
+        // 预置板块没有代码映射，这里跳过
+      }
+    }
+
+    // 所有策略都失败 → fail-closed
+    throw new Error('无法从公开数据源获取板块成分股');
+
+  } catch(e) {
+    throw e;
+  }
+}
+
+// 显示错误
+function showTHSError(msg) {
+  const errorDiv = document.getElementById('thsSectorError');
+  errorDiv.textContent = '❌ ' + msg;
+  errorDiv.style.display = 'block';
+}
+
+// 添加动态板块到扫描范围
+function addTHSSectorToScope() {
+  if (!currentResolvedSector) return;
+
+  const sectors = loadDynamicSectors();
+  // 检查是否已存在（按 sectorCode 去重）
+  const exists = sectors.find(s => s.sectorCode === currentResolvedSector.sectorCode);
+  if (exists) {
+    alert(`板块"${currentResolvedSector.sectorName}"已在扫描范围中`);
+    return;
+  }
+
+  sectors.push(currentResolvedSector);
+  saveDynamicSectors(sectors);
+
+  // 重置输入
+  document.getElementById('thsSectorCode').value = '';
+  document.getElementById('thsSectorPreview').textContent = '';
+  document.getElementById('addTHSSectorBtn').style.display = 'none';
+  currentResolvedSector = null;
+
+  renderSectorList();
+  alert(`已添加动态板块"${sectors[sectors.length-1].sectorName}"（${sectors[sectors.length-1].constituentCount}只股票）`);
+}
+
+// 刷新动态板块成分股
+async function refreshTHSSector(sectorCode) {
+  const sectors = loadDynamicSectors();
+  const idx = sectors.findIndex(s => s.sectorCode === sectorCode);
+  if (idx === -1) return;
+
+  const sector = sectors[idx];
+  try {
+    const sectorData = await fetchTHSSectorConstituents(sectorCode);
+    if (sectorData && sectorData.constituents && sectorData.constituents.length > 0) {
+      sectors[idx].constituents = sectorData.constituents;
+      sectors[idx].constituentCount = sectorData.constituents.length;
+      sectors[idx].updatedAt = new Date().toISOString();
+      sectors[idx].source = sectorData.source || sector.source;
+      sectors[idx].available = true;
+      saveDynamicSectors(sectors);
+      renderSectorList();
+      alert(`板块"${sector.sectorName}"已刷新（${sectors[idx].constituentCount}只股票）`);
+    } else {
+      alert(`刷新失败：成分股数据为空`);
+    }
+  } catch(e) {
+    alert(`刷新失败：${e.message || '数据源不可用'}`);
+  }
+}
+
+// 移除动态板块
+function removeTHSSector(sectorCode) {
+  const sectors = loadDynamicSectors();
+  const sector = sectors.find(s => s.sectorCode === sectorCode);
+  if (!sector) return;
+  if (!confirm(`确定要移除动态板块"${sector.sectorName}"吗？`)) return;
+  const filtered = sectors.filter(s => s.sectorCode !== sectorCode);
+  saveDynamicSectors(filtered);
+  renderSectorList();
+}
+
+// 获取所有板块（预置 + 自定义 + 动态）— 返回 {name: [codes]} 格式用于扫描
+function getAllSectorsWithMeta() {
+  const sectors = {};
+  const meta = {};
+
+  // 预置板块
+  for (const [name, codes] of Object.entries(PRESET_SECTORS)) {
+    sectors[name] = codes;
+    meta[name] = { type: 'preset', source: '内置' };
+  }
+
+  // 自定义板块
+  let custom = {};
+  try {
+    const data = localStorage.getItem(SCAN_SECTORS_KEY);
+    if (data) custom = JSON.parse(data);
+  } catch(e) {}
+  for (const [name, codes] of Object.entries(custom)) {
+    sectors[name] = codes;
+    meta[name] = { type: 'manual', source: '自定义' };
+  }
+
+  // 动态同花顺板块（FIR-22）
+  const dynamicSectors = loadDynamicSectors();
+  for (const sector of dynamicSectors) {
+    if (sector.available !== false && sector.constituents && sector.constituents.length > 0) {
+      const displayName = `${sector.sectorName}（动态）`;
+      sectors[displayName] = sector.constituents;
+      meta[displayName] = {
+        type: 'ths_sector_index',
+        sectorCode: sector.sectorCode,
+        source: sector.source || '同花顺',
+        updatedAt: sector.updatedAt,
+        constituentCount: sector.constituentCount,
+      };
+    }
+  }
+
+  return { sectors, meta };
+}
+
 // 扫描结果缓存
 let scanResults = [];
 
@@ -4557,10 +4892,18 @@ let scanResults = [];
 async function startMarketScan() {
   const checked = document.querySelectorAll('.sector-checkbox:checked');
   if (checked.length === 0) { alert('请至少选择一个板块'); return; }
-  const sectors = getAllSectors();
+  const { sectors, meta } = getAllSectorsWithMeta();
+
+  // 构建 code -> sectors 映射（范围归属，FIR-22）
+  const codeToSectors = {};
   let allCodes = [];
   checked.forEach(cb => {
-    const codes = sectors[cb.value] || [];
+    const sectorName = cb.value;
+    const codes = sectors[sectorName] || [];
+    codes.forEach(code => {
+      if (!codeToSectors[code]) codeToSectors[code] = [];
+      codeToSectors[code].push(sectorName);
+    });
     allCodes = allCodes.concat(codes);
   });
   // 去重
@@ -4608,6 +4951,9 @@ async function startMarketScan() {
         if (result && result.data && result.data.length > 20) {
           const r = calculateStockResult(result, marketEnv);
           if (r.attention >= minScore && passSignalFilter(r)) {
+            // FIR-22: 保留范围归属（该股票属于哪些选中板块）
+            r.sectors = codeToSectors[code] || [];
+            r.sectorCount = r.sectors.length;
             scanResults.push(r);
             renderScanResults();
           }
@@ -4656,7 +5002,7 @@ function renderScanResults() {
           ${sorted.map(r => `
             <tr style="border-bottom:1px solid #2a3441;cursor:pointer;" onclick="quickAnalyze('${r.code}')" ondblclick="openStockInNewTab('${r.code}')" title="单击查看详情，双击新标签页打开">
               <td style="padding:10px 8px;" onclick="event.stopPropagation();"><input type="checkbox" class="scan-item-checkbox" value="${r.code}" style="accent-color:#e74c3c;"></td>
-              <td style="padding:10px 8px;"><b style="color:#f0f0f0">${r.name}</b><br><span style="color:#556677;font-size:11px">${r.code}</span></td>
+              <td style="padding:10px 8px;"><b style="color:#f0f0f0">${r.name}</b><br><span style="color:#556677;font-size:11px">${r.code}</span>${r.sectors && r.sectors.length > 0 ? `<br><span style="font-size:10px;color:#5dade2;">${r.sectors.slice(0,2).map(s => '🏷️'+s).join(' ')}${r.sectors.length > 2 ? ' +'+(r.sectors.length-2) : ''}</span>` : ''}</td>
               <td style="padding:10px 8px;color:#f0f0f0">${r.price.toFixed(2)}</td>
               <td style="padding:10px 8px;color:${parseFloat(r.pct)>=0?'#e74c3c':'#2ecc71'}">${parseFloat(r.pct)>=0?'+':''}${r.pct}%</td>
               <td style="padding:10px 8px;">

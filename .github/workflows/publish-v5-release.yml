@@ -1,0 +1,75 @@
+name: Publish V5.0.0 Release
+
+on:
+  push:
+    branches:
+      - release-publisher/v5.0.0
+    paths:
+      - .github/workflows/publish-v5-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout publisher branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable target
+        run: |
+          set -euo pipefail
+          git cat-file -e 43ad6d5fd2ee01614c189d974df4f648b6247da0^{commit}
+          if git ls-remote --exit-code --tags origin refs/tags/v5.0.0 >/dev/null 2>&1; then
+            echo "ERROR: refs/tags/v5.0.0 already exists; refusing to move or overwrite it."
+            exit 1
+          fi
+
+      - name: Create annotated v5.0.0 tag
+        run: |
+          set -euo pipefail
+          git config user.name "Firsh Release Automation"
+          git config user.email "firsh-release@users.noreply.github.com"
+          git tag -a v5.0.0 43ad6d5fd2ee01614c189d974df4f648b6247da0 -m "V5.0 Stable Production Baseline"
+          git push origin refs/tags/v5.0.0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          # Kline Visual Pattern Analyzer V5.0.0
+
+          Stable V5 production baseline.
+
+          ## Deployment identity
+          - Release tag: `v5.0.0`
+          - Commit: `43ad6d5fd2ee01614c189d974df4f648b6247da0`
+          - Previous stable rollback tag: `v4.0.0`
+
+          ## Release qualification
+          - V5 Accuracy Foundation complete
+          - FIR-22 Dynamic THS Sector Index Scan Scope included
+          - Pre-merge CI #176: 4/4 green
+          - Post-merge CI #177: 4/4 green
+          - Python V5 suite: 644/644 passed
+          - FIR-15 / FIR-25 / JS syntax / FIR-19 / FIR-20 / cross-runtime parity gates passed
+
+          ## Deployment instruction
+          Deploy the source package for **v5.0.0**, not the moving `main` branch.
+
+          ## Rollback
+          If V5 production behavior is unacceptable, redeploy the source package for **v4.0.0**. Do not move either release tag.
+          EOF
+          gh release create v5.0.0             --verify-tag             --title "V5.0.0 — Stable Production Baseline"             --notes-file /tmp/release-notes.md
+
+      - name: Confirm release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v5.0.0 --json tagName,name,isDraft,isPrerelease,url,targetCommitish

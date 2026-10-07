@@ -77,17 +77,147 @@ canvas { width: 100%; display: block; }
 .legend { display: flex; gap: 16px; font-size: 12px; color: #8899aa; margin-bottom: 8px; flex-wrap: wrap; }
 .legend span { display: flex; align-items: center; gap: 4px; }
 .legend i { width: 12px; height: 3px; display: inline-block; border-radius: 2px; }
+
+/* FIR-28: Version Badge & Deployment Identity */
+.header-right { display: flex; align-items: center; gap: 12px; }
+.version-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 20px;
+  background: linear-gradient(135deg, rgba(46,204,113,0.15), rgba(39,174,96,0.1));
+  border: 1px solid rgba(46,204,113,0.4);
+  cursor: pointer; transition: all 0.2s ease;
+  user-select: none;
+}
+.version-badge:hover {
+  background: linear-gradient(135deg, rgba(46,204,113,0.25), rgba(39,174,96,0.2));
+  border-color: rgba(46,204,113,0.7);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(46,204,113,0.2);
+}
+.version-tag {
+  font-size: 13px; font-weight: 700; color: #2ecc71;
+  font-family: 'SF Mono', 'Consolas', monospace; letter-spacing: 0.5px;
+}
+.version-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.6);
+  animation: version-pulse 2s ease-in-out infinite;
+}
+@keyframes version-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+/* Version Modal */
+.version-modal {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6); z-index: 10000;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.version-modal-content {
+  background: linear-gradient(135deg, #1a2332, #0f1419);
+  border: 1px solid #2a3441; border-radius: 16px;
+  width: 90%; max-width: 480px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  overflow: hidden; animation: version-modal-in 0.25s ease;
+}
+@keyframes version-modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.version-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid #2a3441;
+  background: rgba(46,204,113,0.05);
+}
+.version-modal-header h3 { margin: 0; color: #2ecc71; font-size: 16px; }
+.version-modal-close {
+  background: none; border: none; color: #8899aa; font-size: 24px;
+  cursor: pointer; line-height: 1; padding: 0 4px; transition: color 0.2s;
+}
+.version-modal-close:hover { color: #fff; }
+.version-modal-body { padding: 20px; }
+.version-info-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid rgba(42,52,65,0.5);
+}
+.version-info-row:last-child { border-bottom: none; }
+.version-info-label { color: #8899aa; font-size: 13px; }
+.version-info-value { color: #e0e6ed; font-size: 13px; font-weight: 500; text-align: right; max-width: 60%; word-break: break-all; }
+.version-info-value.code { font-family: 'SF Mono', 'Consolas', monospace; color: #5dade2; font-size: 12px; }
+.version-modal-footer {
+  padding: 12px 20px; border-top: 1px solid #2a3441;
+  text-align: center; background: rgba(0,0,0,0.2);
+}
+.version-hint { color: #556677; font-size: 11px; font-style: italic; }
+
+/* Footer version */
+.footer-version {
+  display: inline-block; margin-top: 8px;
+  padding: 4px 12px; border-radius: 12px;
+  background: rgba(42,52,65,0.5); border: 1px solid rgba(42,52,65,0.8);
+  font-size: 11px; color: #8899aa;
+}
+.footer-version .code { font-family: 'SF Mono', 'Consolas', monospace; color: #5dade2; }
+.footer-version a { text-decoration: none; transition: color 0.2s; }
+.footer-version a:hover { color: #85c1e9 !important; }
 </style>
 </head>
 <body>
 
 <div class="header">
   <h1>K线形态分析工具 <span>·</span> 上升找买点 + 下降找卖点</h1>
+  <div class="header-right">
+    <div class="version-badge" id="versionBadge" title="点击查看部署详情">
+      <span class="version-tag" id="versionTag">v5.0.0</span>
+      <span class="version-dot"></span>
+    </div>
+  </div>
   <div class="tabs">
     <button class="tab active" onclick="switchTab('patterns')">典型图形库</button>
     <button class="tab" onclick="switchTab('analyze')">股票分析</button>
     <button class="tab" onclick="switchTab('watchlist')">自选股池</button>
     <button class="tab" onclick="switchTab('scanner')">市场扫描</button>
+  </div>
+</div>
+
+<!-- 版本详情弹窗 -->
+<div id="versionModal" class="version-modal" style="display:none;">
+  <div class="version-modal-content">
+    <div class="version-modal-header">
+      <h3>🚀 部署信息</h3>
+      <button class="version-modal-close" onclick="closeVersionModal()">&times;</button>
+    </div>
+    <div class="version-modal-body">
+      <div class="version-info-row">
+        <span class="version-info-label">版本号</span>
+        <span class="version-info-value" id="modalVersion">v5.0.0</span>
+      </div>
+      <div class="version-info-row">
+        <span class="version-info-label">Commit</span>
+        <span class="version-info-value code" id="modalCommit">43ad6d5fd2ee</span>
+      </div>
+      <div class="version-info-row">
+        <span class="version-info-label">部署时间</span>
+        <span class="version-info-value" id="modalDeployTime">2026-10-07</span>
+      </div>
+      <div class="version-info-row">
+        <span class="version-info-label">代码来源</span>
+        <span class="version-info-value">GitHub Release v5.0.0</span>
+      </div>
+      <div class="version-info-row">
+        <span class="version-info-label">仓库</span>
+        <span class="version-info-value code">Firsh3k/kline-visual-pattern-analyzer</span>
+      </div>
+      <div class="version-info-row">
+        <span class="version-info-label">功能集</span>
+        <span class="version-info-value">V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）</span>
+      </div>
+    </div>
+    <div class="version-modal-footer">
+      <span class="version-hint">FIR-28 · Release Version Badge & Deployment Identity</span>
+    </div>
   </div>
 </div>
 
@@ -331,10 +461,86 @@ canvas { width: 100%; display: block; }
 
 <div class="footer">
   数据来源：新浪财经公开接口（前复权日线） | 本工具基于技术形态量化分析，仅供学习参考，不构成投资建议<br>
-  股市有风险，投资需谨慎
+  股市有风险，投资需谨慎<br>
+  <span class="footer-version">
+    <span id="footerVersion">v5.0.0</span> · 
+    <span id="footerCommit" class="code">43ad6d5</span> · 
+    <span id="footerDeployTime">2026-10-07</span> · 
+    <a href="https://github.com/Firsh3k/kline-visual-pattern-analyzer/releases/tag/v5.0.0" target="_blank" style="color:#5dade2;">GitHub Release</a>
+  </span>
 </div>
 
 <script>
+// ============ FIR-28: Release Version Badge & Deployment Identity ============
+const DEPLOYMENT_INFO = {
+  version: 'v5.0.0',
+  commit: '43ad6d5fd2ee',
+  commitShort: '43ad6d5',
+  deployTime: '2026-10-07',
+  source: 'GitHub Release v5.0.0',
+  repo: 'Firsh3k/kline-visual-pattern-analyzer',
+  featureSet: 'V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）'
+};
+
+// 初始化版本徽章
+function initVersionBadge() {
+  // 更新 header 徽章
+  const versionTag = document.getElementById('versionTag');
+  if (versionTag) versionTag.textContent = DEPLOYMENT_INFO.version;
+
+  // 更新 footer
+  const footerVersion = document.getElementById('footerVersion');
+  const footerCommit = document.getElementById('footerCommit');
+  const footerDeployTime = document.getElementById('footerDeployTime');
+  if (footerVersion) footerVersion.textContent = DEPLOYMENT_INFO.version;
+  if (footerCommit) footerCommit.textContent = DEPLOYMENT_INFO.commitShort;
+  if (footerDeployTime) footerDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
+
+  // 更新弹窗
+  const modalVersion = document.getElementById('modalVersion');
+  const modalCommit = document.getElementById('modalCommit');
+  const modalDeployTime = document.getElementById('modalDeployTime');
+  if (modalVersion) modalVersion.textContent = DEPLOYMENT_INFO.version;
+  if (modalCommit) modalCommit.textContent = DEPLOYMENT_INFO.commit;
+  if (modalDeployTime) modalDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
+
+  // 绑定点击事件
+  const badge = document.getElementById('versionBadge');
+  if (badge) {
+    badge.addEventListener('click', openVersionModal);
+  }
+
+  // 点击弹窗外部关闭
+  const modal = document.getElementById('versionModal');
+  if (modal) {
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) closeVersionModal();
+    });
+  }
+
+  // ESC 键关闭
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeVersionModal();
+  });
+}
+
+function openVersionModal() {
+  const modal = document.getElementById('versionModal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeVersionModal() {
+  const modal = document.getElementById('versionModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// 页面加载完成后初始化
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initVersionBadge);
+} else {
+  initVersionBadge();
+}
+
 // ============ 4种典型形态定义 ============
 const PATTERNS = [
   {

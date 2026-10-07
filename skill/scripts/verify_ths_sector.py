@@ -26,28 +26,45 @@ import os
 import sys
 from datetime import datetime, timezone
 
-# 将项目根目录加入 path，以便导入 core 模块
+# 将项目根目录加入 path，以便导入 core 模块。
+# 生产 CLI 必须可从任意标准 checkout 运行；KLINE_PROJECT_ROOT 仅作为可选 override。
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# skill/scripts/ -> skill/ -> workspace/.user_skills/ -> workspace/
-# 项目根目录可能在其他位置，通过环境变量或相对路径查找
-PROJECT_ROOT = os.environ.get(
-    'KLINE_PROJECT_ROOT',
-    os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', '..', '..', '..', 'Doubao', 'chats', '*'))
-)
-# 尝试多个可能的项目根目录
-CANDIDATE_ROOTS = [
-    os.environ.get('KLINE_PROJECT_ROOT', ''),
-    '/home/user/Doubao/chats/38444703140272130/kline_pattern_scanner',
-    os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', '..', '..', 'Doubao', 'chats', '38444703140272130', 'kline_pattern_scanner')),
-]
+ENV_PROJECT_ROOT = os.environ.get('KLINE_PROJECT_ROOT', '').strip()
+REPO_RELATIVE_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+
+CANDIDATE_ROOTS = []
+if ENV_PROJECT_ROOT:
+    CANDIDATE_ROOTS.append(os.path.abspath(ENV_PROJECT_ROOT))
+
+# 标准仓库布局: <repo>/skill/scripts/verify_ths_sector.py
+CANDIDATE_ROOTS.append(REPO_RELATIVE_ROOT)
+
+# 额外容错：从脚本目录逐级向上查找 core/__init__.py。
+current = SCRIPT_DIR
+while True:
+    parent = os.path.dirname(current)
+    if parent == current:
+        break
+    CANDIDATE_ROOTS.append(parent)
+    current = parent
+
+# 最后允许从当前工作目录发现仓库，但不依赖 cwd。
+CANDIDATE_ROOTS.append(os.path.abspath(os.getcwd()))
+
+PROJECT_ROOT = None
+seen_roots = set()
 for root in CANDIDATE_ROOTS:
-    if root and os.path.exists(os.path.join(root, 'core', '__init__.py')):
+    if not root or root in seen_roots:
+        continue
+    seen_roots.add(root)
+    if os.path.exists(os.path.join(root, 'core', '__init__.py')):
         sys.path.insert(0, root)
         PROJECT_ROOT = root
         break
-else:
+
+if PROJECT_ROOT is None:
     print("ERROR: Cannot find project root with core/ module", file=sys.stderr)
-    print("Set KLINE_PROJECT_ROOT environment variable", file=sys.stderr)
+    print("Set KLINE_PROJECT_ROOT to a repository containing core/__init__.py", file=sys.stderr)
     sys.exit(1)
 
 from core.sector_validation import (

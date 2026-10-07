@@ -60,6 +60,25 @@ from .pipeline import (
     reconcile_snapshot_to_reports,
 )
 
+# FIR-22 — Dynamic THS Sector Index
+from .dynamic_sector import (
+    DynamicSector,
+    ManualCustomSector,
+    SectorCodeValidationError,
+    SectorResolutionError,
+    ConstituentUnavailableError,
+    validate_ths_sector_code,
+    normalize_sector_entry,
+)
+from .ths_sector_resolver import (
+    THSSectorResolver,
+    THSDataProvider,
+    IFindMCPProvider,
+    SnapshotProvider,
+    load_sectors_from_config,
+    merge_dynamic_sectors,
+)
+
 __all__ = [
     # 数据结构
     "MembershipStatus",
@@ -102,4 +121,18 @@ __all__ = [
     "load_authoritative_snapshot",
     "finalize_authoritative_reconciliation",
     "reconcile_snapshot_to_reports",
+    # FIR-22 — Dynamic THS Sector Index
+    "DynamicSector",
+    "ManualCustomSector",
+    "THSSectorResolver",
+    "THSDataProvider",
+    "IFindMCPProvider",
+    "SnapshotProvider",
+    "SectorCodeValidationError",
+    "SectorResolutionError",
+    "ConstituentUnavailableError",
+    "validate_ths_sector_code",
+    "normalize_sector_entry",
+    "load_sectors_from_config",
+    "merge_dynamic_sectors",
 ]

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "version": null,
+  "commit": null,
+  "releasedAt": null,
+  "environment": null,
+  "rollbackBaseline": "v5.0.0",
+  "repository": "Firsh3k/kline-visual-pattern-analyzer",
+  "note": "Unreleased template. Release packaging must inject the immutable tag metadata; invalid/missing identity renders as Version Unknown."
+}

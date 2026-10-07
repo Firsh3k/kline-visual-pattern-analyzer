@@ -100,9 +100,14 @@ canvas { width: 100%; display: block; }
 }
 .version-dot {
   width: 8px; height: 8px; border-radius: 50%;
+  background: #667788; box-shadow: none;
+}
+.version-badge.verified .version-dot {
   background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.6);
   animation: version-pulse 2s ease-in-out infinite;
 }
+.version-badge.unknown { border-color: rgba(136,153,170,0.35); background: rgba(42,52,65,0.35); }
+.version-badge.unknown .version-tag { color: #8899aa; }
 @keyframes version-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(0.85); }
@@ -162,6 +167,13 @@ canvas { width: 100%; display: block; }
 .footer-version .code { font-family: 'SF Mono', 'Consolas', monospace; color: #5dade2; }
 .footer-version a { text-decoration: none; transition: color 0.2s; }
 .footer-version a:hover { color: #85c1e9 !important; }
+@media (max-width: 640px) {
+  .header-right { width: 100%; justify-content: flex-end; }
+  .version-modal-content { width: calc(100% - 24px); max-height: 90vh; overflow-y: auto; }
+  .version-info-row { gap: 12px; align-items: flex-start; }
+  .version-info-value { max-width: 65%; }
+  .footer-version { max-width: 100%; overflow-wrap: anywhere; }
+}
 </style>
 </head>
 <body>
@@ -191,28 +203,24 @@ canvas { width: 100%; display: block; }
     </div>
     <div class="version-modal-body">
       <div class="version-info-row">
-        <span class="version-info-label">版本号</span>
-        <span class="version-info-value" id="modalVersion">v5.0.0</span>
+        <span class="version-info-label">Release</span>
+        <span class="version-info-value" id="modalVersion">Version Unknown</span>
       </div>
       <div class="version-info-row">
         <span class="version-info-label">Commit</span>
-        <span class="version-info-value code" id="modalCommit">43ad6d5fd2ee</span>
+        <span class="version-info-value code" id="modalCommit">—</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">部署时间</span>
-        <span class="version-info-value" id="modalDeployTime">2026-10-07</span>
+        <span class="version-info-label">Released</span>
+        <span class="version-info-value" id="modalDeployTime">—</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">代码来源</span>
-        <span class="version-info-value">GitHub Release v5.0.0</span>
+        <span class="version-info-label">Environment</span>
+        <span class="version-info-value" id="modalEnvironment">Unknown</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">仓库</span>
-        <span class="version-info-value code">Firsh3k/kline-visual-pattern-analyzer</span>
-      </div>
-      <div class="version-info-row">
-        <span class="version-info-label">功能集</span>
-        <span class="version-info-value">V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）</span>
+        <span class="version-info-label">Rollback baseline</span>
+        <span class="version-info-value" id="modalRollback">—</span>
       </div>
     </div>
     <div class="version-modal-footer">
@@ -463,54 +471,79 @@ canvas { width: 100%; display: block; }
   数据来源：新浪财经公开接口（前复权日线） | 本工具基于技术形态量化分析，仅供学习参考，不构成投资建议<br>
   股市有风险，投资需谨慎<br>
   <span class="footer-version">
-    <span id="footerVersion">v5.0.0</span> · 
-    <span id="footerCommit" class="code">43ad6d5</span> · 
-    <span id="footerDeployTime">2026-10-07</span> · 
-    <a href="https://github.com/Firsh3k/kline-visual-pattern-analyzer/releases/tag/v5.0.0" target="_blank" style="color:#5dade2;">GitHub Release</a>
+    <span id="footerVersion">Version Unknown</span> ·
+    <span id="footerCommit" class="code">—</span> ·
+    <span id="footerDeployTime">—</span> ·
+    <span id="footerEnvironment">Unknown</span> ·
+    <a id="footerReleaseLink" href="#" target="_blank" rel="noopener noreferrer" style="color:#5dade2;display:none;">GitHub Release</a>
   </span>
 </div>
 
 <script>
 // ============ FIR-28: Release Version Badge & Deployment Identity ============
-const DEPLOYMENT_INFO = {
-  version: 'v5.0.0',
-  commit: '43ad6d5fd2ee',
-  commitShort: '43ad6d5',
-  deployTime: '2026-10-07',
-  source: 'GitHub Release v5.0.0',
-  repo: 'Firsh3k/kline-visual-pattern-analyzer',
-  featureSet: 'V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）'
-};
-
-// 初始化版本徽章
-function initVersionBadge() {
-  // 更新 header 徽章
+function renderReleaseIdentity(display) {
+  const badge = document.getElementById('versionBadge');
   const versionTag = document.getElementById('versionTag');
-  if (versionTag) versionTag.textContent = DEPLOYMENT_INFO.version;
-
-  // 更新 footer
   const footerVersion = document.getElementById('footerVersion');
   const footerCommit = document.getElementById('footerCommit');
   const footerDeployTime = document.getElementById('footerDeployTime');
-  if (footerVersion) footerVersion.textContent = DEPLOYMENT_INFO.version;
-  if (footerCommit) footerCommit.textContent = DEPLOYMENT_INFO.commitShort;
-  if (footerDeployTime) footerDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
-
-  // 更新弹窗
+  const footerEnvironment = document.getElementById('footerEnvironment');
+  const footerReleaseLink = document.getElementById('footerReleaseLink');
   const modalVersion = document.getElementById('modalVersion');
   const modalCommit = document.getElementById('modalCommit');
   const modalDeployTime = document.getElementById('modalDeployTime');
-  if (modalVersion) modalVersion.textContent = DEPLOYMENT_INFO.version;
-  if (modalCommit) modalCommit.textContent = DEPLOYMENT_INFO.commit;
-  if (modalDeployTime) modalDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
+  const modalEnvironment = document.getElementById('modalEnvironment');
+  const modalRollback = document.getElementById('modalRollback');
 
-  // 绑定点击事件
-  const badge = document.getElementById('versionBadge');
   if (badge) {
-    badge.addEventListener('click', openVersionModal);
+    badge.classList.toggle('verified', Boolean(display.verified));
+    badge.classList.toggle('unknown', !display.verified);
   }
+  if (versionTag) versionTag.textContent = display.version;
+  if (footerVersion) footerVersion.textContent = display.version;
+  if (footerCommit) footerCommit.textContent = display.commitShort;
+  if (footerDeployTime) footerDeployTime.textContent = display.releasedAt;
+  if (footerEnvironment) footerEnvironment.textContent = display.environment;
+  if (modalVersion) modalVersion.textContent = display.version;
+  if (modalCommit) modalCommit.textContent = display.commit;
+  if (modalDeployTime) modalDeployTime.textContent = display.releasedAt;
+  if (modalEnvironment) modalEnvironment.textContent = display.environment;
+  if (modalRollback) modalRollback.textContent = display.rollbackBaseline;
 
-  // 点击弹窗外部关闭
+  if (footerReleaseLink) {
+    if (display.verified && display.releaseUrl) {
+      footerReleaseLink.href = display.releaseUrl;
+      footerReleaseLink.style.display = 'inline';
+    } else {
+      footerReleaseLink.removeAttribute('href');
+      footerReleaseLink.style.display = 'none';
+    }
+  }
+}
+
+async function loadReleaseIdentity() {
+  try {
+    if (!window.ReleaseIdentity) throw new Error('release identity helper unavailable');
+    const response = await fetch('release-info.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error('release metadata unavailable');
+    const metadata = await response.json();
+    renderReleaseIdentity(window.ReleaseIdentity.makeDisplay(metadata));
+  } catch (error) {
+    const fallback = window.ReleaseIdentity
+      ? window.ReleaseIdentity.unknownDisplay()
+      : {
+          verified: false, version: 'Version Unknown', commit: '—', commitShort: '—',
+          releasedAt: '—', environment: 'Unknown', rollbackBaseline: '—', releaseUrl: null
+        };
+    renderReleaseIdentity(fallback);
+    console.warn('FIR-28 release identity unavailable:', error && error.message ? error.message : error);
+  }
+}
+
+function initVersionBadge() {
+  const badge = document.getElementById('versionBadge');
+  if (badge) badge.addEventListener('click', openVersionModal);
+
   const modal = document.getElementById('versionModal');
   if (modal) {
     modal.addEventListener('click', function(e) {
@@ -518,10 +551,11 @@ function initVersionBadge() {
     });
   }
 
-  // ESC 键关闭
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeVersionModal();
   });
+
+  loadReleaseIdentity();
 }
 
 function openVersionModal() {
@@ -534,7 +568,6 @@ function closeVersionModal() {
   if (modal) modal.style.display = 'none';
 }
 
-// 页面加载完成后初始化
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initVersionBadge);
 } else {

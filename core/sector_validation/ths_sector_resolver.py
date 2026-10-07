@@ -161,15 +161,33 @@ class IFindMCPProvider(THSDataProvider):
                 f"请确认板块代码正确，或 iFinD 数据源是否包含该板块。"
             )
 
-        # 尝试从结果中提取板块名称
+        # 尝试从结果中提取板块名称（fail-closed：缺失时为 None，不伪造）
         sector_name = self._extract_sector_name(result, sector_code)
 
+        # 尝试从结果中提取权威 as-of 时间戳（fail-closed：缺失时抛出异常）
+        as_of = self._extract_as_of(result)
+        if not as_of:
+            raise AuthoritativeSourceUnavailableError(
+                f"iFinD MCP 响应中缺少权威 as-of 时间戳。"
+                f"无法确认板块 {sector_code} 成分股数据的新鲜度。"
+            )
+
         return {
-            'sectorName': sector_name,
+            'sectorName': sector_name,  # 可能为 None（权威源未返回名称）
             'constituents': constituents,
             'source': '同花顺 iFinD',
-            'asOf': datetime.now(timezone.utc).isoformat(),
+            'asOf': as_of,
         }
+
+    def _extract_as_of(self, result: Any) -> Optional[str]:
+        """从 iFinD 结果中提取权威 as-of 时间戳"""
+        if isinstance(result, dict):
+            for key in ('asOf', 'as_of', 'date', 'timestamp', 'updatedAt', 'updated_at', 'dataDate'):
+                if key in result and result[key]:
+                    val = str(result[key]).strip()
+                    if val:
+                        return val
+        return None
 
     def _extract_constituents(self, result: Any) -> List[str]:
         """从 iFinD search_securities 结果中提取股票代码列表"""
@@ -217,14 +235,22 @@ class IFindMCPProvider(THSDataProvider):
 
         return unique_codes
 
-    def _extract_sector_name(self, result: Any, sector_code: str) -> str:
-        """从 iFinD 结果中尝试提取板块名称"""
+    def _extract_sector_name(self, result: Any, sector_code: str) -> Optional[str]:
+        """
+        从 iFinD 结果中尝试提取板块名称。
+
+        Fail-closed：如果权威响应中没有板块名称，返回 None，
+        不使用 "板块{code}" 等占位符伪造元数据。
+        调用方必须处理 None 的情况（显示为 UNKNOWN 或 fail-closed）。
+        """
         if isinstance(result, dict):
             for key in ('sectorName', 'sector_name', 'name', 'plateName', 'conceptName'):
                 if key in result and result[key]:
-                    return str(result[key])
-        # 无法提取时使用代码作为名称
-        return f"板块{sector_code}"
+                    name = str(result[key]).strip()
+                    if name and not name.startswith('板块'):
+                        return name
+        # 无法提取时返回 None（不伪造板块名称）
+        return None
 
 
 class SnapshotProvider(THSDataProvider):
@@ -254,11 +280,32 @@ class SnapshotProvider(THSDataProvider):
                 f"Snapshot 中不包含板块 {sector_code}"
             )
         snap = self._snapshots[sector_code]
+
+        # Fail-closed：snapshot 必须明确提供 source 和 asOf
+        source = snap.get('source')
+        if not source or source == 'controlled_snapshot':
+            raise AuthoritativeSourceUnavailableError(
+                f"Snapshot for sector {sector_code} missing explicit authoritative source. "
+                f"Got: '{source}'. Must provide a real source identifier (e.g., '同花顺 iFinD')."
+            )
+
+        as_of = snap.get('asOf')
+        if not as_of:
+            raise AuthoritativeSourceUnavailableError(
+                f"Snapshot for sector {sector_code} missing authoritative asOf timestamp. "
+                f"Must provide the data's effective date."
+            )
+
+        sector_name = snap.get('sectorName')
+        if not sector_name:
+            # 不伪造板块名称，返回 None 让调用方处理
+            sector_name = None
+
         return {
-            'sectorName': snap.get('sectorName', f'板块{sector_code}'),
+            'sectorName': sector_name,
             'constituents': list(snap.get('constituents', [])),
-            'source': snap.get('source', 'controlled_snapshot'),
-            'asOf': snap.get('asOf', datetime.now(timezone.utc).isoformat()),
+            'source': source,
+            'asOf': as_of,
         }
 
 
@@ -364,15 +411,25 @@ class THSSectorResolver:
         与 resolve() 不同，此函数接受预先获取的板块数据，
         不依赖实时 provider。snapshot 必须有明确的来源和时间戳。
 
+        Fail-closed：
+        - source 不能是 'controlled_snapshot'（必须明确权威来源）
+        - snapshot_date 必须明确提供（不能默认当前时间）
+        - reconciliation_method 根据 source 自动判断：
+          - 包含 "ths"/"ifind"/"同花顺" → THS_IFIND
+          - 其他 → MANUAL
+
         Args:
             sector_code: 同花顺板块指数代码
             sector_name: 板块名称
             constituents: 成分股代码列表
-            source: snapshot 来源标识（如 "ths_ifind_snapshot_20261006"）
-            snapshot_date: snapshot 日期（可选，默认今天）
+            source: snapshot 来源标识（必须明确，如 "同花顺 iFinD snapshot 20261006"）
+            snapshot_date: snapshot 日期（必须明确提供，YYYY-MM-DD）
 
         Returns:
             DynamicSector
+
+        Raises:
+            AuthoritativeSourceUnavailableError: source 或 snapshot_date 不明确
         """
         # 验证代码格式
         if not validate_ths_sector_code(sector_code):
@@ -380,8 +437,24 @@ class THSSectorResolver:
                 f"无效的同花顺板块指数代码格式: '{sector_code}'。"
             )
 
-        if snapshot_date is None:
-            snapshot_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        # Fail-closed：必须明确提供 source 和 snapshot_date
+        if not source or source == 'controlled_snapshot':
+            raise AuthoritativeSourceUnavailableError(
+                f"resolve_with_snapshot requires explicit authoritative source. "
+                f"Got: '{source}'. Must provide a real source identifier."
+            )
+        if not snapshot_date:
+            raise AuthoritativeSourceUnavailableError(
+                "resolve_with_snapshot requires explicit snapshot_date (YYYY-MM-DD). "
+                "Cannot use current date as authoritative as-of."
+            )
+
+        # 根据 source 判断 reconciliation_method
+        source_lower = source.lower()
+        if any(kw in source_lower for kw in ('ths', 'ifind', '同花顺', 'tonghuashun')):
+            recon_method = ReconciliationMethod.THS_IFIND
+        else:
+            recon_method = ReconciliationMethod.MANUAL
 
         # 构建 DynamicSector
         sector = DynamicSector(
@@ -400,8 +473,8 @@ class THSSectorResolver:
             source=source,
             local_refresh_date=snapshot_date,
             authoritative_reconciliation_date=snapshot_date,
-            reconciliation_method=ReconciliationMethod.THS_IFIND,
-            reconciliation_result=f"snapshot: matched={len(constituents)}",
+            reconciliation_method=recon_method,
+            reconciliation_result=f"snapshot: matched={len(constituents)}, method={recon_method.value}",
             total_constituents=len(constituents),
             verified_count=len(constituents),
         )
@@ -446,6 +519,11 @@ class THSSectorResolver:
         """
         保存板块 provenance（与 FIR-15 对齐）。
 
+        根据 provider 类型自动判断 reconciliation_method：
+        - IFindMCPProvider → THS_IFIND
+        - SnapshotProvider → 根据 source 判断
+        - 其他 → MANUAL
+
         Args:
             sector: DynamicSector
             as_of: 数据时间戳 ISO8601
@@ -458,6 +536,18 @@ class THSSectorResolver:
         except (IndexError, TypeError):
             recon_date = today
 
+        # 根据 provider 类型判断 reconciliation_method
+        if isinstance(self.provider, IFindMCPProvider):
+            recon_method = ReconciliationMethod.THS_IFIND
+        elif isinstance(self.provider, SnapshotProvider):
+            source_lower = (sector.source or '').lower()
+            if any(kw in source_lower for kw in ('ths', 'ifind', '同花顺', 'tonghuashun')):
+                recon_method = ReconciliationMethod.THS_IFIND
+            else:
+                recon_method = ReconciliationMethod.MANUAL
+        else:
+            recon_method = ReconciliationMethod.MANUAL
+
         if sector.provenance is None:
             sector.provenance = SectorProvenance(
                 sector_name=sector.sector_name or sector.sector_code,
@@ -465,8 +555,8 @@ class THSSectorResolver:
                 source=sector.source,
                 local_refresh_date=today,
                 authoritative_reconciliation_date=recon_date,
-                reconciliation_method=ReconciliationMethod.THS_IFIND,
-                reconciliation_result=f"matched={sector.constituent_count}, asOf={as_of}",
+                reconciliation_method=recon_method,
+                reconciliation_result=f"matched={sector.constituent_count}, asOf={as_of}, method={recon_method.value}",
                 total_constituents=sector.constituent_count,
                 verified_count=sector.constituent_count,
             )

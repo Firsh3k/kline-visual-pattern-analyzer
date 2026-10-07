@@ -150,22 +150,36 @@ class TestFailClosedResolution:
         with pytest.raises(SectorCodeValidationError):
             resolver.resolve('invalid')
 
-    def test_resolve_with_snapshot_works(self):
-        """受控 snapshot 解析不依赖 provider"""
-        resolver = THSSectorResolver()  # provider=None
+    def test_resolve_with_snapshot_works(self, tmp_path):
+        """受控 snapshot 解析不依赖 provider（必须明确 source 和 snapshot_date）"""
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         sector = resolver.resolve_with_snapshot(
             '886032', '固态电池', ['600519', '000858'],
-            source='test_snapshot'
+            source='同花顺 iFinD snapshot 20261006',
+            snapshot_date='2026-10-06'
         )
         assert sector.sector_name == '固态电池'
         assert sector.constituent_count == 2
         assert sector.provenance is not None
+        assert sector.provenance.reconciliation_method == ReconciliationMethod.THS_IFIND
 
-    def test_snapshot_invalid_code_raises(self):
+    def test_snapshot_invalid_code_raises(self, tmp_path):
         """snapshot 解析也验证代码格式"""
-        resolver = THSSectorResolver()
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         with pytest.raises(SectorCodeValidationError):
-            resolver.resolve_with_snapshot('bad', '测试', [])
+            resolver.resolve_with_snapshot('bad', '测试', [], source='同花顺 iFinD', snapshot_date='2026-10-06')
+
+    def test_snapshot_without_source_fails_closed(self, tmp_path):
+        """snapshot 不提供明确 source 时 fail-closed"""
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve_with_snapshot('886032', '测试', ['600519'])
+
+    def test_snapshot_without_date_fails_closed(self, tmp_path):
+        """snapshot 不提供 snapshot_date 时 fail-closed"""
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve_with_snapshot('886032', '测试', ['600519'], source='同花顺 iFinD')
 
 
 # ============ 4. 序列化/反序列化 ============
@@ -329,22 +343,24 @@ class TestLegacyFormat:
 # ============ 8. 新鲜度判断 ============
 
 class TestFreshness:
-    def test_fresh_sector(self):
+    def test_fresh_sector(self, tmp_path):
         """新鲜板块（7天内更新）"""
-        resolver = THSSectorResolver()
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         sector = resolver.resolve_with_snapshot(
             '886032', '测试', ['600519'],
+            source='同花顺 iFinD',
             snapshot_date=datetime.now(timezone.utc).strftime('%Y-%m-%d')
         )
         assert sector.get_freshness_level() == FreshnessLevel.FRESH
         assert sector.is_fresh() is True
 
-    def test_stale_sector(self):
+    def test_stale_sector(self, tmp_path):
         """过期板块（超过30天）"""
         old_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime('%Y-%m-%d')
-        resolver = THSSectorResolver()
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         sector = resolver.resolve_with_snapshot(
             '886032', '测试', ['600519'],
+            source='同花顺 iFinD',
             snapshot_date=old_date
         )
         assert sector.get_freshness_level() in (FreshnessLevel.STALE, FreshnessLevel.NOT_RECONCILED)
@@ -359,30 +375,33 @@ class TestFreshness:
 # ============ 9. Provenance 记录 ============
 
 class TestProvenance:
-    def test_snapshot_records_provenance(self):
-        """snapshot 解析记录 provenance"""
-        resolver = THSSectorResolver()
+    def test_snapshot_records_provenance(self, tmp_path):
+        """snapshot 解析记录 provenance（必须明确 source 和 snapshot_date）"""
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         sector = resolver.resolve_with_snapshot(
             '886032', '固态电池', ['600519'],
-            source='test_snapshot_20261006'
+            source='同花顺 iFinD snapshot 20261006',
+            snapshot_date='2026-10-06'
         )
         assert sector.provenance is not None
         assert sector.provenance.sector_code == '886032'
-        assert sector.provenance.source == 'test_snapshot_20261006'
-        assert sector.provenance.authoritative_reconciliation_date is not None
+        assert sector.provenance.source == '同花顺 iFinD snapshot 20261006'
+        assert sector.provenance.authoritative_reconciliation_date == '2026-10-06'
         assert sector.provenance.reconciliation_method == ReconciliationMethod.THS_IFIND
 
-    def test_provenance_persisted(self):
-        """provenance 被持久化到文件"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            resolver = THSSectorResolver(provenance_dir=tmpdir)
-            resolver.resolve_with_snapshot(
-                '886032', '固态电池', ['600519'],
-                source='test'
-            )
-            # 检查 provenance 文件是否创建
-            files = os.listdir(tmpdir)
-            assert len(files) > 0
+    def test_provenance_persisted(self, tmp_path):
+        """provenance 被持久化到文件（使用临时目录，不污染 production）"""
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
+        resolver.resolve_with_snapshot(
+            '886032', '固态电池', ['600519'],
+            source='同花顺 iFinD',
+            snapshot_date='2026-10-06'
+        )
+        # 检查 provenance 文件是否创建
+        files = os.listdir(str(tmp_path))
+        assert len(files) > 0
+        # 确保不包含测试伪造的文件名
+        assert not any('测试' in f for f in files)
 
 
 # ============ 10. normalize_sector_entry ============
@@ -438,12 +457,13 @@ class TestResolverCache:
             assert result is None
 
     def test_get_cached_sector_after_snapshot(self):
-        """snapshot 解析后可以从缓存恢复基本信息"""
+        """snapshot 解析后可以从缓存恢复基本信息（必须明确 source 和 snapshot_date）"""
         with tempfile.TemporaryDirectory() as tmpdir:
             resolver = THSSectorResolver(provenance_dir=tmpdir)
             resolver.resolve_with_snapshot(
                 '886032', '固态电池', ['600519'],
-                source='test'
+                source='同花顺 iFinD',
+                snapshot_date='2026-10-06'
             )
             cached = resolver.get_cached_sector('886032')
             assert cached is not None
@@ -463,8 +483,8 @@ class TestIFindMCPProvider:
         provider = IFindMCPProvider(search_fn=mock_fn)
         assert provider.name == 'ths_ifind_mcp'
 
-    def test_successful_retrieval(self):
-        """通过 iFinD MCP 成功获取板块成分股"""
+    def test_successful_retrieval(self, tmp_path):
+        """通过 iFinD MCP 成功获取板块成分股（必须返回 asOf）"""
         def mock_fn(query, market='股票'):
             assert '886032' in query
             assert market == '股票'
@@ -473,53 +493,78 @@ class TestIFindMCPProvider:
                     {'code': '600519', 'name': '贵州茅台'},
                     {'code': '000858', 'name': '五粮液'},
                     {'code': '300750', 'name': '宁德时代'},
-                ]
+                ],
+                'sectorName': '固态电池',
+                'asOf': '2026-10-06T00:00:00+00:00',
             }
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         sector = resolver.resolve('886032')
         assert sector.sector_code == '886032'
+        assert sector.sector_name == '固态电池'
         assert sector.constituent_count == 3
         assert '600519' in sector.constituents
         assert sector.source == '同花顺 iFinD'
         assert sector.provenance is not None
         assert sector.provenance.reconciliation_method == ReconciliationMethod.THS_IFIND
+        assert sector.provenance.authoritative_reconciliation_date == '2026-10-06'
 
-    def test_empty_constituents_raises(self):
+    def test_missing_as_of_fails_closed(self, tmp_path):
+        """iFinD 响应缺少 asOf 时 fail-closed"""
+        def mock_fn(query, market='股票'):
+            return {'securities': [{'code': '600519'}]}
+        provider = IFindMCPProvider(search_fn=mock_fn)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve('886032')
+
+    def test_missing_sector_name_returns_none(self, tmp_path):
+        """iFinD 响应缺少板块名称时 sector_name 为 None（不伪造）"""
+        def mock_fn(query, market='股票'):
+            return {
+                'securities': [{'code': '600519'}],
+                'asOf': '2026-10-06T00:00:00+00:00',
+            }
+        provider = IFindMCPProvider(search_fn=mock_fn)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        sector = resolver.resolve('886032')
+        assert sector.sector_name is None  # 不伪造板块名称
+
+    def test_empty_constituents_raises(self, tmp_path):
         """空成分股列表抛出 ConstituentUnavailableError"""
         def mock_fn(query, market='股票'):
-            return {'securities': []}
+            return {'securities': [], 'asOf': '2026-10-06'}
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         with pytest.raises(ConstituentUnavailableError):
             resolver.resolve('886032')
 
-    def test_mcp_exception_raises_authoritative_unavailable(self):
+    def test_mcp_exception_raises_authoritative_unavailable(self, tmp_path):
         """MCP 调用异常抛出 AuthoritativeSourceUnavailableError"""
         def mock_fn(query, market='股票'):
             raise RuntimeError('MCP connection timeout')
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         with pytest.raises(AuthoritativeSourceUnavailableError):
             resolver.resolve('886032')
 
-    def test_string_code_format(self):
+    def test_string_code_format(self, tmp_path):
         """支持字符串格式的股票代码"""
         def mock_fn(query, market='股票'):
-            return {'securities': ['600519', '000858', '300750']}
+            return {'securities': ['600519', '000858', '300750'], 'asOf': '2026-10-06'}
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         sector = resolver.resolve('886032')
         assert sector.constituent_count == 3
 
-    def test_duplicate_codes_deduped(self):
+    def test_duplicate_codes_deduped(self, tmp_path):
         """重复股票代码被去重"""
         def mock_fn(query, market='股票'):
             return {'securities': [
                 {'code': '600519'}, {'code': '600519'}, {'code': '000858'}
-            ]}
+            ], 'asOf': '2026-10-06'}
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         sector = resolver.resolve('886032')
         assert sector.constituent_count == 2  # 600519 去重
 
@@ -527,21 +572,47 @@ class TestIFindMCPProvider:
 # ============ 12. SnapshotProvider ============
 
 class TestSnapshotProvider:
-    def test_successful_fetch(self):
-        """Snapshot provider 成功获取"""
+    def test_successful_fetch(self, tmp_path):
+        """Snapshot provider 成功获取（必须明确 source 和 asOf）"""
         snapshots = {
-            '886032': {'sectorName': '固态电池', 'constituents': ['600519', '000858']}
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519', '000858'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '2026-10-06T00:00:00+00:00',
+            }
         }
         provider = SnapshotProvider(snapshots=snapshots)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         sector = resolver.resolve('886032')
         assert sector.sector_name == '固态电池'
         assert sector.constituent_count == 2
+        assert sector.provenance.reconciliation_method == ReconciliationMethod.THS_IFIND
 
-    def test_missing_sector_raises(self):
+    def test_missing_source_fails_closed(self, tmp_path):
+        """Snapshot 缺少 source 时 fail-closed"""
+        snapshots = {
+            '886032': {'sectorName': '固态电池', 'constituents': ['600519'], 'asOf': '2026-10-06'}
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve('886032')
+
+    def test_missing_as_of_fails_closed(self, tmp_path):
+        """Snapshot 缺少 asOf 时 fail-closed"""
+        snapshots = {
+            '886032': {'sectorName': '固态电池', 'constituents': ['600519'], 'source': '同花顺 iFinD'}
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve('886032')
+
+    def test_missing_sector_raises(self, tmp_path):
         """snapshot 中不存在的板块抛出 SectorResolutionError"""
         provider = SnapshotProvider(snapshots={})
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         with pytest.raises(SectorResolutionError):
             resolver.resolve('999999')
 
@@ -551,7 +622,7 @@ class TestSnapshotProvider:
 class TestQAAcceptance886032:
     """QA 要求的确定性验收测试：886032 固态电池示例"""
 
-    def test_qa_example_886032_full_flow(self):
+    def test_qa_example_886032_full_flow(self, tmp_path):
         """完整流程：格式验证 → 权威源获取 → provenance 记录 → 成分股可用"""
         def mock_fn(query, market='股票'):
             return {
@@ -559,10 +630,12 @@ class TestQAAcceptance886032:
                     {'code': '300750', 'name': '宁德时代'},
                     {'code': '002594', 'name': '比亚迪'},
                     {'code': '688567', 'name': '孚能科技'},
-                ]
+                ],
+                'sectorName': '固态电池',
+                'asOf': '2026-10-06T00:00:00+00:00',
             }
         provider = IFindMCPProvider(search_fn=mock_fn)
-        resolver = THSSectorResolver(provider=provider)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
 
         # 1. 格式验证
         assert validate_ths_sector_code('886032') is True
@@ -574,19 +647,22 @@ class TestQAAcceptance886032:
         assert sector.provenance is not None
         assert sector.provenance.sector_code == '886032'
         assert sector.provenance.source == '同花顺 iFinD'
-        assert sector.provenance.authoritative_reconciliation_date is not None
+        assert sector.provenance.authoritative_reconciliation_date == '2026-10-06'
+        assert sector.provenance.reconciliation_method == ReconciliationMethod.THS_IFIND
 
         # 4. 成分股可用
         assert sector.constituent_count == 3
         assert '300750' in sector.constituents
+        assert sector.sector_name == '固态电池'
 
-    def test_qa_example_stale_rejection(self):
+    def test_qa_example_stale_rejection(self, tmp_path):
         """数据过期的板块不能用于扫描（模拟 freshness gate）"""
-        # 创建一个 60 天前的 snapshot
+        # 创建一个 60 天前的 snapshot（必须明确 source 和 snapshot_date）
         old_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime('%Y-%m-%d')
-        resolver = THSSectorResolver()
+        resolver = THSSectorResolver(provenance_dir=str(tmp_path))
         sector = resolver.resolve_with_snapshot(
             '886032', '固态电池', ['600519'],
+            source='同花顺 iFinD',
             snapshot_date=old_date
         )
         # 模拟 freshness gate：超过 7 天即为 stale

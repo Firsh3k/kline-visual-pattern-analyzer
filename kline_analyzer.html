@@ -3354,13 +3354,6 @@ function exportConfig() {
     dynamicSectors = dsData ? JSON.parse(dsData) : [];
   } catch(e) {}
 
-  // FIR-22: 加载动态同花顺板块
-  let dynamicSectors = [];
-  try {
-    const dsData = localStorage.getItem(DYNAMIC_SECTORS_KEY);
-    dynamicSectors = dsData ? JSON.parse(dsData) : [];
-  } catch(e) {}
-
   // FIR-22: 加载动态板块删除 tombstone
   let dynamicSectorTombstones = [];
   try {
@@ -4768,14 +4761,40 @@ function mergeDynamicSectorsJS(remoteSectors, localSectors, remoteTombstones, lo
   const merged = {};
   const allTombstones = {};
 
-  // 合并 tombstones（取并集）
-  (remoteTombstones || []).forEach(t => { allTombstones[t.sectorCode] = t; });
-  (localTombstones || []).forEach(t => { allTombstones[t.sectorCode] = t; });
+  // 合并 tombstones（取并集，保留较新的删除记录）
+  (remoteTombstones || []).forEach(t => {
+    const existing = allTombstones[t.sectorCode];
+    if (!existing || (t.deletedAt || '') > (existing.deletedAt || '')) {
+      allTombstones[t.sectorCode] = t;
+    }
+  });
+  (localTombstones || []).forEach(t => {
+    const existing = allTombstones[t.sectorCode];
+    if (!existing || (t.deletedAt || '') > (existing.deletedAt || '')) {
+      allTombstones[t.sectorCode] = t;
+    }
+  });
+
+  // FIR-20: Re-add 语义 — 检查是否有板块的 updatedAt 比 tombstone 的 deletedAt 新
+  // 如果是，说明用户显式重新添加了该板块，应该保留并清除 tombstone
+  const reAddedCodes = new Set();
+  [...(remoteSectors || []), ...(localSectors || [])].forEach(s => {
+    const tombstone = allTombstones[s.sectorCode];
+    if (tombstone) {
+      const sectorUpdated = s.updatedAt || '';
+      const tombstoneDeleted = tombstone.deletedAt || '';
+      if (sectorUpdated && tombstoneDeleted && sectorUpdated > tombstoneDeleted) {
+        // 显式重新添加：清除 tombstone
+        reAddedCodes.add(s.sectorCode);
+        delete allTombstones[s.sectorCode];
+      }
+    }
+  });
 
   // 先加入远程板块
   (remoteSectors || []).forEach(s => {
     const identity = (s.type || 'ths_sector_index') + ':' + s.sectorCode;
-    // 过滤已 tombstoned 的板块
+    // 过滤已 tombstoned 的板块（re-added 的板块已清除 tombstone）
     if (!allTombstones[s.sectorCode]) {
       merged[identity] = s;
     }
@@ -4798,7 +4817,8 @@ function mergeDynamicSectorsJS(remoteSectors, localSectors, remoteTombstones, lo
 
   return {
     sectors: Object.values(merged).sort((a, b) => (a.sectorCode || '').localeCompare(b.sectorCode || '')),
-    tombstones: Object.values(allTombstones)
+    tombstones: Object.values(allTombstones),
+    reAddedCodes: Array.from(reAddedCodes),
   };
 }
 
@@ -4882,8 +4902,20 @@ function addTHSSectorToScope() {
     return;
   }
 
+  // FIR-20: 显式 re-add 语义 — 清除该板块的 tombstone（如果存在）
+  // 这确保用户故意重新添加的板块不会在下次同步时再次消失
+  const tombstones = loadDynamicSectorTombstones();
+  const tombstoneIdx = tombstones.findIndex(t => t.sectorCode === code);
+  let wasTombstoned = false;
+  if (tombstoneIdx !== -1) {
+    wasTombstoned = true;
+    tombstones.splice(tombstoneIdx, 1);
+    saveDynamicSectorTombstones(tombstones);
+  }
+
   // 添加为待验证板块（成分股为空，verifyStatus=pending）
   // 权威源验证通过 Python Skill / iFinD MCP 完成，结果通过 GitHub 配置同步
+  const now = new Date().toISOString();
   const newSector = {
     type: 'ths_sector_index',
     sectorCode: code,
@@ -4893,7 +4925,7 @@ function addTHSSectorToScope() {
     constituentCount: 0,
     verifyStatus: SECTOR_VERIFY_STATUS.PENDING,
     provenance: null,
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
     available: true,
   };
 
@@ -4906,7 +4938,12 @@ function addTHSSectorToScope() {
   document.getElementById('addTHSSectorBtn').style.display = 'none';
 
   renderSectorList();
-  alert(`已添加待验证板块 ${code}。\n\n成分股需通过同花顺权威源验证（Python Skill），\n验证后通过 GitHub 配置同步到此页面。\n\n验证命令示例："帮我验证同花顺板块 ${code}"`);
+
+  let msg = `已添加待验证板块 ${code}。\n\n成分股需通过同花顺权威源验证（Python Skill），\n验证后通过 GitHub 配置同步到此页面。\n\n验证命令示例："帮我验证同花顺板块 ${code}"`;
+  if (wasTombstoned) {
+    msg += `\n\n⚠️ 注意：此板块之前曾被删除，已清除删除记录（tombstone）。\n重新添加后，该板块将参与跨设备同步。`;
+  }
+  alert(msg);
 }
 
 // 刷新动态板块成分股（Web端不直接刷新，提示用户通过 Python Skill 验证）
@@ -4998,7 +5035,6 @@ function getAllSectorsWithMeta() {
       scannable: scannable,
       provenance: sector.provenance,
     };
-    }
   }
 
   return { sectors, meta };

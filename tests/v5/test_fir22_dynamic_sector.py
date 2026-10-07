@@ -776,5 +776,139 @@ class TestDuplicateConstituentScanOnce:
         assert len(code_to_sectors['600519']) == 1
 
 
+# ============ 16. Final QA Gate: as-of 日期严格验证 ============
+
+class TestAuthoritativeDateValidation:
+    """Final QA Gate P0-3: 权威 as-of 日期必须严格验证（无效/未来/缺失都 fail-closed）"""
+
+    def test_invalid_date_format_fails_closed(self, tmp_path):
+        """无效日期格式（如 'not-a-date'）必须 fail-closed"""
+        snapshots = {
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': 'not-a-date',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError, match='日期格式无效'):
+            resolver.resolve('886032')
+
+    def test_future_date_fails_closed(self, tmp_path):
+        """未来日期必须 fail-closed（防止伪造新鲜度）"""
+        future_date = '2099-12-31'
+        snapshots = {
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': future_date,
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError, match='未来日期'):
+            resolver.resolve('886032')
+
+    def test_empty_date_fails_closed(self, tmp_path):
+        """空字符串日期必须 fail-closed"""
+        snapshots = {
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError):
+            resolver.resolve('886032')
+
+    def test_valid_date_passes(self, tmp_path):
+        """有效日期（过去）必须通过验证"""
+        snapshots = {
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '2026-10-01',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        sector = resolver.resolve('886032')
+        assert sector.sector_name == '固态电池'
+        assert sector.constituent_count == 1
+
+    def test_iso8601_with_timezone_passes(self, tmp_path):
+        """ISO8601 带时区的日期必须通过验证"""
+        snapshots = {
+            '886032': {
+                'sectorName': '固态电池',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '2026-10-06T00:00:00+00:00',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        sector = resolver.resolve('886032')
+        assert sector.sector_name == '固态电池'
+
+    def test_resolve_with_snapshot_future_date_fails(self, tmp_path):
+        """resolve_with_snapshot 的未来日期必须 fail-closed"""
+        resolver = THSSectorResolver(provider=None, provenance_dir=str(tmp_path))
+        with pytest.raises(AuthoritativeSourceUnavailableError, match='未来日期'):
+            resolver.resolve_with_snapshot(
+                sector_code='886032',
+                sector_name='固态电池',
+                constituents=['600519'],
+                source='同花顺 iFinD snapshot 20261006',
+                snapshot_date='2099-12-31',
+            )
+
+
+# ============ 17. Final QA Gate: 缺失板块名称 fail-closed ============
+
+class TestMissingSectorNameFailClosed:
+    """Final QA Gate P1: 权威源缺失板块名称时，sector_name 为 None（不伪造）"""
+
+    def test_missing_sector_name_returns_none(self, tmp_path):
+        """权威源未返回板块名称时，sector_name 为 None（不使用 板块{code} 占位）"""
+        snapshots = {
+            '886032': {
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '2026-10-06',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        sector = resolver.resolve('886032')
+        # 不伪造板块名称
+        assert sector.sector_name is None
+        # 成分股仍然可用
+        assert sector.constituent_count == 1
+        assert '600519' in sector.constituents
+
+    def test_empty_sector_name_returns_none(self, tmp_path):
+        """空字符串板块名称也视为缺失，返回 None"""
+        snapshots = {
+            '886032': {
+                'sectorName': '',
+                'constituents': ['600519'],
+                'source': '同花顺 iFinD snapshot',
+                'asOf': '2026-10-06',
+            }
+        }
+        provider = SnapshotProvider(snapshots=snapshots)
+        resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
+        sector = resolver.resolve('886032')
+        assert sector.sector_name is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

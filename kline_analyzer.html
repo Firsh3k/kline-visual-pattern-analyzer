@@ -4722,10 +4722,25 @@ function getSectorFreshnessStatus(sector) {
   if (sector.verifyStatus === SECTOR_VERIFY_STATUS.UNAVAILABLE) {
     return SECTOR_VERIFY_STATUS.UNAVAILABLE;
   }
-  // 检查 provenance 中的权威对账日期
-  const reconDate = sector.provenance?.reconciliationDate || sector.provenance?.asOf || sector.updatedAt;
+  // FIR-15 schema: 只使用权威 provenance 中的 authoritative_reconciliation_date
+  // 支持 snake_case (Python) 和 camelCase (JS) 两种字段名
+  // 绝对不使用本地 sector.updatedAt 作为权威新鲜度（防止本地刷新伪造新鲜度）
+  const reconDate = sector.provenance?.authoritative_reconciliation_date
+                 || sector.provenance?.authoritativeReconciliationDate
+                 || sector.provenance?.reconciliationDate;  // 向后兼容旧格式
+
+  // 缺失权威对账日期 → pending（不可扫描）
   if (!reconDate) return SECTOR_VERIFY_STATUS.PENDING;
-  const days = Math.floor((Date.now() - new Date(reconDate).getTime()) / (1000 * 60 * 60 * 24));
+
+  // 解析日期，无效日期 → unavailable
+  const reconTime = new Date(reconDate).getTime();
+  if (isNaN(reconTime)) return SECTOR_VERIFY_STATUS.UNAVAILABLE;
+
+  // 未来日期 → unavailable（防止伪造新鲜度）
+  const now = Date.now();
+  if (reconTime > now) return SECTOR_VERIFY_STATUS.UNAVAILABLE;
+
+  const days = Math.floor((now - reconTime) / (1000 * 60 * 60 * 24));
   if (days <= DYNAMIC_SECTOR_MAX_FRESH_DAYS) {
     return SECTOR_VERIFY_STATUS.VERIFIED;
   }
@@ -4913,18 +4928,20 @@ function addTHSSectorToScope() {
     saveDynamicSectorTombstones(tombstones);
   }
 
-  // 添加为待验证板块（成分股为空，verifyStatus=pending）
-  // 权威源验证通过 Python Skill / iFinD MCP 完成，结果通过 GitHub 配置同步
+  // FIR-22 两步产品流程（已获 Product Owner 确认）：
+  // Step 1: Web 端只做格式验证，添加为"待验证"状态（sectorName=null，不伪造板块名称）
+  // Step 2: 用户通过 Python Skill（iFinD MCP）进行权威源验证，结果通过 GitHub 配置同步
+  // 这是因为纯静态 HTML 无法直接调用 iFinD MCP 工具，必须通过显式连接器边界
   const now = new Date().toISOString();
   const newSector = {
     type: 'ths_sector_index',
     sectorCode: code,
-    sectorName: `板块${code}`,
+    sectorName: null,  // 不伪造板块名称，权威验证后由 Skill 填充
     source: '待验证',
     constituents: [],
     constituentCount: 0,
     verifyStatus: SECTOR_VERIFY_STATUS.PENDING,
-    provenance: null,
+    provenance: null,  // 待验证状态无权威 provenance
     updatedAt: now,
     available: true,
   };
@@ -5016,7 +5033,9 @@ function getAllSectorsWithMeta() {
     // Freshness gate：只有已验证且新鲜的板块才能用于扫描
     const scannable = isSectorScannable(sector);
     const status = getSectorFreshnessStatus(sector);
-    const displayName = `${sector.sectorName}（动态）`;
+    // 待验证板块 sectorName 为 null，使用板块代码作为显示名称（不伪造板块名称）
+    const nameForDisplay = sector.sectorName || sector.sectorCode;
+    const displayName = `${nameForDisplay}（动态）`;
 
     if (scannable) {
       sectors[displayName] = sector.constituents;

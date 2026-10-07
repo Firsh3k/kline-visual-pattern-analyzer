@@ -57,6 +57,73 @@ from .types import (
 )
 
 
+# ============ 权威日期验证（Fail-closed） ============
+
+def validate_authoritative_date(as_of: str) -> str:
+    """
+    验证权威 as-of 日期。
+
+    Fail-closed 原则：
+    - 必须是可解析的 ISO8601 或 YYYY-MM-DD 格式
+    - 不能是未来日期
+    - 不接受空字符串或 None
+    - 验证失败抛出 AuthoritativeSourceUnavailableError
+
+    Args:
+        as_of: 权威数据有效日期
+
+    Returns:
+        验证后的日期字符串（ISO8601 格式）
+
+    Raises:
+        AuthoritativeSourceUnavailableError: 日期缺失、无效或为未来日期
+    """
+    if not as_of or not isinstance(as_of, str):
+        raise AuthoritativeSourceUnavailableError(
+            "权威 as-of 日期缺失。必须提供明确的权威数据有效日期。"
+        )
+
+    as_of = as_of.strip()
+    if not as_of:
+        raise AuthoritativeSourceUnavailableError(
+            "权威 as-of 日期为空。必须提供明确的权威数据有效日期。"
+        )
+
+    # 尝试解析日期
+    parsed = None
+    for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d', '%Y/%m/%d'):
+        try:
+            parsed = datetime.strptime(as_of, fmt)
+            break
+        except ValueError:
+            continue
+
+    if parsed is None:
+        # 尝试 fromisoformat（Python 3.7+）
+        try:
+            parsed = datetime.fromisoformat(as_of.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            raise AuthoritativeSourceUnavailableError(
+                f"权威 as-of 日期格式无效: '{as_of}'。"
+                f"必须是 ISO8601 或 YYYY-MM-DD 格式。"
+            )
+
+    # 如果是 naive datetime，假设为 UTC
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    # 检查是否为未来日期
+    now = datetime.now(timezone.utc)
+    if parsed > now:
+        raise AuthoritativeSourceUnavailableError(
+            f"权威 as-of 日期为未来日期: '{as_of}'。"
+            f"当前时间: {now.isoformat()}。"
+            f"未来日期不能作为权威数据有效时间。"
+        )
+
+    return parsed.isoformat()
+
+
 # ============ Provider 接口 ============
 
 class THSDataProvider(ABC):
@@ -164,13 +231,15 @@ class IFindMCPProvider(THSDataProvider):
         # 尝试从结果中提取板块名称（fail-closed：缺失时为 None，不伪造）
         sector_name = self._extract_sector_name(result, sector_code)
 
-        # 尝试从结果中提取权威 as-of 时间戳（fail-closed：缺失时抛出异常）
-        as_of = self._extract_as_of(result)
-        if not as_of:
+        # 尝试从结果中提取权威 as-of 时间戳（fail-closed：缺失/无效/未来都抛出异常）
+        raw_as_of = self._extract_as_of(result)
+        if not raw_as_of:
             raise AuthoritativeSourceUnavailableError(
                 f"iFinD MCP 响应中缺少权威 as-of 时间戳。"
                 f"无法确认板块 {sector_code} 成分股数据的新鲜度。"
             )
+        # 验证日期格式和有效性（缺失/无效/未来都 fail-closed）
+        as_of = validate_authoritative_date(raw_as_of)
 
         return {
             'sectorName': sector_name,  # 可能为 None（权威源未返回名称）
@@ -295,6 +364,8 @@ class SnapshotProvider(THSDataProvider):
                 f"Snapshot for sector {sector_code} missing authoritative asOf timestamp. "
                 f"Must provide the data's effective date."
             )
+        # 验证日期格式和有效性（缺失/无效/未来都 fail-closed）
+        as_of = validate_authoritative_date(as_of)
 
         sector_name = snap.get('sectorName')
         if not sector_name:
@@ -382,17 +453,32 @@ class THSSectorResolver:
         # 3. 通过 provider 获取板块数据
         sector_data = self.provider.fetch_sector(sector_code)
 
-        # 4. 构建 DynamicSector
+        # 4. 验证权威 as-of（fail-closed：不允许 fallback 到当前时间）
+        as_of = sector_data.get('asOf')
+        if not as_of:
+            raise AuthoritativeSourceUnavailableError(
+                f"Provider 返回的板块数据缺少权威 as-of 时间戳。"
+                f"无法确认板块 {sector_code} 成分股数据的新鲜度。"
+            )
+        # 验证日期格式和有效性（缺失/无效/未来都 fail-closed）
+        as_of = validate_authoritative_date(as_of)
+
+        # 5. 验证权威板块名称（P1: 缺失名称标记为 unavailable，不伪造）
+        sector_name = sector_data.get('sectorName')
+        if not sector_name:
+            # 权威源未返回板块名称 → 标记为 unavailable，不使用占位符
+            sector_name = None
+
+        # 6. 构建 DynamicSector
         sector = DynamicSector(
             sector_code=sector_code,
-            sector_name=sector_data.get('sectorName', ''),
+            sector_name=sector_name,  # 可能为 None（权威源未返回名称）
             source=sector_data.get('source', self.provider.name),
             constituents=sector_data.get('constituents', []),
             constituent_count=len(sector_data.get('constituents', [])),
         )
 
-        # 5. 记录 provenance（与 FIR-15 对齐）
-        as_of = sector_data.get('asOf', datetime.now(timezone.utc).isoformat())
+        # 7. 记录 provenance（与 FIR-15 对齐）
         self._save_provenance(sector, as_of)
 
         return sector
@@ -448,6 +534,9 @@ class THSSectorResolver:
                 "resolve_with_snapshot requires explicit snapshot_date (YYYY-MM-DD). "
                 "Cannot use current date as authoritative as-of."
             )
+        # 验证 snapshot_date 格式和有效性（缺失/无效/未来都 fail-closed）
+        validated_date = validate_authoritative_date(snapshot_date)
+        snapshot_date = validated_date[:10]  # 提取日期部分
 
         # 根据 source 判断 reconciliation_method
         source_lower = source.lower()

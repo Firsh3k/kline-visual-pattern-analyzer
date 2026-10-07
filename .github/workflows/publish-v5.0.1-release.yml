@@ -1,0 +1,119 @@
+name: Publish V5.0.1 Release
+
+on:
+  push:
+    branches:
+      - release-publisher/v5.0.1
+    paths:
+      - .github/workflows/publish-v5.0.1-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout publisher branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable target and tag availability
+        run: |
+          set -euo pipefail
+          TARGET_SHA="3de35f02d20ac0ad47e91972abb6cd0549c70985"
+          git cat-file -e "${TARGET_SHA}^{commit}"
+          if git ls-remote --exit-code --tags origin refs/tags/v5.0.1 >/dev/null 2>&1; then
+            echo "ERROR: refs/tags/v5.0.1 already exists; refusing to move or overwrite it."
+            exit 1
+          fi
+
+      - name: Create annotated v5.0.1 tag
+        run: |
+          set -euo pipefail
+          git config user.name "Firsh Release Automation"
+          git config user.email "firsh-release@users.noreply.github.com"
+          git tag -a v5.0.1 3de35f02d20ac0ad47e91972abb6cd0549c70985 -m "V5.0.1 Stable Production Baseline"
+          git push origin refs/tags/v5.0.1
+
+      - name: Build deployment package with immutable release identity
+        run: |
+          set -euo pipefail
+          PACKAGE_DIR="/tmp/kline-visual-pattern-analyzer-v5.0.1"
+          rm -rf "${PACKAGE_DIR}" /tmp/kline-visual-pattern-analyzer-v5.0.1-deploy.zip
+          mkdir -p "${PACKAGE_DIR}"
+          git archive 3de35f02d20ac0ad47e91972abb6cd0549c70985 | tar -x -C "${PACKAGE_DIR}"
+
+          cat > "${PACKAGE_DIR}/release-info.json" <<'EOF'
+          {
+            "schemaVersion": 1,
+            "version": "v5.0.1",
+            "commit": "3de35f02d20ac0ad47e91972abb6cd0549c70985",
+            "releasedAt": "2026-10-07",
+            "environment": "production",
+            "rollbackBaseline": "v5.0.0",
+            "repository": "Firsh3k/kline-visual-pattern-analyzer"
+          }
+          EOF
+
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          p = Path("/tmp/kline-visual-pattern-analyzer-v5.0.1/release-info.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          assert data["version"] == "v5.0.1"
+          assert data["commit"] == "3de35f02d20ac0ad47e91972abb6cd0549c70985"
+          assert re.fullmatch(r"[0-9a-f]{40}", data["commit"])
+          assert data["environment"] == "production"
+          assert data["rollbackBaseline"] == "v5.0.0"
+          html = Path("/tmp/kline-visual-pattern-analyzer-v5.0.1/kline_analyzer.html").read_text(encoding="utf-8")
+          assert "release-info.json" in html
+          assert "Version Unknown" in html
+          print("Deployment package release identity verified")
+          PY
+
+          cd /tmp
+          zip -qr kline-visual-pattern-analyzer-v5.0.1-deploy.zip kline-visual-pattern-analyzer-v5.0.1
+          sha256sum kline-visual-pattern-analyzer-v5.0.1-deploy.zip > kline-visual-pattern-analyzer-v5.0.1-deploy.zip.sha256
+
+      - name: Create GitHub Release with deployment asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          # Kline Visual Pattern Analyzer V5.0.1
+
+          Stable patch release adding FIR-28 Release Version Badge & Deployment Identity.
+
+          ## Deployment identity
+          - Release tag: `v5.0.1`
+          - Commit: `3de35f02d20ac0ad47e91972abb6cd0549c70985`
+          - Previous stable / rollback baseline: `v5.0.0`
+
+          ## QA
+          - PR #46 Final QA: PASS
+          - Pre-merge CI #192: 4/4 green
+          - Post-merge CI #193: 4/4 green
+          - Python V5 regression: 644/644 passed
+          - FIR-28 release identity regression gate: PASS
+          - JS syntax / FIR-19 / FIR-20 / cross-runtime parity: PASS
+
+          ## IMPORTANT — package to deploy
+          Deploy **`kline-visual-pattern-analyzer-v5.0.1-deploy.zip`** from this Release.
+
+          This deployment asset contains the immutable `release-info.json` for v5.0.1, including the exact release commit SHA. The auto-generated GitHub "Source code" archives intentionally contain the unreleased fail-closed metadata template and will display `Version Unknown`; they are source archives, not the production deployment package.
+
+          ## Rollback
+          If v5.0.1 is unacceptable in production, redeploy the `v5.0.0` release baseline. Never move or overwrite either tag.
+          EOF
+
+          gh release create v5.0.1             /tmp/kline-visual-pattern-analyzer-v5.0.1-deploy.zip             /tmp/kline-visual-pattern-analyzer-v5.0.1-deploy.zip.sha256             --verify-tag             --title "V5.0.1 — Release Identity Patch"             --notes-file /tmp/release-notes.md
+
+      - name: Confirm release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v5.0.1 --json tagName,name,isDraft,isPrerelease,url,targetCommitish,assets

@@ -272,6 +272,10 @@ def main():
         sys.exit(1)
 
     # 6. 输出结果
+    # 构建 provenance 文件路径（SectorProvenance 没有 provenance_file 属性，手动构建）
+    provenance_filename = f"{sector.sector_name or sector.sector_code}_provenance.json"
+    provenance_path = os.path.join(provenance_dir, provenance_filename)
+
     result = {
         'sectorCode': sector.sector_code,
         'sectorName': sector.sector_name,
@@ -279,12 +283,12 @@ def main():
         'constituents': sector.constituents,
         'source': sector.source,
         'provenance': {
-            'reconciliationDate': sector.provenance.authoritative_reconciliation_date if sector.provenance else None,
+            'authoritativeReconciliationDate': sector.provenance.authoritative_reconciliation_date if sector.provenance else None,
             'reconciliationMethod': sector.provenance.reconciliation_method.value if sector.provenance else None,
             'verifiedCount': sector.provenance.verified_count if sector.provenance else 0,
-            'provenanceFile': sector.provenance.provenance_file if sector.provenance else None,
+            'provenanceFile': provenance_path if os.path.exists(provenance_path) else None,
         },
-        'verified': True,
+        'verified': sector.provenance is not None and sector.provenance.authoritative_reconciliation_date is not None,
     }
 
     if args.quiet:
@@ -292,15 +296,19 @@ def main():
     else:
         print(f"✅ 同花顺板块验证成功")
         print(f"   板块代码: {sector.sector_code}")
-        print(f"   板块名称: {sector.sector_name}")
+        print(f"   板块名称: {sector.sector_name or '(权威源未返回名称)'}")
         print(f"   成分股数量: {sector.constituent_count}")
         print(f"   权威来源: {sector.source}")
         if sector.provenance:
-            print(f"   对账日期: {sector.provenance.authoritative_reconciliation_date}")
+            print(f"   对账日期: {sector.provenance.authoritative_reconciliation_date or '(未对账)'}")
             print(f"   对账方式: {sector.provenance.reconciliation_method.value}")
-            print(f"   Provenance文件: {sector.provenance.provenance_file}")
+            print(f"   Provenance文件: {provenance_path if os.path.exists(provenance_path) else '(未保存)'}")
         print()
-        print("下一步：将验证结果同步到 GitHub 配置")
+        if result['verified']:
+            print("下一步：将验证结果同步到 GitHub 配置")
+        else:
+            print("⚠️ 注意：权威源未返回板块名称，provenance 标记为未对账")
+            print("   请检查 iFinD MCP 响应是否包含 sectorName 字段")
         print(f"  板块标识: ths_sector_index:{sector.sector_code}")
         print(f"  成分股: {','.join(sector.constituents[:5])}{'...' if sector.constituent_count > 5 else ''}")
         print()

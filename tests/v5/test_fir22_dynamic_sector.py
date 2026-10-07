@@ -17,6 +17,8 @@ FIR-22 — Dynamic THS Sector Index Scan Scope 自动化测试
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 
@@ -908,6 +910,176 @@ class TestMissingSectorNameFailClosed:
         resolver = THSSectorResolver(provider=provider, provenance_dir=str(tmp_path))
         sector = resolver.resolve('886032')
         assert sector.sector_name is None
+
+
+# ============ 18. CLI 集成测试（production path） ============
+
+class TestVerifyTHSSectorCLI:
+    """CLI 集成测试：通过 subprocess 调用 verify_ths_sector.py，验证生产路径"""
+
+    CLI_SCRIPT = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        'skill', 'scripts', 'verify_ths_sector.py'
+    )
+
+    def _run_cli(self, sector_code, stdin_data=None, args=None, provenance_dir=None):
+        """运行 CLI 并返回 (returncode, stdout, stderr)"""
+        cmd = [sys.executable, self.CLI_SCRIPT, sector_code, '--quiet']
+        if provenance_dir:
+            cmd.extend(['--provenance-dir', provenance_dir])
+        if args:
+            cmd.extend(args)
+
+        result = subprocess.run(
+            cmd,
+            input=stdin_data,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode, result.stdout, result.stderr
+
+    def test_cli_success_path_with_stdin(self, tmp_path):
+        """CLI 成功路径：通过 stdin 传入 iFinD MCP JSON，验证成功"""
+        mcp_json = json.dumps({
+            'securities': [{'code': '600519', 'name': '贵州茅台'}, {'code': '000858', 'name': '五粮液'}],
+            'sectorName': '白酒',
+            'asOf': '2026-10-06',
+        })
+        provenance_dir = str(tmp_path / 'provenance')
+        returncode, stdout, stderr = self._run_cli(
+            '886032', stdin_data=mcp_json,
+            args=['--as-of', '2026-10-06'],
+            provenance_dir=provenance_dir,
+        )
+        assert returncode == 0, f"CLI failed: {stderr}"
+        result = json.loads(stdout)
+        assert result['sectorCode'] == '886032'
+        assert result['sectorName'] == '白酒'
+        assert result['constituentCount'] == 2
+        assert result['verified'] is True
+        assert result['provenance']['authoritativeReconciliationDate'] == '2026-10-06'
+        assert result['provenance']['reconciliationMethod'] == 'ths_ifind'
+        assert result['provenance']['verifiedCount'] == 2
+        # provenance 文件应该存在
+        assert os.path.exists(result['provenance']['provenanceFile'])
+
+    def test_cli_success_path_with_input_file(self, tmp_path):
+        """CLI 成功路径：通过 --input 文件传入 iFinD MCP JSON"""
+        mcp_json = json.dumps({
+            'securities': [{'code': '600519'}],
+            'sectorName': '测试板块',
+            'asOf': '2026-10-06',
+        })
+        input_file = tmp_path / 'mcp_response.json'
+        input_file.write_text(mcp_json)
+        provenance_dir = str(tmp_path / 'provenance')
+        returncode, stdout, stderr = self._run_cli(
+            '886032',
+            args=['--input', str(input_file), '--as-of', '2026-10-06'],
+            provenance_dir=provenance_dir,
+        )
+        assert returncode == 0, f"CLI failed: {stderr}"
+        result = json.loads(stdout)
+        assert result['sectorName'] == '测试板块'
+        assert result['constituentCount'] == 1
+        assert result['verified'] is True
+
+    def test_cli_missing_sector_name_not_verified(self, tmp_path):
+        """CLI：缺失板块名称时，provenance 不标记为 VERIFIED（fail-closed）"""
+        mcp_json = json.dumps({
+            'securities': [{'code': '600519'}, {'code': '000858'}],
+            'asOf': '2026-10-06',
+            # 注意：没有 sectorName
+        })
+        provenance_dir = str(tmp_path / 'provenance')
+        returncode, stdout, stderr = self._run_cli(
+            '886032', stdin_data=mcp_json,
+            args=['--as-of', '2026-10-06'],
+            provenance_dir=provenance_dir,
+        )
+        # CLI 仍然成功（成分股可用），但 verified=false
+        assert returncode == 0, f"CLI failed: {stderr}"
+        result = json.loads(stdout)
+        assert result['sectorName'] is None
+        assert result['constituentCount'] == 2
+        assert result['verified'] is False
+        assert result['provenance']['authoritativeReconciliationDate'] is None
+        assert result['provenance']['reconciliationMethod'] == 'not_reconciled'
+        assert result['provenance']['verifiedCount'] == 0
+
+    def test_cli_invalid_sector_code_exit_2(self, tmp_path):
+        """CLI：无效板块代码 → 退出码 2"""
+        returncode, stdout, stderr = self._run_cli(
+            'invalid', stdin_data='{}',
+            provenance_dir=str(tmp_path / 'provenance'),
+        )
+        assert returncode == 2
+        assert 'Invalid sector code' in stderr or '无效' in stderr
+
+    def test_cli_empty_constituents_exit_3(self, tmp_path):
+        """CLI：空成分股 → 退出码 3"""
+        mcp_json = json.dumps({
+            'securities': [],
+            'sectorName': '空板块',
+            'asOf': '2026-10-06',
+        })
+        returncode, stdout, stderr = self._run_cli(
+            '886032', stdin_data=mcp_json,
+            args=['--as-of', '2026-10-06'],
+            provenance_dir=str(tmp_path / 'provenance'),
+        )
+        assert returncode == 3
+        assert 'Empty constituent' in stderr or '空' in stderr
+
+    def test_cli_missing_as_of_exit_4(self, tmp_path):
+        """CLI：缺失权威 as-of → 退出码 4"""
+        mcp_json = json.dumps({
+            'securities': [{'code': '600519'}],
+            'sectorName': '测试板块',
+            # 注意：没有 asOf
+        })
+        returncode, stdout, stderr = self._run_cli(
+            '886032', stdin_data=mcp_json,
+            # 注意：没有 --as-of
+            provenance_dir=str(tmp_path / 'provenance'),
+        )
+        assert returncode == 4
+        assert 'as-of' in stderr.lower() or 'as_of' in stderr.lower()
+
+    def test_cli_future_as_of_fails(self, tmp_path):
+        """CLI：未来 as-of 日期 → fail-closed（退出码非0）"""
+        mcp_json = json.dumps({
+            'securities': [{'code': '600519'}],
+            'sectorName': '测试板块',
+            'asOf': '2099-12-31',
+        })
+        returncode, stdout, stderr = self._run_cli(
+            '886032', stdin_data=mcp_json,
+            args=['--as-of', '2099-12-31'],
+            provenance_dir=str(tmp_path / 'provenance'),
+        )
+        # 未来日期应该 fail-closed（退出码 4 或 1）
+        assert returncode != 0
+        assert '未来' in stderr or 'future' in stderr.lower()
+
+    def test_cli_snapshot_mode(self, tmp_path):
+        """CLI：snapshot 模式成功路径"""
+        snapshot_json = json.dumps({
+            'sectorName': '固态电池',
+            'constituents': ['300750', '002594'],
+        })
+        provenance_dir = str(tmp_path / 'provenance')
+        returncode, stdout, stderr = self._run_cli(
+            '886032',
+            args=['--snapshot', snapshot_json, '--source', '同花顺 iFinD snapshot', '--as-of', '2026-10-06'],
+            provenance_dir=provenance_dir,
+        )
+        assert returncode == 0, f"CLI failed: {stderr}"
+        result = json.loads(stdout)
+        assert result['sectorName'] == '固态电池'
+        assert result['constituentCount'] == 2
+        assert result['verified'] is True
 
 
 if __name__ == '__main__':

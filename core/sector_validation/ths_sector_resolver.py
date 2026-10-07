@@ -613,6 +613,13 @@ class THSSectorResolver:
         - SnapshotProvider → 根据 source 判断
         - 其他 → MANUAL
 
+        Fail-closed 原则：
+        - 缺失权威板块名称（sector_name=None）时，不标记为 VERIFIED：
+          - authoritative_reconciliation_date = None
+          - reconciliation_method = NOT_RECONCILED
+          - verified_count = 0
+        - 只有同时具备权威板块名称 + 成分股 + as-of 时才标记为 VERIFIED
+
         Args:
             sector: DynamicSector
             as_of: 数据时间戳 ISO8601
@@ -637,17 +644,32 @@ class THSSectorResolver:
         else:
             recon_method = ReconciliationMethod.MANUAL
 
+        # Fail-closed：缺失权威板块名称时，不标记为 VERIFIED
+        # 只有同时具备权威板块名称 + 成分股 + as-of 时才标记为 VERIFIED
+        has_authoritative_name = sector.sector_name is not None and sector.sector_name.strip() != ''
+        if has_authoritative_name:
+            authoritative_date = recon_date
+            method = recon_method
+            verified_count = sector.constituent_count
+            recon_result = f"matched={sector.constituent_count}, asOf={as_of}, method={recon_method.value}"
+        else:
+            # 缺失板块名称 → 标记为未对账（fail-closed）
+            authoritative_date = None
+            method = ReconciliationMethod.NOT_RECONCILED
+            verified_count = 0
+            recon_result = f"unverified: missing authoritative sector name, constituents={sector.constituent_count}, asOf={as_of}"
+
         if sector.provenance is None:
             sector.provenance = SectorProvenance(
-                sector_name=sector.sector_name or sector.sector_code,
+                sector_name=sector.sector_name or '',  # 不使用 sector_code 作为 fallback
                 sector_code=sector.sector_code,
                 source=sector.source,
                 local_refresh_date=today,
-                authoritative_reconciliation_date=recon_date,
-                reconciliation_method=recon_method,
-                reconciliation_result=f"matched={sector.constituent_count}, asOf={as_of}, method={recon_method.value}",
+                authoritative_reconciliation_date=authoritative_date,
+                reconciliation_method=method,
+                reconciliation_result=recon_result,
                 total_constituents=sector.constituent_count,
-                verified_count=sector.constituent_count,
+                verified_count=verified_count,
             )
 
         save_provenance(sector.provenance, self.provenance_dir)

@@ -1,7 +1,7 @@
 {
   "version": "1.2",
   "exportDate": "2026-10-08",
-  "exportTime": "2026/10/8 09:50:07",
+  "exportTime": "2026/10/8 17:04:18",
   "description": "K线形态分析工具 - 自选股云配置（多设备合并同步+Tombstone删除语义）",
   "watchlist": [
     "603068",
@@ -64,6 +64,6 @@
     ],
     "onlyLocal": [],
     "resurrectedBlocked": [],
-    "mergedAt": "2026-10-08T01:50:07.391Z"
+    "mergedAt": "2026-10-08T09:04:18.859Z"
   }
 }

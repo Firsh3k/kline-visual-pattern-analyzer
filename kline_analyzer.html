@@ -1474,6 +1474,8 @@ function matchPatterns(data, ind) {
   const results = {};
   const lookback = Math.min(250, n);  // V5: 统一使用250根，与Python端一致
   const seg = data.slice(n - lookback);
+  const lows = seg.map(d => d.low);   // 旧算法fallback仍需要
+  const highs = seg.map(d => d.high); // 旧算法fallback仍需要
   const curPrice = data[last].close;
 
   // V5: 使用Swing Pivot引擎

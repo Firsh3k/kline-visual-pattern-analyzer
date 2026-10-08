@@ -1483,11 +1483,13 @@ function matchPatterns(data, ind) {
   // 转换pivot的index为全局index
   const globalPivots = pivots.map(p => ({ ...p, index: p.index + (n - lookback) }));
 
-  // V5形态检测
-  const wPatterns = detectWBottomV5(data, globalPivots);
-  const hsPatterns = detectHSBottomV5(data, globalPivots);
-  const mPatterns = detectMTopV5(data, globalPivots);
-  const hsTopPatterns = detectHSTopV5(data, globalPivots);
+  // V5形态检测（存在results上，避免局部变量作用域问题）
+  results._v5 = {
+    w: detectWBottomV5(data, globalPivots),
+    hs: detectHSBottomV5(data, globalPivots),
+    m: detectMTopV5(data, globalPivots),
+    hsTop: detectHSTopV5(data, globalPivots)
+  };
 
   // ===== 1. 均线多头排列 =====
   let maDetail = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
@@ -2067,10 +2069,11 @@ function matchBearPatterns(data, ind) {
       }
     };
   }
-  results.w_bottom = applyV5Result(results.w_bottom, wPatterns);
-  results.hs_bottom = applyV5Result(results.hs_bottom, hsPatterns);
-  results.m_top = applyV5Result(results.m_top, mPatterns);
-  results.hs_top = applyV5Result(results.hs_top, hsTopPatterns);
+  results.w_bottom = applyV5Result(results.w_bottom, results._v5.w);
+  results.hs_bottom = applyV5Result(results.hs_bottom, results._v5.hs);
+  results.m_top = applyV5Result(results.m_top, results._v5.m);
+  results.hs_top = applyV5Result(results.hs_top, results._v5.hsTop);
+  delete results._v5; // 清理临时属性
 
   // ===== 4. 平台破位 =====
   let pbDown = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };

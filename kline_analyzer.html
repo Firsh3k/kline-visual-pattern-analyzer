@@ -2960,14 +2960,20 @@ function handleCSV(e) {
 function calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm) {
   const n = data.length;
   const last = n - 1;
-  const sorted = Object.entries(matches).sort((a, b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a, b) => b[1].score - a[1].score);
-  const bestId = sorted[0][0];
-  const bestDetail = sorted[0][1];
-  const bestScore = bestDetail.score;
+  // 空值保护：如果没有任何形态匹配，返回默认低分
+  const matchEntries = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0);
+  const bearMatchEntries = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0);
+  if (matchEntries.length === 0 && bearMatchEntries.length === 0) {
+    return { score: 0, grade: 'D', label: '无明显形态', breakdown: [], advice: '观望', bullScore: 0, bearScore: 0, bestId: '', bestStage: '' };
+  }
+  const sorted = matchEntries.sort((a, b) => b[1].score - a[1].score);
+  const bearSorted = bearMatchEntries.sort((a, b) => b[1].score - a[1].score);
+  const bestId = sorted[0] ? sorted[0][0] : (bearSorted[0] ? bearSorted[0][0] : '');
+  const bestDetail = sorted[0] ? sorted[0][1] : (bearSorted[0] ? bearSorted[0][1] : { score: 0, stage: '' });
+  const bestScore = bestDetail.score || 0;
   const bestStage = bestDetail.stage || '';
-  const bearBestScore = bearSorted[0][1].score;
-  const bearBestId = bearSorted[0][0];
+  const bearBestScore = bearSorted[0] ? bearSorted[0][1].score : 0;
+  const bearBestId = bearSorted[0] ? bearSorted[0][0] : '';
   const breakdown = [];
 
   // 1. 基础分：形态匹配度
@@ -3088,22 +3094,32 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const cls = change >= 0 ? 'up' : 'down';
 
   // 最佳匹配（综合上升和下降形态）
-  const sorted = Object.entries(matches).sort((a, b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a, b) => b[1].score - a[1].score);
-  const bullBestScore = sorted[0][1].score;
-  const bearBestScore = bearSorted[0][1].score;
+  const sorted = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0).sort((a, b) => b[1].score - a[1].score);
+  const bearSorted = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0).sort((a, b) => b[1].score - a[1].score);
+  const bullBestScore = sorted[0] ? sorted[0][1].score : 0;
+  const bearBestScore = bearSorted[0] ? bearSorted[0][1].score : 0;
   const isBearDominant = bearBestScore > bullBestScore && bearBestScore >= 50;
   let best, bestDetail, bestScore, bestInterp, bestType;
-  if (isBearDominant) {
+  if (isBearDominant && bearSorted.length > 0) {
+    best = BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]);
+    bestDetail = bearMatches[bearSorted[0][0]];
+    bestScore = bestDetail.score;
+    bestType = 'bear';
+  } else if (sorted.length > 0) {
+    best = PATTERNS.find(p => p.id === sorted[0][0]);
+    bestDetail = matches[sorted[0][0]];
+    bestScore = bestDetail.score;
+    bestType = 'bull';
+  } else if (bearSorted.length > 0) {
     best = BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]);
     bestDetail = bearMatches[bearSorted[0][0]];
     bestScore = bestDetail.score;
     bestType = 'bear';
   } else {
-    best = PATTERNS.find(p => p.id === sorted[0][0]);
-    bestDetail = matches[sorted[0][0]];
-    bestScore = bestDetail.score;
-    bestType = 'bull';
+    best = { id: 'none', name: '无明显形态' };
+    bestDetail = { score: 0, stage: '' };
+    bestScore = 0;
+    bestType = 'none';
   }
 
   // 增强信号检测（依赖bestDetail）
@@ -3128,15 +3144,15 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   }
 
   // 分别计算底部（买入）和顶部（卖出）的环境适配度
-  const bullBestId = sorted[0][0];
-  const bullBestPattern = PATTERNS.find(p => p.id === bullBestId);
-  const bearBestId = bearSorted[0][0];
-  const bearBestPattern = BEAR_PATTERNS.find(p => p.id === bearBestId);
-  const bullEnvAccuracy = calcEnvAccuracy(bullBestId, bullBestScore, marketEnv);
-  const bearEnvAccuracy = calcEnvAccuracy(bearBestId, bearBestScore, marketEnv);
+  const bullBestId = sorted.length > 0 ? sorted[0][0] : 'none';
+  const bullBestPattern = sorted.length > 0 ? PATTERNS.find(p => p.id === bullBestId) : null;
+  const bearBestId = bearSorted.length > 0 ? bearSorted[0][0] : 'none';
+  const bearBestPattern = bearSorted.length > 0 ? BEAR_PATTERNS.find(p => p.id === bearBestId) : null;
+  const bullEnvAccuracy = sorted.length > 0 ? calcEnvAccuracy(bullBestId, bullBestScore, marketEnv) : { historicalAccuracy: 0, scoreBonus: 0 };
+  const bearEnvAccuracy = bearSorted.length > 0 ? calcEnvAccuracy(bearBestId, bearBestScore, marketEnv) : { historicalAccuracy: 0, scoreBonus: 0 };
   // 综合买卖信号可信度 = 信号分 × 环境适配率
-  const buyAccuracy = Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100);
-  const sellAccuracy = Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100);
+  const buyAccuracy = sorted.length > 0 ? Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100) : 0;
+  const sellAccuracy = bearSorted.length > 0 ? Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100) : 0;
 
   // ===== 形态完成度与当前阶段 =====
   const patternReliability = best.reliability_pct || 75;
@@ -5023,10 +5039,13 @@ function calculateStockResult(result, marketEnv = null) {
   const matches = matchPatterns(result.data, ind);
   const bearMatches = matchBearPatterns(result.data, ind);
   const vol = analyzeVolume(result.data, ind);
-  const sorted = Object.entries(matches).sort((a,b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a,b) => b[1].score - a[1].score);
-  const isBearDom = bearSorted[0][1].score > sorted[0][1].score && bearSorted[0][1].score >= 50;
-  const bestDetail = isBearDom ? bearMatches[bearSorted[0][0]] : matches[sorted[0][0]];
+  // 空值保护：过滤掉score为0或无效的形态
+  const sorted = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0).sort((a,b) => b[1].score - a[1].score);
+  const bearSorted = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0).sort((a,b) => b[1].score - a[1].score);
+  const hasBull = sorted.length > 0;
+  const hasBear = bearSorted.length > 0;
+  const isBearDom = hasBear && hasBull && bearSorted[0][1].score > sorted[0][1].score && bearSorted[0][1].score >= 50;
+  const bestDetail = isBearDom ? bearMatches[bearSorted[0][0]] : (hasBull ? matches[sorted[0][0]] : (hasBear ? bearMatches[bearSorted[0][0]] : { score: 0, stage: '' }));
   const bestType = isBearDom ? 'bear' : 'bull';
   const macdDiv = detectMACDDivergence(result.data, ind);
   const volDiv = detectVolumeDivergence(result.data, ind);
@@ -5038,21 +5057,23 @@ function calculateStockResult(result, marketEnv = null) {
 
   // 买卖信号可信度（需要大盘环境）
   let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
-  if (marketEnv) {
+  if (marketEnv && hasBull) {
     const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
-    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
     bullEnvRate = bullEnv.historicalAccuracy;
-    bearEnvRate = bearEnv.historicalAccuracy;
     buyAccuracy = Math.round(sorted[0][1].score * bullEnv.historicalAccuracy / 100);
+  }
+  if (marketEnv && hasBear) {
+    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
+    bearEnvRate = bearEnv.historicalAccuracy;
     sellAccuracy = Math.round(bearSorted[0][1].score * bearEnv.historicalAccuracy / 100);
   }
 
   return {
     code, name: result.name, price: last.close, pct,
-    bullScore: sorted[0][1].score,
-    bullName: PATTERNS.find(p => p.id === sorted[0][0]).name,
-    bearScore: bearSorted[0][1].score,
-    bearName: BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]).name,
+    bullScore: hasBull ? sorted[0][1].score : 0,
+    bullName: hasBull ? (PATTERNS.find(p => p.id === sorted[0][0]) || { name: sorted[0][0] }).name : '无',
+    bearScore: hasBear ? bearSorted[0][1].score : 0,
+    bearName: hasBear ? (BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]) || { name: bearSorted[0][0] }).name : '无',
     buyAccuracy, sellAccuracy, bullEnvRate, bearEnvRate,
     attention: attention.score,
     level: attention.level,

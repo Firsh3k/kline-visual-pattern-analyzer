@@ -1478,19 +1478,6 @@ function matchPatterns(data, ind) {
   const highs = seg.map(d => d.high); // 旧算法fallback仍需要
   const curPrice = data[last].close;
 
-  // V5: 使用Swing Pivot引擎
-  const pivots = detectSwingPivots(seg);
-  // 转换pivot的index为全局index
-  const globalPivots = pivots.map(p => ({ ...p, index: p.index + (n - lookback) }));
-
-  // V5形态检测（存在results上，避免局部变量作用域问题）
-  results._v5 = {
-    w: detectWBottomV5(data, globalPivots),
-    hs: detectHSBottomV5(data, globalPivots),
-    m: detectMTopV5(data, globalPivots),
-    hsTop: detectHSTopV5(data, globalPivots)
-  };
-
   // ===== 1. 均线多头排列 =====
   let maDetail = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
   if (ind.ma5[last] && ind.ma10[last] && ind.ma20[last] && ind.ma60[last]) {
@@ -2040,40 +2027,52 @@ function matchBearPatterns(data, ind) {
   results.hs_top = hsTop;
 
   // ===== V5统一算法覆盖（与Python端一致）=====
-  // 如果V5 Swing Pivot检测到形态，则用V5结果覆盖旧算法结果
-  function applyV5Result(oldDetail, v5Patterns) {
-    if (!v5Patterns || v5Patterns.length === 0) return oldDetail;
-    const p = v5Patterns[0];
-    return {
-      score: p.score,
-      stage: `${p.pattern_name} - ${p.stage} (V5)`,
-      outlook: p.notes,
-      action: p.stage === 'BREAKOUT_DAY' || p.stage === 'POST_BREAK' ?
-              (p.direction === 'bull' ? '持股待涨' : '建议止盈止损') :
-              p.stage === 'RETEST' ? (p.direction === 'bull' ? '回踩确认，可加仓' : '回抽确认，减仓') :
-              p.stage === 'PRE_BREAK' ? (p.direction === 'bull' ? '关注颈线突破' : '警惕跌破颈线') : '观望',
-      points: [
-        ...p.key_points.map(kp => ({ label: kp.name, value: kp.price.toFixed(2) })),
-        { label: '当前颈线', value: p.neckline_price.toFixed(2) },
-        { label: '目标价', value: p.target_price.toFixed(2) },
-        { label: '止损价', value: p.stop_loss.toFixed(2) },
-      ],
-      markers: {
-        points: p.key_points.map(kp => ({
-          idx: data.findIndex(d => d.day === kp.date),
-          price: kp.price,
-          label: kp.name,
-          color: kp.name === '头' ? '#e74c3c' : kp.name.includes('颈') ? '#f39c12' : '#3498db'
-        })).filter(m => m.idx >= 0),
-        lines: [{ price: p.neckline_price, label: `${p.pattern_name}颈线(V5)`, color: '#f39c12' }]
-      }
-    };
+  // 所有V5代码集中在此，避免部署环境重构导致跨代码段变量丢失
+  try {
+    const v5Lookback = Math.min(250, n);
+    const v5Seg = data.slice(n - v5Lookback);
+    const v5Pivots = detectSwingPivots(v5Seg);
+    const v5GlobalPivots = v5Pivots.map(p => ({ ...p, index: p.index + (n - v5Lookback) }));
+    const v5W = detectWBottomV5(data, v5GlobalPivots);
+    const v5HS = detectHSBottomV5(data, v5GlobalPivots);
+    const v5M = detectMTopV5(data, v5GlobalPivots);
+    const v5HSTop = detectHSTopV5(data, v5GlobalPivots);
+
+    function applyV5Result(oldDetail, v5Patterns) {
+      if (!v5Patterns || v5Patterns.length === 0) return oldDetail;
+      const p = v5Patterns[0];
+      return {
+        score: p.score,
+        stage: `${p.pattern_name} - ${p.stage} (V5)`,
+        outlook: p.notes,
+        action: p.stage === 'BREAKOUT_DAY' || p.stage === 'POST_BREAK' ?
+                (p.direction === 'bull' ? '持股待涨' : '建议止盈止损') :
+                p.stage === 'RETEST' ? (p.direction === 'bull' ? '回踩确认，可加仓' : '回抽确认，减仓') :
+                p.stage === 'PRE_BREAK' ? (p.direction === 'bull' ? '关注颈线突破' : '警惕跌破颈线') : '观望',
+        points: [
+          ...p.key_points.map(kp => ({ label: kp.name, value: kp.price.toFixed(2) })),
+          { label: '当前颈线', value: p.neckline_price.toFixed(2) },
+          { label: '目标价', value: p.target_price.toFixed(2) },
+          { label: '止损价', value: p.stop_loss.toFixed(2) },
+        ],
+        markers: {
+          points: p.key_points.map(kp => ({
+            idx: data.findIndex(d => d.day === kp.date),
+            price: kp.price,
+            label: kp.name,
+            color: kp.name === '头' ? '#e74c3c' : kp.name.includes('颈') ? '#f39c12' : '#3498db'
+          })).filter(m => m.idx >= 0),
+          lines: [{ price: p.neckline_price, label: `${p.pattern_name}颈线(V5)`, color: '#f39c12' }]
+        }
+      };
+    }
+    results.w_bottom = applyV5Result(results.w_bottom, v5W);
+    results.hs_bottom = applyV5Result(results.hs_bottom, v5HS);
+    results.m_top = applyV5Result(results.m_top, v5M);
+    results.hs_top = applyV5Result(results.hs_top, v5HSTop);
+  } catch(v5Err) {
+    console.warn('V5形态检测失败，使用旧算法结果:', v5Err);
   }
-  results.w_bottom = applyV5Result(results.w_bottom, results._v5.w);
-  results.hs_bottom = applyV5Result(results.hs_bottom, results._v5.hs);
-  results.m_top = applyV5Result(results.m_top, results._v5.m);
-  results.hs_top = applyV5Result(results.hs_top, results._v5.hsTop);
-  delete results._v5; // 清理临时属性
 
   // ===== 4. 平台破位 =====
   let pbDown = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };

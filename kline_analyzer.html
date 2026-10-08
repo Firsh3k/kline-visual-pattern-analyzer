@@ -100,9 +100,14 @@ canvas { width: 100%; display: block; }
 }
 .version-dot {
   width: 8px; height: 8px; border-radius: 50%;
+  background: #667788; box-shadow: none;
+}
+.version-badge.verified .version-dot {
   background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.6);
   animation: version-pulse 2s ease-in-out infinite;
 }
+.version-badge.unknown { border-color: rgba(136,153,170,0.35); background: rgba(42,52,65,0.35); }
+.version-badge.unknown .version-tag { color: #8899aa; }
 @keyframes version-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(0.85); }
@@ -162,6 +167,13 @@ canvas { width: 100%; display: block; }
 .footer-version .code { font-family: 'SF Mono', 'Consolas', monospace; color: #5dade2; }
 .footer-version a { text-decoration: none; transition: color 0.2s; }
 .footer-version a:hover { color: #85c1e9 !important; }
+@media (max-width: 640px) {
+  .header-right { width: 100%; justify-content: flex-end; }
+  .version-modal-content { width: calc(100% - 24px); max-height: 90vh; overflow-y: auto; }
+  .version-info-row { gap: 12px; align-items: flex-start; }
+  .version-info-value { max-width: 65%; }
+  .footer-version { max-width: 100%; overflow-wrap: anywhere; }
+}
 </style>
 </head>
 <body>
@@ -191,28 +203,24 @@ canvas { width: 100%; display: block; }
     </div>
     <div class="version-modal-body">
       <div class="version-info-row">
-        <span class="version-info-label">版本号</span>
-        <span class="version-info-value" id="modalVersion">v5.0.0</span>
+        <span class="version-info-label">Release</span>
+        <span class="version-info-value" id="modalVersion">Version Unknown</span>
       </div>
       <div class="version-info-row">
         <span class="version-info-label">Commit</span>
-        <span class="version-info-value code" id="modalCommit">43ad6d5fd2ee</span>
+        <span class="version-info-value code" id="modalCommit">—</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">部署时间</span>
-        <span class="version-info-value" id="modalDeployTime">2026-10-07</span>
+        <span class="version-info-label">Released</span>
+        <span class="version-info-value" id="modalDeployTime">—</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">代码来源</span>
-        <span class="version-info-value">GitHub Release v5.0.0</span>
+        <span class="version-info-label">Environment</span>
+        <span class="version-info-value" id="modalEnvironment">Unknown</span>
       </div>
       <div class="version-info-row">
-        <span class="version-info-label">仓库</span>
-        <span class="version-info-value code">Firsh3k/kline-visual-pattern-analyzer</span>
-      </div>
-      <div class="version-info-row">
-        <span class="version-info-label">功能集</span>
-        <span class="version-info-value">V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）</span>
+        <span class="version-info-label">Rollback baseline</span>
+        <span class="version-info-value" id="modalRollback">—</span>
       </div>
     </div>
     <div class="version-modal-footer">
@@ -463,54 +471,80 @@ canvas { width: 100%; display: block; }
   数据来源：新浪财经公开接口（前复权日线） | 本工具基于技术形态量化分析，仅供学习参考，不构成投资建议<br>
   股市有风险，投资需谨慎<br>
   <span class="footer-version">
-    <span id="footerVersion">v5.0.0</span> · 
-    <span id="footerCommit" class="code">43ad6d5</span> · 
-    <span id="footerDeployTime">2026-10-07</span> · 
-    <a href="https://github.com/Firsh3k/kline-visual-pattern-analyzer/releases/tag/v5.0.0" target="_blank" style="color:#5dade2;">GitHub Release</a>
+    <span id="footerVersion">Version Unknown</span> ·
+    <span id="footerCommit" class="code">—</span> ·
+    <span id="footerDeployTime">—</span> ·
+    <span id="footerEnvironment">Unknown</span> ·
+    <a id="footerReleaseLink" href="#" target="_blank" rel="noopener noreferrer" style="color:#5dade2;display:none;">GitHub Release</a>
   </span>
 </div>
 
+<script src="release_identity.js"></script>
 <script>
 // ============ FIR-28: Release Version Badge & Deployment Identity ============
-const DEPLOYMENT_INFO = {
-  version: 'v5.0.0',
-  commit: '43ad6d5fd2ee',
-  commitShort: '43ad6d5',
-  deployTime: '2026-10-07',
-  source: 'GitHub Release v5.0.0',
-  repo: 'Firsh3k/kline-visual-pattern-analyzer',
-  featureSet: 'V5 完整版（形态匹配/回测/假信号/大盘环境/动态板块）'
-};
-
-// 初始化版本徽章
-function initVersionBadge() {
-  // 更新 header 徽章
+function renderReleaseIdentity(display) {
+  const badge = document.getElementById('versionBadge');
   const versionTag = document.getElementById('versionTag');
-  if (versionTag) versionTag.textContent = DEPLOYMENT_INFO.version;
-
-  // 更新 footer
   const footerVersion = document.getElementById('footerVersion');
   const footerCommit = document.getElementById('footerCommit');
   const footerDeployTime = document.getElementById('footerDeployTime');
-  if (footerVersion) footerVersion.textContent = DEPLOYMENT_INFO.version;
-  if (footerCommit) footerCommit.textContent = DEPLOYMENT_INFO.commitShort;
-  if (footerDeployTime) footerDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
-
-  // 更新弹窗
+  const footerEnvironment = document.getElementById('footerEnvironment');
+  const footerReleaseLink = document.getElementById('footerReleaseLink');
   const modalVersion = document.getElementById('modalVersion');
   const modalCommit = document.getElementById('modalCommit');
   const modalDeployTime = document.getElementById('modalDeployTime');
-  if (modalVersion) modalVersion.textContent = DEPLOYMENT_INFO.version;
-  if (modalCommit) modalCommit.textContent = DEPLOYMENT_INFO.commit;
-  if (modalDeployTime) modalDeployTime.textContent = DEPLOYMENT_INFO.deployTime;
+  const modalEnvironment = document.getElementById('modalEnvironment');
+  const modalRollback = document.getElementById('modalRollback');
 
-  // 绑定点击事件
-  const badge = document.getElementById('versionBadge');
   if (badge) {
-    badge.addEventListener('click', openVersionModal);
+    badge.classList.toggle('verified', Boolean(display.verified));
+    badge.classList.toggle('unknown', !display.verified);
   }
+  if (versionTag) versionTag.textContent = display.version;
+  if (footerVersion) footerVersion.textContent = display.version;
+  if (footerCommit) footerCommit.textContent = display.commitShort;
+  if (footerDeployTime) footerDeployTime.textContent = display.releasedAt;
+  if (footerEnvironment) footerEnvironment.textContent = display.environment;
+  if (modalVersion) modalVersion.textContent = display.version;
+  if (modalCommit) modalCommit.textContent = display.commit;
+  if (modalDeployTime) modalDeployTime.textContent = display.releasedAt;
+  if (modalEnvironment) modalEnvironment.textContent = display.environment;
+  if (modalRollback) modalRollback.textContent = display.rollbackBaseline;
 
-  // 点击弹窗外部关闭
+  if (footerReleaseLink) {
+    if (display.verified && display.releaseUrl) {
+      footerReleaseLink.href = display.releaseUrl;
+      footerReleaseLink.style.display = 'inline';
+    } else {
+      footerReleaseLink.removeAttribute('href');
+      footerReleaseLink.style.display = 'none';
+    }
+  }
+}
+
+async function loadReleaseIdentity() {
+  try {
+    if (!window.ReleaseIdentity) throw new Error('release identity helper unavailable');
+    const response = await fetch('release-info.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error('release metadata unavailable');
+    const metadata = await response.json();
+    renderReleaseIdentity(window.ReleaseIdentity.makeDisplay(metadata));
+  } catch (error) {
+    const fallback = window.ReleaseIdentity
+      ? window.ReleaseIdentity.unknownDisplay()
+      : {
+          verified: false, version: 'Version Unknown', commit: '—', commitShort: '—',
+          releasedAt: '—', environment: 'Unknown', rollbackBaseline: '—', releaseUrl: null
+        };
+    renderReleaseIdentity(fallback);
+    console.warn('FIR-28 release identity unavailable:', error && error.message ? error.message : error);
+  }
+}
+
+function initVersionBadge() {
+  const badge = document.getElementById('versionBadge');
+  if (badge) badge.addEventListener('click', openVersionModal);
+
   const modal = document.getElementById('versionModal');
   if (modal) {
     modal.addEventListener('click', function(e) {
@@ -518,10 +552,11 @@ function initVersionBadge() {
     });
   }
 
-  // ESC 键关闭
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeVersionModal();
   });
+
+  loadReleaseIdentity();
 }
 
 function openVersionModal() {
@@ -534,7 +569,6 @@ function closeVersionModal() {
   if (modal) modal.style.display = 'none';
 }
 
-// 页面加载完成后初始化
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initVersionBadge);
 } else {
@@ -1137,16 +1171,321 @@ function ind_vma20(data) {
   return data.slice(-20).reduce((s, d) => s + d.volume, 0) / 20;
 }
 
-// ============ 形态匹配（细化版） ============
+// ============ V5 Swing Pivot Engine（与Python端一致） ============
+const PIVOT_LEFT_BARS = 5;
+const PIVOT_RIGHT_BARS = 5;
+const MIN_HS_HEAD_PROMINENCE = 0.03; // FIR-24: 头部突出度最小3%
+
+function detectSwingPivots(data, leftBars = PIVOT_LEFT_BARS, rightBars = PIVOT_RIGHT_BARS) {
+  const pivots = [];
+  const n = data.length;
+  for (let i = leftBars; i < n - rightBars; i++) {
+    // Swing High
+    let isHigh = true;
+    for (let j = i - leftBars; j <= i + rightBars; j++) {
+      if (j !== i && data[j].high >= data[i].high) { isHigh = false; break; }
+    }
+    if (isHigh) {
+      pivots.push({ index: i, date: data[i].day, price: data[i].high, type: 'swing_high', confirmed: true });
+      continue;
+    }
+    // Swing Low
+    let isLow = true;
+    for (let j = i - leftBars; j <= i + rightBars; j++) {
+      if (j !== i && data[j].low <= data[i].low) { isLow = false; break; }
+    }
+    if (isLow) {
+      pivots.push({ index: i, date: data[i].day, price: data[i].low, type: 'swing_low', confirmed: true });
+    }
+  }
+  return pivots;
+}
+
+// V5: W底检测（基于Swing Pivot，与Python端一致）
+function detectWBottomV5(data, pivots) {
+  const results = [];
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < lows.length - 1; i++) {
+    const l1 = lows[i], l2 = lows[i + 1];
+    // 两底差异 ≤5%
+    if (l1.price <= 0 || Math.abs(l2.price - l1.price) / l1.price > 0.05) continue;
+    // 第二底不创新低
+    if (l2.price < l1.price * 0.97) continue;
+    // 颈线：两底之间的最高点（用high pivot）
+    const betweenHighs = highs.filter(h => l1.index < h.index && h.index < l2.index);
+    if (betweenHighs.length === 0) continue;
+    const neck = betweenHighs.reduce((max, h) => h.price > max.price ? h : max, betweenHighs[0]);
+    const neckline = neck.price;
+
+    // 突破状态
+    const broken = curPrice > neckline * 0.98;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      if (data[j-1].close <= neckline && data[j].close > neckline) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentLow = Math.min(...data.slice(breakoutDay, last+1).map(d => d.low));
+      const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+      let belowCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close < neckline) belowCount++;
+      if (belowCount >= 3 && curPrice < neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = (l2.price >= l1.price ? 30 : 10) + (broken ? 40 : 15) + (breakoutDay !== null ? 30 : 15);
+    const target = neckline + (neckline - Math.min(l1.price, l2.price));
+    const stopLoss = Math.min(l1.price, l2.price) * 0.98;
+
+    results.push({
+      pattern_id: 'w_bottom', pattern_name: 'W底', direction: 'bull',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左底', date: l1.date, price: l1.price },
+        { name: '右底', date: l2.date, price: l2.price },
+        { name: '颈线点', date: neck.date, price: neck.price },
+      ],
+      notes: `W底：左底${l1.price.toFixed(2)} 右底${l2.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: 头肩底检测（基于Swing Pivot，与Python端一致）
+function detectHSBottomV5(data, pivots) {
+  const results = [];
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < lows.length - 2; i++) {
+    const ls = lows[i], head = lows[i+1], rs = lows[i+2];
+    // 头部低于左肩
+    if (head.price >= ls.price) continue;
+    // 右肩高于头部
+    if (rs.price <= head.price) continue;
+    // 左右肩对称 ≤20%
+    if (ls.price <= 0 || Math.abs(ls.price - rs.price) / ls.price > 0.20) continue;
+    // FIR-24: 头部突出度 ≥3%
+    const avgShoulder = (ls.price + rs.price) / 2;
+    const headProminence = Math.abs(head.price - avgShoulder) / avgShoulder;
+    if (headProminence < MIN_HS_HEAD_PROMINENCE) continue;
+
+    // 颈线两点
+    const leftBetween = highs.filter(h => ls.index < h.index && h.index < head.index);
+    if (leftBetween.length === 0) continue;
+    const ln = leftBetween.reduce((max, h) => h.price > max.price ? h : max, leftBetween[0]);
+    const rightBetween = highs.filter(h => head.index < h.index && h.index < rs.index);
+    if (rightBetween.length === 0) continue;
+    const rn = rightBetween.reduce((max, h) => h.price > max.price ? h : max, rightBetween[0]);
+
+    // 倾斜颈线
+    const slope = rn.index !== ln.index ? (rn.price - ln.price) / (rn.index - ln.index) : 0;
+    const neckline = ln.price + slope * (last - ln.index);
+
+    const broken = curPrice > neckline * 0.98;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      const prevNeck = ln.price + slope * (j-1 - ln.index);
+      const curNeck = ln.price + slope * (j - ln.index);
+      if (data[j-1].close <= prevNeck && data[j].close > curNeck) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentLow = Math.min(...data.slice(breakoutDay, last+1).map(d => d.low));
+      const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+      let belowCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close < neckline) belowCount++;
+      if (belowCount >= 3 && curPrice < neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = 20 + 20 + 20 + (broken ? 40 : 10);
+    const target = neckline + (neckline - head.price);
+    const stopLoss = head.price * 0.98;
+
+    results.push({
+      pattern_id: 'hs_bottom', pattern_name: '头肩底', direction: 'bull',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左肩', date: ls.date, price: ls.price },
+        { name: '头', date: head.date, price: head.price },
+        { name: '右肩', date: rs.date, price: rs.price },
+        { name: '左颈线点', date: ln.date, price: ln.price },
+        { name: '右颈线点', date: rn.date, price: rn.price },
+      ],
+      notes: `头肩底：左肩${ls.price.toFixed(2)} 头${head.price.toFixed(2)} 右肩${rs.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: M头检测（基于Swing Pivot）
+function detectMTopV5(data, pivots) {
+  const results = [];
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < highs.length - 1; i++) {
+    const h1 = highs[i], h2 = highs[i+1];
+    if (h1.price <= 0 || Math.abs(h2.price - h1.price) / h1.price > 0.05) continue;
+    if (h2.price > h1.price * 1.03) continue;
+    const betweenLows = lows.filter(l => h1.index < l.index && l.index < h2.index);
+    if (betweenLows.length === 0) continue;
+    const neck = betweenLows.reduce((min, l) => l.price < min.price ? l : min, betweenLows[0]);
+    const neckline = neck.price;
+
+    const broken = curPrice < neckline * 1.02;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      if (data[j-1].close >= neckline && data[j].close < neckline) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentHigh = Math.max(...data.slice(breakoutDay, last+1).map(d => d.high));
+      const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+      let aboveCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close > neckline) aboveCount++;
+      if (aboveCount >= 3 && curPrice > neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = (h2.price <= h1.price ? 30 : 10) + (broken ? 40 : 15) + (breakoutDay !== null ? 30 : 15);
+    const target = neckline - (Math.max(h1.price, h2.price) - neckline);
+    const stopLoss = Math.max(h1.price, h2.price) * 1.02;
+
+    results.push({
+      pattern_id: 'm_top', pattern_name: 'M头', direction: 'bear',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左顶', date: h1.date, price: h1.price },
+        { name: '右顶', date: h2.date, price: h2.price },
+        { name: '颈线点', date: neck.date, price: neck.price },
+      ],
+      notes: `M头：左顶${h1.price.toFixed(2)} 右顶${h2.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: 头肩顶检测（基于Swing Pivot）
+function detectHSTopV5(data, pivots) {
+  const results = [];
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < highs.length - 2; i++) {
+    const ls = highs[i], head = highs[i+1], rs = highs[i+2];
+    if (head.price <= ls.price) continue;
+    if (rs.price >= head.price) continue;
+    if (ls.price <= 0 || Math.abs(ls.price - rs.price) / ls.price > 0.20) continue;
+    const avgShoulder = (ls.price + rs.price) / 2;
+    const headProminence = Math.abs(head.price - avgShoulder) / avgShoulder;
+    if (headProminence < MIN_HS_HEAD_PROMINENCE) continue;
+
+    const leftBetween = lows.filter(l => ls.index < l.index && l.index < head.index);
+    if (leftBetween.length === 0) continue;
+    const ln = leftBetween.reduce((min, l) => l.price < min.price ? l : min, leftBetween[0]);
+    const rightBetween = lows.filter(l => head.index < l.index && l.index < rs.index);
+    if (rightBetween.length === 0) continue;
+    const rn = rightBetween.reduce((min, l) => l.price < min.price ? l : min, rightBetween[0]);
+
+    const slope = rn.index !== ln.index ? (rn.price - ln.price) / (rn.index - ln.index) : 0;
+    const neckline = ln.price + slope * (last - ln.index);
+
+    const broken = curPrice < neckline * 1.02;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      const prevNeck = ln.price + slope * (j-1 - ln.index);
+      const curNeck = ln.price + slope * (j - ln.index);
+      if (data[j-1].close >= prevNeck && data[j].close < curNeck) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentHigh = Math.max(...data.slice(breakoutDay, last+1).map(d => d.high));
+      const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+      let aboveCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close > neckline) aboveCount++;
+      if (aboveCount >= 3 && curPrice > neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = 20 + 20 + 20 + (broken ? 40 : 10);
+    const target = neckline - (head.price - neckline);
+    const stopLoss = head.price * 1.02;
+
+    results.push({
+      pattern_id: 'hs_top', pattern_name: '头肩顶', direction: 'bear',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左肩', date: ls.date, price: ls.price },
+        { name: '头', date: head.date, price: head.price },
+        { name: '右肩', date: rs.date, price: rs.price },
+        { name: '左颈线点', date: ln.date, price: ln.price },
+        { name: '右颈线点', date: rn.date, price: rn.price },
+      ],
+      notes: `头肩顶：左肩${ls.price.toFixed(2)} 头${head.price.toFixed(2)} 右肩${rs.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// ============ 形态匹配（V5统一版，与Python端一致） ============
 function matchPatterns(data, ind) {
   const n = data.length;
   const last = n - 1;
   const results = {};
-  const lookback = Math.min(80, n - 1);
+  const lookback = Math.min(250, n);  // V5: 统一使用250根，与Python端一致
   const seg = data.slice(n - lookback);
-  const lows = seg.map(d => d.low);
-  const highs = seg.map(d => d.high);
   const curPrice = data[last].close;
+
+  // V5: 使用Swing Pivot引擎
+  const pivots = detectSwingPivots(seg);
+  // 转换pivot的index为全局index
+  const globalPivots = pivots.map(p => ({ ...p, index: p.index + (n - lookback) }));
+
+  // V5形态检测
+  const wPatterns = detectWBottomV5(data, globalPivots);
+  const hsPatterns = detectHSBottomV5(data, globalPivots);
+  const mPatterns = detectMTopV5(data, globalPivots);
+  const hsTopPatterns = detectHSTopV5(data, globalPivots);
 
   // ===== 1. 均线多头排列 =====
   let maDetail = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
@@ -1695,6 +2034,41 @@ function matchBearPatterns(data, ind) {
     }
   }
   results.hs_top = hsTop;
+
+  // ===== V5统一算法覆盖（与Python端一致）=====
+  // 如果V5 Swing Pivot检测到形态，则用V5结果覆盖旧算法结果
+  function applyV5Result(oldDetail, v5Patterns) {
+    if (!v5Patterns || v5Patterns.length === 0) return oldDetail;
+    const p = v5Patterns[0];
+    return {
+      score: p.score,
+      stage: `${p.pattern_name} - ${p.stage} (V5)`,
+      outlook: p.notes,
+      action: p.stage === 'BREAKOUT_DAY' || p.stage === 'POST_BREAK' ?
+              (p.direction === 'bull' ? '持股待涨' : '建议止盈止损') :
+              p.stage === 'RETEST' ? (p.direction === 'bull' ? '回踩确认，可加仓' : '回抽确认，减仓') :
+              p.stage === 'PRE_BREAK' ? (p.direction === 'bull' ? '关注颈线突破' : '警惕跌破颈线') : '观望',
+      points: [
+        ...p.key_points.map(kp => ({ label: kp.name, value: kp.price.toFixed(2) })),
+        { label: '当前颈线', value: p.neckline_price.toFixed(2) },
+        { label: '目标价', value: p.target_price.toFixed(2) },
+        { label: '止损价', value: p.stop_loss.toFixed(2) },
+      ],
+      markers: {
+        points: p.key_points.map(kp => ({
+          idx: data.findIndex(d => d.day === kp.date),
+          price: kp.price,
+          label: kp.name,
+          color: kp.name === '头' ? '#e74c3c' : kp.name.includes('颈') ? '#f39c12' : '#3498db'
+        })).filter(m => m.idx >= 0),
+        lines: [{ price: p.neckline_price, label: `${p.pattern_name}颈线(V5)`, color: '#f39c12' }]
+      }
+    };
+  }
+  results.w_bottom = applyV5Result(results.w_bottom, wPatterns);
+  results.hs_bottom = applyV5Result(results.hs_bottom, hsPatterns);
+  results.m_top = applyV5Result(results.m_top, mPatterns);
+  results.hs_top = applyV5Result(results.hs_top, hsTopPatterns);
 
   // ===== 4. 平台破位 =====
   let pbDown = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };

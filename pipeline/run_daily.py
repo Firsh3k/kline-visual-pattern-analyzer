@@ -45,6 +45,7 @@ import core  # noqa: E402
 from core import (  # noqa: E402
     OHLCV, SwingPivotEngine, WBottomDetector, ClassicIndicators, ClassicMarketRegimeAnalyzer,
     volume_status, atr_stop, registry, AdjustmentType, FrequencyType,
+    ReferenceIndicators, INDICATOR_CONVENTIONS,
 )
 
 SCHEMA_VERSION = "2.0"
@@ -152,6 +153,7 @@ def run_core(klines: List[OHLCV]) -> Dict[str, Any]:
     patterns = {pid: [r.to_dict() for r in registry.get_pattern(pid).detect(klines)]
                 for pid in PATTERN_ORDER}
     ind = ClassicIndicators().calculate(klines)
+    ref = ReferenceIndicators().calculate(klines)
     last = len(klines) - 1
     latest = {k: ind[k][last] for k in ind}
     return {
@@ -164,6 +166,9 @@ def run_core(klines: List[OHLCV]) -> Dict[str, Any]:
             "series": {k: ind[k] for k in INDICATOR_SERIES},
             "volume": volume_status(klines, ind),
             "atr_stop": atr_stop(klines, ind),
+            # FIR-37：口径说明 + 行情软件常用口径对照值（仅展示，不参与任何判定）
+            "conventions": INDICATOR_CONVENTIONS,
+            "reference": {"latest": {k: v[last] for k, v in ref.items()}, "series": ref},
         },
     }
 

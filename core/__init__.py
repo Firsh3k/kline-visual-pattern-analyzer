@@ -92,7 +92,8 @@ from .pivot_patterns import (
 )
 
 # V4 → V5 迁移：经典指标、大盘环境、均线/平台形态（数值与 V4 逐项一致，见 tests/v5/test_v4_migration_parity.py）
-from .indicators import ClassicIndicators, volume_status, atr_stop
+from .indicators import (ClassicIndicators, ReferenceIndicators, INDICATOR_CONVENTIONS, REFERENCE_SERIES,
+                         volume_status, atr_stop)
 from .market_regime import ClassicMarketRegimeAnalyzer, weekly_bars, monthly_bars
 from .ma_platform_patterns import (
     MABullDetector,
@@ -176,6 +177,9 @@ __all__ = [
     "ClassicIndicators",
     "volume_status",
     "atr_stop",
+    "ReferenceIndicators",
+    "INDICATOR_CONVENTIONS",
+    "REFERENCE_SERIES",
     "ClassicMarketRegimeAnalyzer",
     "weekly_bars",
     "monthly_bars",

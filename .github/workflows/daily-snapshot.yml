@@ -1,6 +1,6 @@
 # 每日快照：交易日收盘后用 V6 Python 分析服务跑一遍自选股和同花顺板块，发布为只读静态网站（GitHub Pages）。
 # 扫描范围：config/daily_snapshot.json。手动运行：Actions → 每日快照 → Run workflow（可临时指定代码）。
-# 定时任务（schedule）只在默认分支 main 上生效；其他分支 push 时只构建、不发布，用于验证。
+# 定时任务（schedule）只在默认分支 main 上生效；在其他分支手动运行时只构建、不发布。
 name: 每日快照
 
 on:
@@ -16,13 +16,6 @@ on:
         description: '临时指定同花顺板块代码（空格分隔，留空则用配置文件）'
         required: false
         default: ''
-  push:
-    branches: [ 'claude/project-thread-04zuq3' ]
-    paths:
-      - '.github/workflows/daily-snapshot.yml'
-      - 'pipeline/daily_snapshot.py'
-      - 'apps/web/js/api-static.js'
-      - 'config/daily_snapshot.json'
 
 permissions:
   contents: read

@@ -84,6 +84,7 @@ python scripts/run_local.py --lan    # 同一 Wi-Fi 的手机也能访问（终�
 ```
 
 第一次运行会自动安装依赖，并让你设置登录密码（保存在 `var/local/`，不进 Git）。按 Ctrl+C 停止。
+在云服务器等不能交互输入密码的环境，用环境变量给出密码：`KLINE_LOGIN_PASSWORD='至少12位' python scripts/run_local.py --lan --no-browser`。这种方式是 http 明文访问，适合先试用；长期对公网开放请用 `deploy/docker-compose.yml` 并加 HTTPS。
 个股页输入代码即实时分析；扫描页选“同花顺板块代码”，输入如 `886032`，会自动拉取成分股并扫描。
 
 

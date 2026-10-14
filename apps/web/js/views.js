@@ -384,9 +384,10 @@
     const opt = (s) => `<label class="${s.scannable ? '' : 'muted'}"><input type="checkbox" name="sec" value="${esc(s.id)}"${s.scannable ? '' : ' disabled'}> ${esc(s.name || s.sectorCode)}${s.type === 'ths_dynamic' ? '（动态）' : ''} <span class="small muted">${s.scannable ? s.count + ' 只' : esc(s.status === 'pending' ? '待验证' : s.status === 'stale' ? '已过期' : s.status)}</span></label>`;
     main.innerHTML = `<form class="panel" id="scanForm"><div class="head"><h2>市场扫描</h2><a class="small" href="#/sectors">管理板块</a></div>
       <fieldset class="field"><legend class="label">扫描范围</legend><div class="checks">
-        <label><input type="radio" name="scope" value="sectors" checked> 板块</label><label><input type="radio" name="scope" value="codes"> 自定义股票池</label><label><input type="radio" name="scope" value="watchlist"> 自选股</label></div></fieldset>
+        <label><input type="radio" name="scope" value="sectors" checked> 板块</label><label><input type="radio" name="scope" value="ths"> 同花顺板块代码</label><label><input type="radio" name="scope" value="codes"> 自定义股票池</label><label><input type="radio" name="scope" value="watchlist"> 自选股</label></div></fieldset>
       <div id="scopeSectors" class="checks">${all.map(opt).join('')}</div>
       ${sectors.dynamic.some((s) => !s.scannable) ? '<p class="small muted">灰色的动态板块尚未通过权威验证或已过期，暂时不能扫描（可在板块页完成验证）。</p>' : ''}
+      <label class="field hidden" id="scopeThs">同花顺板块指数代码（自动从同花顺拉取最新成分股后扫描）<input class="inp" name="thsCode" inputmode="numeric" maxlength="6" placeholder="例如 886032"></label>
       <label class="field hidden" id="scopeCodes">股票代码（空格、逗号或换行分隔）<textarea name="codes" placeholder="600519 000858 002436"></textarea></label>
       <div class="grid3"><label class="field">方向<select name="direction"><option value="any">全部</option><option value="bull">看涨</option><option value="bear">看跌</option></select></label>
         <label class="field">最低分数<input name="minScore" type="number" min="0" max="100" value="60"></label>
@@ -398,11 +399,27 @@
     form.addEventListener('change', () => {
       const s = form.scope.value;
       $('#scopeSectors').classList.toggle('hidden', s !== 'sectors'); $('#scopeCodes').classList.toggle('hidden', s !== 'codes');
+      $('#scopeThs').classList.toggle('hidden', s !== 'ths');
     });
-    form.addEventListener('submit', (ev) => {
+    form.addEventListener('submit', async (ev) => {
       ev.preventDefault(); const fd = new FormData(form); const s = fd.get('scope');
       let scope;
-      if (s === 'sectors') { const ids = fd.getAll('sec'); if (!ids.length) { toast('请至少选择一个板块'); return; } scope = { type: 'sectors', ids }; }
+      if (s === 'ths') {
+        const c = String(fd.get('thsCode') || '').trim();
+        if (!/^\d{6}$/.test(c)) { toast('板块代码必须是 6 位数字'); return; }
+        const box = $('#scanJob');
+        box.innerHTML = `<div class="notice"><span class="spinner"></span> 正在从同花顺拉取板块 ${esc(c)} 的成分股…</div>`;
+        let sec;
+        try { sec = (await API.post('/api/v1/sectors/dynamic', { sectorCode: c, at: new Date().toISOString() }, { timeoutMs: 40000 })).data; }
+        catch (e) { box.innerHTML = errorBox(e, '拉取板块失败'); return; }
+        if (!sec.sector.scannable) {
+          const why = sec.autoFetch && !sec.autoFetch.ok ? sec.autoFetch.error : sec.sector.reason;
+          box.innerHTML = errorBox({ message: `${why || '成分股不可用'}。可以稍后重试，或到板块页提交手工快照。` }, `板块 ${c} 暂时不能扫描`);
+          return;
+        }
+        toast(`${sec.sector.name || c}：${sec.sector.count} 只成分股，开始扫描`);
+        scope = { type: 'sectors', ids: [sec.sector.id] };
+      } else if (s === 'sectors') { const ids = fd.getAll('sec'); if (!ids.length) { toast('请至少选择一个板块'); return; } scope = { type: 'sectors', ids }; }
       else if (s === 'codes') { const codes = String(fd.get('codes')).split(/[\s,，;；]+/).filter(Boolean); if (!codes.length) { toast('请输入股票代码'); return; } scope = { type: 'codes', codes }; }
       else scope = { type: 'watchlist' };
       const filters = { direction: fd.get('direction'), minScore: Number(fd.get('minScore') || 0), patterns: fd.getAll('pat'), stages: fd.getAll('stage') };
@@ -423,14 +440,14 @@
       return `<div class="panel" data-dyn="${esc(d.sectorCode)}"><div class="head"><h3>${esc(d.name || '（名称待权威验证）')} <span class="num muted">${esc(d.sectorCode)}</span></h3><span class="chip ${chip}" data-field="status" data-v="${esc(d.status)}">${label}</span></div>
         ${d.provenance && d.provenance.authoritative_reconciliation_date ? `<p class="small">权威来源 ${esc(d.provenance.source)} · 对账日期 <span class="num">${esc(d.provenance.authoritative_reconciliation_date)}</span> · ${d.count} 只成分股</p>` : ''}
         ${d.reason ? `<p class="small muted">${esc(d.reason)}</p>` : ''}
-        ${d.verification ? `<div class="alert warn small"><p>验证方法：把下面这句话发给已接入同花顺 iFinD 的助手，得到权威快照 JSON 后粘贴到下面提交。</p>
+        ${d.verification ? `<div class="alert warn small"><p>自动拉取没有成功时，可以点“刷新成分股”重试；也可以手工验证：把下面这句话发给已接入同花顺 iFinD 的助手，得到权威快照 JSON 后粘贴到下面提交。</p>
           <div class="row"><code class="grow" data-field="instruction">${esc(d.verification.instruction)}</code><button class="tbtn" data-copy="${esc(d.verification.instruction)}" type="button">复制</button></div></div>
           <label class="field">权威快照 JSON<textarea data-snap="${esc(d.sectorCode)}" placeholder='{"schema_version":"1.0","source":"ths_ifind","as_of_date":"YYYY-MM-DD","sectors":{"板块名":{"sector_code":"${esc(d.sectorCode)}","codes":["600000"]}}}'></textarea></label>
           <div class="row"><button class="tbtn primary" data-verify="${esc(d.sectorCode)}" type="button">提交验证</button></div>` : ''}
-        <div class="row"><button class="tbtn danger" data-deldyn="${esc(d.sectorCode)}" type="button">删除</button></div><div data-out="${esc(d.sectorCode)}"></div></div>`;
+        <div class="row"><button class="tbtn" data-refresh="${esc(d.sectorCode)}" type="button">刷新成分股</button><button class="tbtn danger" data-deldyn="${esc(d.sectorCode)}" type="button">删除</button></div><div data-out="${esc(d.sectorCode)}"></div></div>`;
     };
     main.innerHTML = `<section class="panel"><h2>同花顺动态板块</h2>
-      <p class="small muted">输入 6 位板块指数代码，只做格式检查并进入“待验证”。必须提交权威快照（来源 + 日期 + 成分股）完成验证，并且在 ${s.freshDays} 天内才可扫描。</p>
+      <p class="small muted">输入 6 位板块指数代码，服务端会自动从同花顺拉取最新成分股并记录来源和日期；扫描时当天没拉过会自动重拉。拉取失败时进入“待验证”，可重试或提交手工快照，成分股在 ${s.freshDays} 天内才可扫描。</p>
       <form class="search" id="dynAdd"><input class="inp" name="code" inputmode="numeric" maxlength="6" placeholder="例如 886032" aria-label="板块代码"><button class="tbtn primary" type="submit">添加</button></form></section>
       <div class="grid2" id="dynList">${s.dynamic.map(dynCard).join('') || '<p class="muted">还没有动态板块。</p>'}</div>
       <section class="panel"><h2>自定义股票池</h2>
@@ -447,7 +464,11 @@
     $('#dynAdd').addEventListener('submit', async (ev) => {
       ev.preventDefault(); const c = String(new FormData(ev.target).get('code')).trim();
       if (!/^\d{6}$/.test(c)) { toast('板块代码必须是 6 位数字'); return; }
-      try { await API.post('/api/v1/sectors/dynamic', { sectorCode: c, at: new Date().toISOString() }); reload(); } catch (e) { toast(e.message); }
+      try {
+        const r = (await API.post('/api/v1/sectors/dynamic', { sectorCode: c, at: new Date().toISOString() }, { timeoutMs: 40000 })).data;
+        if (r.autoFetch) toast(r.autoFetch.ok ? `已从同花顺拉取 ${r.autoFetch.count} 只成分股` : `自动拉取失败：${r.autoFetch.error}`);
+        reload();
+      } catch (e) { toast(e.message); }
     });
     $('#cusForm').addEventListener('submit', async (ev) => {
       ev.preventDefault(); const fd = new FormData(ev.target);
@@ -467,6 +488,15 @@
       if (t.dataset.editcus) {
         const c = s.custom.find((x) => x.name === t.dataset.editcus); const f = $('#cusForm');
         f.name.value = c.name; f.codes.value = c.codes.join(' '); f.scrollIntoView({ block: 'center' });
+      }
+      if (t.dataset.refresh) {
+        const code = t.dataset.refresh; const out = main.querySelector(`[data-out="${code}"]`);
+        out.innerHTML = '<div class="notice small"><span class="spinner"></span> 正在从同花顺拉取…</div>';
+        try {
+          const r = (await API.post(`/api/v1/sectors/${code}/verification`, {}, { timeoutMs: 40000 })).data;
+          if (r.autoFetch && r.autoFetch.ok) { toast(`已更新：${r.autoFetch.count} 只成分股`); reload(); }
+          else out.innerHTML = errorBox({ message: (r.autoFetch && r.autoFetch.error) || '服务端未开启自动拉取，请提交手工快照' }, '刷新失败');
+        } catch (e) { out.innerHTML = errorBox(e, '刷新失败'); }
       }
       if (t.dataset.verify) {
         const code = t.dataset.verify; const out = main.querySelector(`[data-out="${code}"]`);

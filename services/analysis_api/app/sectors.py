@@ -7,10 +7,15 @@
   stale        —— 已对账但超过 7 天（禁止扫描，需重新验证）
   unavailable  —— 权威源明确无法提供（禁止扫描）
 
+自动获取（THS_SECTOR_SOURCE=web，见 ths_web.py）：
+  - 添加板块、刷新（不带 snapshot 的验证请求）、扫描当天尚未拉取过的板块时，自动从同花顺网页接口拉取成分股，
+    生成与手工快照同格式的快照，走下面同一套校验与存证；
+  - 拉取失败不猜测、不换源：板块保持原状态，并返回失败原因和手工验证指令。
+
 验证入口：POST /api/v1/sectors/{code}/verification
   - 带 snapshot：按 core.sector_validation.pipeline.load_authoritative_snapshot 的同一规则校验，
     通过后写入成分股与 provenance，原始快照存证；
-  - 不带 snapshot：返回 manual_required + 可复制的验证指令（例如“帮我验证同花顺板块 886032”）
+  - 不带 snapshot：已配置自动获取时先自动拉取；未配置或失败时返回 manual_required + 可复制的验证指令（例如“帮我验证同花顺板块 886032”）
     和快照格式说明。服务端不猜测板块名称或成分股。
 """
 from __future__ import annotations
@@ -31,6 +36,7 @@ from core.sector_validation.types import FreshnessLevel, ReconciliationMethod, S
 
 from .db import Database, dumps
 from .errors import Conflict, InvalidRequest, NotFound
+from .ths_web import SOURCE as THS_WEB_SOURCE, SectorSourceError
 from .userstate import fmt, norm_time, utcnow, valid_code
 
 FRESH_DAYS = 7
@@ -73,8 +79,9 @@ def _dyn_status(ds: DynamicSector, today: str) -> Dict[str, Any]:
 
 
 class SectorService:
-    def __init__(self, db: Database, presets_path: Path, evidence_dir: Path, repo_root: Path):
+    def __init__(self, db: Database, presets_path: Path, evidence_dir: Path, repo_root: Path, auto_source=None):
         self.db = db
+        self.auto_source = auto_source      # THSWebSectorSource 或 None（只走手工快照）
         self.evidence_dir = Path(evidence_dir)
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
         raw = json.loads(Path(presets_path).read_text(encoding="utf-8"))
@@ -127,7 +134,15 @@ class SectorService:
                 "tombstones": {"custom": tomb("custom", "name"), "dynamic": tomb("dynamic", "sectorCode")}}
 
     def resolve_scope(self, user_id: str, ids: List[str]) -> List[Dict[str, Any]]:
-        """扫描范围解析；任何不可扫描的动态板块 → 409（禁止扫描）"""
+        """扫描范围解析；任何不可扫描的动态板块 → 409（禁止扫描）
+
+        配置了自动获取时，扫描前先把今天还没拉取过的动态板块重新拉一次；
+        拉取失败时仍按原状态判断（7 天内的旧成分股可以扫描，否则 409）。"""
+        if self.auto_source is not None:
+            today = _today()
+            for d in self.list(user_id, today)["dynamic"]:
+                if d["id"] in ids and (d["provenance"] or {}).get("authoritative_reconciliation_date") != today:
+                    self.auto_verify(user_id, d["sectorCode"], today)
         listing = self.list(user_id)
         by_id = {s["id"]: s for s in listing["presets"] + listing["custom"] + listing["dynamic"]}
         out = []
@@ -205,7 +220,33 @@ class SectorService:
             c.execute("DELETE FROM dynamic_sector_tombstones WHERE user_id=? AND sector_code=?", (user_id, code))
             v = Database.bump(c, user_id)
         item = next(d for d in self.list(user_id)["dynamic"] if d["sectorCode"] == code)
-        return {"version": v, "sector": item}
+        out: Dict[str, Any] = {"version": v, "sector": item}
+        if self.auto_source is not None and item["status"] != "verified":
+            res = self.auto_verify(user_id, code)
+            out["autoFetch"] = res["autoFetch"]
+            if res["autoFetch"]["ok"]:
+                out["version"], out["sector"] = res["version"], res["sector"]
+        return out
+
+    def auto_verify(self, user_id: str, code: str, today: Optional[str] = None) -> Dict[str, Any]:
+        """从同花顺网页接口拉取成分股并按快照规则记录；失败返回原因，不改动已有数据"""
+        today = today or _today()
+        try:
+            m = self.auto_source.fetch(code)
+        except SectorSourceError as e:
+            return {"autoFetch": {"ok": False, "source": THS_WEB_SOURCE, "error": str(e)}}
+        snapshot = {
+            "schema_version": "1.0", "source": THS_WEB_SOURCE, "source_url": m.source_url, "as_of_date": today,
+            "snapshot_id": f"{THS_WEB_SOURCE}:{code}:{m.fetched_at}",
+            "sectors": {m.name or f"同花顺板块{code}": {"sector_code": code, "codes": m.codes}},
+        }
+        try:
+            res = self.verify(user_id, code, snapshot, today)
+        except (InvalidRequest, NotFound) as e:
+            return {"autoFetch": {"ok": False, "source": THS_WEB_SOURCE, "error": e.message}}
+        res["autoFetch"] = {"ok": True, "source": THS_WEB_SOURCE, "fetchedAt": m.fetched_at,
+                            "count": len(m.codes), "skipped": m.skipped[:50]}
+        return res
 
     def delete_dynamic(self, user_id: str, code: str, at: Optional[str] = None) -> Dict[str, Any]:
         at = norm_time(at)
@@ -225,6 +266,11 @@ class SectorService:
         if not rows:
             raise NotFound(f"动态板块 {code} 不存在，请先添加")
         if snapshot is None:
+            if self.auto_source is not None:
+                res = self.auto_verify(user_id, code, today)
+                if res["autoFetch"]["ok"]:
+                    return res
+                return {**verification_instruction(code), "autoFetch": res["autoFetch"]}
             return verification_instruction(code)
         today = today or _today()
         raw = json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -262,7 +308,8 @@ class SectorService:
         rec = reconcile_codes(name, ds.constituents, codes, source=snap["source"])
         ds.sector_name = name
         ds.update_constituents(codes, source=snap["source"])
-        method = ReconciliationMethod.THS_IFIND if "ifind" in snap["source"].lower() else ReconciliationMethod.MANUAL
+        method = (ReconciliationMethod.THS_WEB if snap["source"] == THS_WEB_SOURCE
+                  else ReconciliationMethod.THS_IFIND if "ifind" in snap["source"].lower() else ReconciliationMethod.MANUAL)
         ds.provenance = SectorProvenance(
             sector_name=name, sector_code=code, source=snap["source"], source_url=snap["source_url"],
             fetched_at=fmt(utcnow()), local_refresh_date=today,

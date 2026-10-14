@@ -38,6 +38,7 @@ from .errors import ApiError, InvalidRequest, Unauthorized  # noqa: E402
 from .providers import Provider, make_provider  # noqa: E402
 from .scans import ScanService  # noqa: E402
 from .sectors import SectorService  # noqa: E402
+from .ths_web import make_sector_source  # noqa: E402
 from . import userstate  # noqa: E402
 
 log = logging.getLogger("analysis_api")
@@ -86,12 +87,15 @@ class ScanRequest(_M):
 
 # ------------------------------------------------------------------ 应用
 
-def create_app(settings: Optional[Settings] = None, provider: Optional[Provider] = None, clock=None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None, provider: Optional[Provider] = None, clock=None,
+               sector_source=None) -> FastAPI:
     settings = settings or Settings.from_env()
     db = Database(settings.data_dir / "analysis.sqlite3")
     provider = provider or make_provider(settings)
     analysis = AnalysisService(db, provider, settings.analysis_concurrency, clock=clock)
-    sectors = SectorService(db, settings.preset_sectors_path, settings.data_dir / "sector_evidence", REPO_ROOT)
+    sector_source = sector_source or make_sector_source(settings.ths_sector_source)
+    sectors = SectorService(db, settings.preset_sectors_path, settings.data_dir / "sector_evidence", REPO_ROOT,
+                            auto_source=sector_source)
     scans = ScanService(db, analysis, sectors, concurrency=settings.scan_concurrency,
                         max_codes=settings.scan_max_codes, per_code_timeout_s=settings.per_code_timeout_s)
     started_at = userstate.fmt(userstate.utcnow())

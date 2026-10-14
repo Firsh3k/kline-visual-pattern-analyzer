@@ -35,6 +35,7 @@ class Settings:
     data_dir: Path
     provider: str = "live"                      # live | fixture
     fixture_dir: Optional[Path] = None
+    ths_sector_source: str = "off"              # web（同花顺网页接口自动拉板块成分股）| off（只走手工快照）
     scan_concurrency: int = 4
     scan_max_codes: int = 600
     per_code_timeout_s: int = 25
@@ -57,6 +58,9 @@ class Settings:
         fixture_dir = os.environ.get("FIXTURE_DIR")
         if provider == "fixture" and not fixture_dir:
             raise ConfigError("MARKET_DATA_PROVIDER=fixture 时必须设置 FIXTURE_DIR")
+        ths_source = os.environ.get("THS_SECTOR_SOURCE", "web" if provider == "live" else "off")
+        if ths_source not in ("web", "off"):
+            raise ConfigError("THS_SECTOR_SOURCE 只能是 web / off")
         env = os.environ.get("DEPLOY_ENV", "development")
         if env not in ("development", "staging", "production"):
             raise ConfigError("DEPLOY_ENV 只能是 development / staging / production")
@@ -67,6 +71,7 @@ class Settings:
             data_dir=Path(os.environ.get("ANALYSIS_DATA_DIR", str(REPO_ROOT / "var"))),
             provider=provider,
             fixture_dir=Path(fixture_dir) if fixture_dir else None,
+            ths_sector_source=ths_source,
             scan_concurrency=_int("SCAN_CONCURRENCY", 4, 1, 16),
             scan_max_codes=_int("SCAN_MAX_CODES", 600, 1, 5000),
             per_code_timeout_s=_int("PER_CODE_TIMEOUT_S", 25, 1, 120),

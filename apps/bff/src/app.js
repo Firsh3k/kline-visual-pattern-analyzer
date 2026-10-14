@@ -27,10 +27,10 @@ const ROUTES = [
   ['GET', /^\/api\/v1\/sectors$/, 'default'],
   ['PUT', /^\/api\/v1\/sectors\/custom\/([^/]+)$/, 'default', null, 'sectorName'],
   ['DELETE', /^\/api\/v1\/sectors\/custom\/([^/]+)$/, 'default', null, 'sectorName'],
-  ['POST', /^\/api\/v1\/sectors\/dynamic$/, 'default'],
+  ['POST', /^\/api\/v1\/sectors\/dynamic$/, 'analysis'],          // 会自动拉同花顺成分股
   ['DELETE', /^\/api\/v1\/sectors\/dynamic\/([^/]+)$/, 'default', null, 'code'],
-  ['POST', /^\/api\/v1\/sectors\/([^/]+)\/verification$/, 'default', null, 'code'],
-  ['POST', /^\/api\/v1\/scans$/, 'default', 'scanCreate'],
+  ['POST', /^\/api\/v1\/sectors\/([^/]+)\/verification$/, 'analysis', null, 'code'],
+  ['POST', /^\/api\/v1\/scans$/, 'analysis', 'scanCreate'],      // 扫描前可能重拉板块成分股
   ['GET', /^\/api\/v1\/scans$/, 'default'],
   ['GET', /^\/api\/v1\/scans\/([^/]+)$/, 'default', null, 'job'],
   ['GET', /^\/api\/v1\/scans\/([^/]+)\/results$/, 'default', null, 'job'],

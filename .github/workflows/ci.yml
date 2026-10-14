@@ -40,6 +40,10 @@ jobs:
         python -m pytest tests/v5/ -v --tb=short
         echo "V5 Canonical Core tests passed"
 
+    - name: Run pipeline fidelity tests (JSON == direct V5 core output)
+      run: |
+        python -m pytest tests/pipeline/ -v --tb=short
+
     - name: Run FIR-25 exchange calendar provenance verifier
       run: |
         python tests/v5/verify_fir25_provenance_sample.py

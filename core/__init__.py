@@ -91,6 +91,16 @@ from .pivot_patterns import (
     MAX_NECKLINE_EXTRAPOLATION_RATIO,
 )
 
+# V4 → V5 迁移：经典指标、大盘环境、均线/平台形态（数值与 V4 逐项一致，见 tests/v5/test_v4_migration_parity.py）
+from .indicators import ClassicIndicators, volume_status, atr_stop
+from .market_regime import ClassicMarketRegimeAnalyzer, weekly_bars, monthly_bars
+from .ma_platform_patterns import (
+    MABullDetector,
+    MABearDetector,
+    PlatformBreakDetector,
+    PlatformBreakdownDetector,
+)
+
 # FIR-15 Sector Validation 模块说明：
 # 故意不从 core.__init__ 重新导出 FIR-15 的公共类型，以避免虚假的 JS↔Python parity 声明。
 # FIR-14 parity extractor 目前只覆盖 core/types.py 中的 canonical contracts。
@@ -162,6 +172,17 @@ __all__ = [
     "MTopDetector",
     "HSBottomDetector",
     "HSTopDetector",
+    # V4 → V5 迁移
+    "ClassicIndicators",
+    "volume_status",
+    "atr_stop",
+    "ClassicMarketRegimeAnalyzer",
+    "weekly_bars",
+    "monthly_bars",
+    "MABullDetector",
+    "MABearDetector",
+    "PlatformBreakDetector",
+    "PlatformBreakdownDetector",
     "MIN_HS_HEAD_PROMINENCE",
     "MAX_NECKLINE_EXTRAPOLATION_RATIO",
     # 注意：FIR-15 Sector Validation 类型故意不导出到 core.__init__，

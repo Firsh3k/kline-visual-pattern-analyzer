@@ -90,7 +90,20 @@ function testRepositoryIntegration() {
   );
 }
 
+function testPrereleaseOnlyOutsideProduction() {
+  const base = {
+    schemaVersion: 1, version: 'v6.0.0-rc.1', commit: '0123456789abcdef0123456789abcdef01234567',
+    releasedAt: '2026-10-14', rollbackBaseline: 'v5.0.1', repository: 'Firsh3k/kline-visual-pattern-analyzer'
+  };
+  assert.strictEqual(releaseIdentity.validateReleaseInfo({ ...base, environment: 'staging' }).ok, true);
+  assert.strictEqual(releaseIdentity.makeDisplay({ ...base, environment: 'staging' }).version, 'v6.0.0-rc.1');
+  assert.strictEqual(releaseIdentity.validateReleaseInfo({ ...base, environment: 'production' }).ok, false);
+  assert.strictEqual(releaseIdentity.makeDisplay({ ...base, environment: 'production' }).version, 'Version Unknown');
+  assert.strictEqual(releaseIdentity.validateReleaseInfo({ ...base, version: 'v6.0.0-beta', environment: 'staging' }).ok, false);
+}
+
 testValidMetadata();
 testFailClosedMetadata();
+testPrereleaseOnlyOutsideProduction();
 testRepositoryIntegration();
 console.log('FIR-28 release identity tests passed');

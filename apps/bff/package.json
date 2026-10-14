@@ -1,0 +1,16 @@
+{
+  "name": "kline-bff",
+  "version": "6.0.0-rc.1",
+  "private": true,
+  "description": "V6 Node/Express BFF：鉴权、CSRF、限流、超时、请求转发与静态网页。不含任何形态/指标计算。",
+  "main": "src/server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "hash-password": "node src/hash-password.js"
+  },
+  "dependencies": {
+    "express": "4.21.2"
+  }
+}

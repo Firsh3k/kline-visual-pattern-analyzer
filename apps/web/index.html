@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>K线形态分析</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+<script src="vendor/lightweight-charts.standalone.production.js" defer></script>
+<script src="js/format.js" defer></script>
+<script src="js/api.js" defer></script>
+<script src="js/chart.js" defer></script>
+<script src="js/views.js" defer></script>
+<script src="js/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<header class="topbar">
+  <a class="brand" href="#/stock">K线形态分析</a>
+  <nav class="nav" aria-label="主导航" id="nav">
+    <a href="#/stock" data-nav="stock">个股</a>
+    <a href="#/watchlist" data-nav="watchlist">自选股</a>
+    <a href="#/scan" data-nav="scan">扫描</a>
+    <a href="#/sectors" data-nav="sectors">板块</a>
+    <a href="#/catalog" data-nav="catalog">图鉴</a>
+    <a href="#/about" data-nav="about">版本</a>
+  </nav>
+  <button class="tbtn" id="logout" type="button" hidden>退出</button>
+</header>
+<main id="main" class="wrap" tabindex="-1">
+  <div class="notice" id="boot">正在加载…</div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<noscript><p class="notice">此页面需要启用 JavaScript。</p></noscript>
+</body>
+</html>

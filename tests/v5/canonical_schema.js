@@ -128,9 +128,9 @@ const CANONICAL_SCHEMA = {
 
     PatternResult: {
       name: 'PatternResult',
-      field_count: 12,
+      field_count: 14,
       required_fields: ['pattern_id', 'pattern_name', 'direction', 'stage', 'score', 'confidence', 'key_points'],
-      optional_fields: ['neckline_price', 'breakout_price', 'target_price', 'stop_loss', 'notes'],
+      optional_fields: ['neckline_price', 'breakout_price', 'target_price', 'stop_loss', 'notes', 'category', 'evidence'],
       fields: [
         { name: 'pattern_id', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
         { name: 'pattern_name', type: 'str', is_optional: false, has_default: false, default: null, nullable: false },
@@ -143,7 +143,9 @@ const CANONICAL_SCHEMA = {
         { name: 'breakout_price', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
         { name: 'target_price', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
         { name: 'stop_loss', type: 'Optional[float]', is_optional: true, has_default: true, default: null, nullable: true },
-        { name: 'notes', type: 'str', is_optional: false, has_default: true, default: '', nullable: false }
+        { name: 'notes', type: 'str', is_optional: false, has_default: true, default: '', nullable: false },
+        { name: 'category', type: 'str', is_optional: false, has_default: true, default: 'price_pattern', nullable: false },
+        { name: 'evidence', type: 'Dict[str, Any]', is_optional: false, has_default: true, default: {}, nullable: false }
       ]
     },
 

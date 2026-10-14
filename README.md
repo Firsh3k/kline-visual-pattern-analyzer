@@ -74,6 +74,19 @@ kline-visual-pattern-analyzer/
 
 ## 使用方法
 
+### V6 本机一键运行（不需要服务器）
+
+在国内网络的电脑上运行，行情和同花顺板块成分股都由这台电脑直接拉取。需要 Python 3.10+ 和 Node.js 20+。
+
+```bash
+python scripts/run_local.py          # 打开 http://localhost:8080，用户名 owner
+python scripts/run_local.py --lan    # 同一 Wi-Fi 的手机也能访问（终端会打印手机地址）
+```
+
+第一次运行会自动安装依赖，并让你设置登录密码（保存在 `var/local/`，不进 Git）。按 Ctrl+C 停止。
+个股页输入代码即实时分析；扫描页选“同花顺板块代码”，输入如 `886032`，会自动拉取成分股并扫描。
+
+
 ### 方式一：Python脚本（推荐，自动拉数据）
 
 ```bash

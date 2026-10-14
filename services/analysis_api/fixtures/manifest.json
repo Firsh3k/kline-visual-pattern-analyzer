@@ -1,0 +1,41 @@
+{
+ "note": "测试 / 本地演示用行情。真实数据来自 tests/v5/fixtures（聊天中经腾讯前复权与新浪不复权双源核对，2026-10-13）；synthetic_* 为合成数据，名称前缀【测试】，仅用于验证错误处理与无形态显示。生产环境禁止使用 fixture 行情。",
+ "series": {
+  "002436": {
+   "file": "../../../tests/v5/fixtures/002436_qfq_20261013.csv",
+   "name": "兴森科技",
+   "source": "tencent",
+   "adjustment": "qfq",
+   "exchange": "SZ",
+   "fetched_at": "2026-10-13",
+   "note": "真实行情（前复权）"
+  },
+  "sh000001": {
+   "file": "../../../tests/v5/fixtures/sh000001_20261013.csv",
+   "name": "上证指数",
+   "source": "tencent",
+   "adjustment": "none",
+   "exchange": "SH",
+   "fetched_at": "2026-10-13"
+  },
+  "600001": {
+   "file": "synthetic_flat.csv",
+   "name": "【测试】平稳序列",
+   "source": "synthetic",
+   "adjustment": "qfq",
+   "exchange": "SH",
+   "note": "合成：无结构形态的对照样本"
+  },
+  "000002": {
+   "file": "synthetic_bad_nan.csv",
+   "name": "【测试】含非法K线",
+   "source": "synthetic",
+   "adjustment": "qfq",
+   "exchange": "SZ",
+   "note": "合成：第 201 根收盘为 NaN，必须被拒绝"
+  }
+ },
+ "unavailable": {
+  "300999": "模拟行情源不可用"
+ }
+}

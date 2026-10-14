@@ -1,0 +1,74 @@
+# 每日快照：交易日收盘后用 V6 Python 分析服务跑一遍自选股和同花顺板块，发布为只读静态网站（GitHub Pages）。
+# 扫描范围：config/daily_snapshot.json。手动运行：Actions → 每日快照 → Run workflow（可临时指定代码）。
+# 定时任务（schedule）只在默认分支 main 上生效；其他分支 push 时只构建、不发布，用于验证。
+name: 每日快照
+
+on:
+  schedule:
+    - cron: '30 8 * * 1-5'      # 北京时间周一到周五 16:30（收盘后）
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: '临时指定股票代码（空格分隔，留空则用配置文件）'
+        required: false
+        default: ''
+      ths:
+        description: '临时指定同花顺板块代码（空格分隔，留空则用配置文件）'
+        required: false
+        default: ''
+  push:
+    branches: [ 'claude/project-thread-04zuq3' ]
+    paths:
+      - '.github/workflows/daily-snapshot.yml'
+      - 'pipeline/daily_snapshot.py'
+      - 'apps/web/js/api-static.js'
+      - 'config/daily_snapshot.json'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-snapshot
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: pip install -r services/analysis_api/requirements-dev.txt
+      - name: 运行分析并生成网站
+        env:
+          CODES: ${{ github.event.inputs.codes }}
+          THS: ${{ github.event.inputs.ths }}
+        run: |
+          set -euo pipefail
+          args=(--site dist --report report.md)
+          [ -n "${CODES:-}" ] && args+=(--codes $CODES)
+          [ -n "${THS:-}" ] && args+=(--ths $THS)
+          python pipeline/daily_snapshot.py "${args[@]}"
+          mkdir -p dist/v4 && cp kline_analyzer.html dist/v4/index.html
+          cp report.md dist/report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - id: deployment
+        uses: actions/deploy-pages@v4

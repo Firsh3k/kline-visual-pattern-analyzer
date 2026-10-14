@@ -32,3 +32,8 @@ Thumbs.db
 
 # FIR-13 校准数据缓存（可重新生成，保留 output/ 下的最终结果）
 data/calibration/*_qfq.json
+
+# V6 服务运行数据
+var/
+*.sqlite3
+node_modules/

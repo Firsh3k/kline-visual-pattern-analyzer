@@ -29,10 +29,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import sys
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 

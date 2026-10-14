@@ -53,11 +53,11 @@ jobs:
           echo "- 匿名拉取：失败（镜像为私有，需要在 GitHub Packages 设置为 Public）" >> "$GITHUB_STEP_SUMMARY"; echo "::error::anonymous pull FAILED (private package)"; exit 1
         fi
         TOKEN=$(openssl rand -hex 32)
-        docker run -d --name a -p 8000:8000 -e ANALYSIS_API_TOKEN=$TOKEN -e MARKET_DATA_PROVIDER=live ghcr.io/$OWNER/kline-analysis-api:nas || { echo "::error::docker run failed"; exit 1; }
-        for i in $(seq 1 30); do curl -fsS localhost:8000/healthz >/dev/null && break; sleep 2; done
+        docker run -d --name a -p 18000:8000 -e ANALYSIS_API_TOKEN=$TOKEN -e MARKET_DATA_PROVIDER=live ghcr.io/$OWNER/kline-analysis-api:nas > run.err 2>&1 || { echo "::error::docker run failed: $(tr '\n' ' ' < run.err)"; exit 1; }
+        for i in $(seq 1 30); do curl -fsS localhost:18000/healthz >/dev/null && break; sleep 2; done
         for c in 002436 603068 688432; do
-          curl -sS -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d "{\"code\":\"$c\"}" localhost:8000/api/v1/analyses \
+          curl -sS -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d "{\"code\":\"$c\"}" localhost:18000/api/v1/analyses \
             | python3 -c "import json,sys; d=json.load(sys.stdin); a=d.get('analysis'); print('$c', 'OK' if a else 'ERR', (a['as_of'], a['input']['bar_count'], a['input']['provenance'].get('source')) if a else d.get('error'))" | sed 's/^/::notice::/'
         done
-        curl -sS -H "Authorization: Bearer $TOKEN" localhost:8000/api/v1/market | python3 -c "import json,sys; d=json.load(sys.stdin); m=(d.get('market_env') or {}); print('market', m.get('as_of'), m.get('stage'), m.get('price'))" | sed 's/^/::notice::/'
+        curl -sS -H "Authorization: Bearer $TOKEN" localhost:18000/api/v1/market | python3 -c "import json,sys; d=json.load(sys.stdin); m=(d.get('market_env') or {}); print('market', m.get('as_of'), m.get('stage'), m.get('price'))" | sed 's/^/::notice::/'
         docker logs a 2>&1 | tail -20 | sed 's/^/::warning::log /'

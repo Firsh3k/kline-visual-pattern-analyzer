@@ -13,7 +13,7 @@ try {
   throw e;
 }
 const app = createApp(config);
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, config.host, () => {
   console.log(JSON.stringify({ event: 'listening', port: config.port, env: config.deployEnv,
     python: new URL(config.pythonBase).host }));
 });

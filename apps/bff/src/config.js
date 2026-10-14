@@ -56,6 +56,7 @@ function loadConfig(env = process.env) {
 
   return {
     port: int(env, 'PORT', 8080, 1, 65535),
+    host: env.BIND_HOST || undefined,           // 默认监听所有网卡；本机运行时可设 127.0.0.1
     deployEnv,
     pythonBase: url.toString().replace(/\/$/, ''),
     pythonToken: required(env, 'PYTHON_API_TOKEN', 32),

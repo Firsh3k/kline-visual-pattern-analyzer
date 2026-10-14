@@ -59,5 +59,5 @@ jobs:
           curl -sS -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d "{\"code\":\"$c\"}" localhost:18000/api/v1/analyses \
             | python3 -c "import json,sys; d=json.load(sys.stdin); a=d.get('analysis'); print('$c', 'OK' if a else 'ERR', (a['as_of'], a['input']['bar_count'], a['input']['provenance'].get('source')) if a else d.get('error'))" | sed 's/^/::notice::/'
         done
-        curl -sS -H "Authorization: Bearer $TOKEN" localhost:18000/api/v1/market | python3 -c "import json,sys; d=json.load(sys.stdin); m=(d.get('market_env') or {}); print('market', m.get('as_of'), m.get('stage'), m.get('price'))" | sed 's/^/::notice::/'
+        curl -sS -H "Authorization: Bearer $TOKEN" localhost:18000/api/v1/market | python3 -c "import json,sys; d=json.load(sys.stdin); m=(d.get('market_env') or {}); print('market', m.get('as_of'), m.get('stage'), m.get('price')); assert float(m.get('price') or 0) > 1000, 'index price implausible'" | sed 's/^/::notice::/'
         docker logs kline-smoke 2>&1 | tail -20 | sed 's/^/::warning::log /'

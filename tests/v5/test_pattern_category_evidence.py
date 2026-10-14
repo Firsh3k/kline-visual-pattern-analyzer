@@ -128,7 +128,8 @@ def test_platform_evidence_keys_are_stable():
     (r,) = PlatformBreakDetector().detect(_platform([51.0, 51.4, 52.6], [1e5, 1e5, 4e5])[:123])
     assert set(r.evidence) == {
         "range_pct", "platform_start_date", "platform_end_date", "breakout_line", "broke",
-        "broke_today", "near_line", "had_break_10d", "volume_confirmed", "ma_converge", "v4_stage",
+        "broke_today", "near_line", "had_break_10d", "had_break_prior_9d", "retest",
+        "volume_confirmed", "ma_converge", "v4_stage",
     }
 
 

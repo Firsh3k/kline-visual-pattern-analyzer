@@ -124,33 +124,50 @@ def _eval_platform(klines: List[OHLCV], ind: Dict[str, Any], up: bool) -> Option
         had = any(k.close < plat_low * 0.98 for k in recent)
         pullback = had and plat_low * 0.97 < cur_price < plat_low * 1.03
     score = (30 if tight else 10) + (35 if broke else 10) + (20 if vol_boost else 5) + (15 if ma_converge else 5)
-    if not tight:
-        stage = '非平台整理：振幅过大'
-    elif near and not broke:
-        stage = '平台整理末端：突破前夜' if up else '平台整理末端：破位前夜'
-    elif broke and vol_boost:
-        stage = '放量突破平台：突破确认' if up else '放量跌破平台：破位确认'
-    elif broke and not vol_boost:
-        stage = '缩量突破平台：需确认' if up else '缩量跌破平台：需确认'
-    elif pullback:
-        stage = '突破后回踩平台上沿确认中' if up else '破位后回抽平台下沿确认中'
-    elif had:
-        stage = '平台突破后上涨中' if up else '平台破位后下跌中'
-    else:
-        stage = '平台整理中'
     hi_idx = plat_start + next(i for i, k in enumerate(plat) if k.high == plat_high)
     lo_idx = plat_start + next(i for i, k in enumerate(plat) if k.low == plat_low)
     # FIR-32 D3：当日首次越过 = 今日收盘越过突破线，且前一日收盘未越过同一条线
     line = plat_high * 1.01 if up else plat_low * 0.99
     prev_close = klines[last - 1].close
     prev_broke = prev_close > line if up else prev_close < line
-    return {'score': score, 'stage': stage, 'tight': tight, 'last': last,
+    broke_today = broke and not prev_broke
+    # FIR-35（PO 2026-10-14 决定“调整顺序使其可达”）：
+    # 回踩/回抽 = 此前 9 个交易日（不含今日）内曾收盘越过 2%，今日回到判定位 ±3% 区间，且今日不是首次越过日。
+    # 该判断放在“突破前夜 / 突破”之前；V4 的顺序使其永远不可达（见 evidence.v4_stage）。
+    prior = klines[n-10:last]
+    if up:
+        had_prior = any(k.close > plat_high * 1.02 for k in prior)
+    else:
+        had_prior = any(k.close < plat_low * 0.98 for k in prior)
+    retest = tight and had_prior and pullback and not broke_today
+    v4_stage = _plat_stage_text(up, tight, near, broke, vol_boost, pullback, had)
+    stage = (('突破后回踩平台上沿确认中' if up else '破位后回抽平台下沿确认中') if retest else v4_stage)
+    return {'score': score, 'stage': stage, 'v4_stage': v4_stage, 'tight': tight, 'last': last,
             'plat_start': plat_start, 'plat_end': n - 6, 'plat_len': plat_len,
             'plat_high': plat_high, 'plat_low': plat_low, 'range_pct': range_pct,
             'hi_idx': hi_idx, 'lo_idx': lo_idx,
-            'flags': {'broke': broke, 'broke_today': broke and not prev_broke, 'near': near,
-                      'had': had, 'vol_boost': vol_boost, 'ma_converge': bool(ma_converge),
+            'flags': {'broke': broke, 'broke_today': broke_today, 'near': near,
+                      'had': had, 'had_prior': had_prior, 'retest': retest,
+                      'vol_boost': vol_boost, 'ma_converge': bool(ma_converge),
                       'line': line}}
+
+
+def _plat_stage_text(up, tight, near, broke, vol_boost, pullback, had) -> str:
+    """V4 原判定顺序（原样保留，供 evidence.v4_stage 追溯）"""
+    if not tight:
+        return '非平台整理：振幅过大'
+    elif near and not broke:
+        return '平台整理末端：突破前夜' if up else '平台整理末端：破位前夜'
+    elif broke and vol_boost:
+        return '放量突破平台：突破确认' if up else '放量跌破平台：破位确认'
+    elif broke and not vol_boost:
+        return '缩量突破平台：需确认' if up else '缩量跌破平台：需确认'
+    elif pullback:
+        return '突破后回踩平台上沿确认中' if up else '破位后回抽平台下沿确认中'
+    elif had:
+        return '平台突破后上涨中' if up else '平台破位后下跌中'
+    else:
+        return '平台整理中'
 
 
 # ------------------------------------------------------------------
@@ -271,9 +288,11 @@ class _PlatformDetectorBase(PatternDetector):
             'broke_today': f['broke_today'],
             'near_line': f['near'],
             'had_break_10d': f['had'],
+            'had_break_prior_9d': f['had_prior'],
+            'retest': f['retest'],
             'volume_confirmed': f['vol_boost'],
             'ma_converge': f['ma_converge'],
-            'v4_stage': ev['stage'],
+            'v4_stage': ev['v4_stage'],
         }
         return [PatternResult(
             pattern_id=self.pattern_id,

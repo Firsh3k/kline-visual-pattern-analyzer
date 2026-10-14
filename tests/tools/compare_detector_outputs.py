@@ -102,6 +102,7 @@ def main() -> int:
             by_field: Counter = Counter()
             by_pid: Counter = Counter()
             examples = defaultdict(list)
+            transitions: Counter = Counter()   # 阶段 / 方向 / 置信等级的迁移统计
             with open(td / "base.jsonl", encoding="utf-8") as fa, open(td / "head.jsonl", encoding="utf-8") as fb:
                 for la, lb in zip(fa, fb):
                     na, nn, pa, ra = json.loads(la)
@@ -116,16 +117,22 @@ def main() -> int:
                         for path, x, y in diffs:
                             key = f"{pa}{path}"
                             by_field[key] += 1
+                            if path.split(".")[-1] in ("stage", "direction", "confidence"):
+                                transitions[f"{key}: {x} -> {y}"] += 1
                             if len(examples[key]) < args.examples:
                                 examples[key].append({"dataset": na, "prefix": nn, "base": x, "head": y})
             report = {"base": base_sha, "head": head_desc, "evaluations": total, "changed_evaluations": changed,
                       "changed_by_pattern": dict(by_pid), "changed_by_field": dict(by_field),
-                      "examples": dict(examples)}
+                      "transitions": dict(transitions), "examples": dict(examples)}
             print(f"base={base_sha[:7]} head={head_desc}  evaluations={total}  changed={changed}")
             for k, v in sorted(by_field.items(), key=lambda kv: -kv[1]):
                 print(f"  {v:6d}  {k}")
                 for ex in examples[k][:2]:
                     print(f"          e.g. {ex['dataset']} n={ex['prefix']}: {ex['base']!r} -> {ex['head']!r}")
+            if transitions:
+                print("transitions:")
+                for k, v in sorted(transitions.items()):
+                    print(f"  {v:6d}  {k}")
             if args.json:
                 args.json.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
         finally:

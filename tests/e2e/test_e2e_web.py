@@ -336,6 +336,8 @@ def test_catalog_and_version(browser, stack, device):
     assert page.locator(".catalog article").count() == 8
     body = page.text_content(".catalog")
     assert "N/A" in body and "可靠性" not in body
+    assert page.locator("[data-testid=engine-rules]").count() == 8
+    assert "右底不低于左底 97%" in body and "创新低则" not in body          # P6：与引擎矛盾的旧说法已更正
     _no_hscroll(page)
     _shot(page, f"{device}_08_catalog")
     page.goto(stack["base"] + "/#/about")

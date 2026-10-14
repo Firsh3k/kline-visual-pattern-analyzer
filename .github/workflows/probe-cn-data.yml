@@ -1,4 +1,4 @@
-# 临时：测试海外云服务器（GitHub Actions）能否访问国内行情 / 同花顺接口。测完删除。
+# 临时（第2轮）：测试海外云服务器（GitHub Actions）能否访问国内行情 / 同花顺接口。测完删除。
 name: probe-cn-data
 on:
   push:

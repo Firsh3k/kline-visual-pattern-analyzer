@@ -19,9 +19,15 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import sys
 from typing import Any, Callable, Dict, List, Optional
 
-from core import analysis as A
+from .config import REPO_ROOT
+
+if str(REPO_ROOT) not in sys.path:   # 允许 python -m app.ths_web 单独运行
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core import analysis as A  # noqa: E402
 
 SOURCE = "ths_web"
 URL_TEMPLATE = "https://d.10jqka.com.cn/v2/blockrank/{code}/199112/d1000.js"
@@ -114,6 +120,5 @@ def make_sector_source(kind: str):
 
 
 if __name__ == "__main__":   # 本机连通性自测：python -m app.ths_web 886032
-    import sys
     m = THSWebSectorSource().fetch(sys.argv[1] if len(sys.argv) > 1 else "886032")
     print(json.dumps(m.__dict__, ensure_ascii=False, indent=2))

@@ -6,6 +6,8 @@
   'use strict';
 
   const VERSION_RE = /^v\d+\.\d+\.\d+$/;
+  // V6：预发布（RC）版本只允许出现在 staging / development，生产必须是正式 tag
+  const PRERELEASE_RE = /^v\d+\.\d+\.\d+-rc\.\d+$/;
   const COMMIT_RE = /^[0-9a-f]{40}$/i;
   const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
   const ALLOWED_ENVIRONMENTS = new Set(['production', 'staging', 'development']);
@@ -23,7 +25,10 @@
     }
 
     if (info.schemaVersion !== 1) errors.push('schemaVersion must equal 1');
-    if (!VERSION_RE.test(info.version || '')) errors.push('version must be vMAJOR.MINOR.PATCH');
+    const isRc = PRERELEASE_RE.test(info.version || '');
+    if (!VERSION_RE.test(info.version || '') && !(isRc && info.environment !== 'production')) {
+      errors.push('version must be vMAJOR.MINOR.PATCH (vX.Y.Z-rc.N only outside production)');
+    }
     if (!COMMIT_RE.test(info.commit || '')) errors.push('commit must be a full 40-character SHA');
     if (!isIsoDate(info.releasedAt)) errors.push('releasedAt must be a valid YYYY-MM-DD date');
     if (!ALLOWED_ENVIRONMENTS.has(info.environment)) errors.push('environment is invalid');

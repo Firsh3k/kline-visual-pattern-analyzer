@@ -178,6 +178,94 @@ jobs:
     - name: Analysis API tests
       run: cd services/analysis_api && python -m pytest tests -q -W ignore::DeprecationWarning
 
+  bff-tests:
+    # V6 Node BFF（鉴权 / CSRF / 限流 / 超时 / 转发）与静态网页资源
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install (lockfile)
+      run: cd apps/bff && npm ci --no-audit --no-fund
+    - name: BFF tests
+      run: cd apps/bff && npm test
+    - name: Pattern catalog identical to V5 page (FIR-13 claims removed)
+      run: node scripts/extract_pattern_catalog.js --check
+    - name: Web JS syntax
+      run: for f in apps/web/js/*.js; do node --check "$f"; done
+
+  e2e-web:
+    # 真实浏览器（手机 + PC）：Core → Python API → BFF → 网页 逐字段一致（价格容差 1e-4）
+    runs-on: ubuntu-latest
+    needs: [analysis-api, bff-tests]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Install
+      run: |
+        pip install -r services/analysis_api/requirements-dev.txt playwright==1.56.0
+        python -m playwright install --with-deps chromium
+        cd apps/bff && npm ci --no-audit --no-fund
+    - name: E2E
+      run: python -m pytest tests/e2e -q
+    - name: Upload phone / PC evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: v6-e2e-evidence
+        path: docs/v6/evidence/
+
+  docker-images:
+    # 两个服务的镜像构建 + compose 冒烟（fixture 行情，内网 http + 服务凭证）
+    runs-on: ubuntu-latest
+    needs: [analysis-api, bff-tests]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Build and start stack
+      run: |
+        HASH=$(printf '%s' 'ci-smoke-password-123' | node apps/bff/src/hash-password.js)
+        cat > deploy/.env <<ENVEOF
+        DEPLOY_ENV=staging
+        RELEASE_VERSION=v6.0.0-rc.1
+        RELEASE_COMMIT=${GITHUB_SHA}
+        RELEASED_AT=$(date -u +%F)
+        BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        ANALYSIS_API_TOKEN=$(openssl rand -hex 32)
+        SESSION_SECRET=$(openssl rand -hex 32)
+        LOGIN_USERNAME=owner
+        LOGIN_PASSWORD_HASH='${HASH}'
+        MARKET_DATA_PROVIDER=fixture
+        COOKIE_SECURE=false
+        ENVEOF
+        sed -i 's/^ *//' deploy/.env
+        sed -i 's/^DEPLOY_ENV=staging/DEPLOY_ENV=development/' deploy/.env
+        docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+        for i in $(seq 1 60); do curl -fsS localhost:8080/readyz && break; sleep 2; done
+    - name: Smoke test through BFF
+      run: |
+        curl -fsS localhost:8080/healthz
+        curl -fsS localhost:8080/readyz
+        curl -fsS -c cj -H 'content-type: application/json' -d '{"username":"owner","password":"ci-smoke-password-123"}' localhost:8080/auth/login > login.json
+        CSRF=$(python3 -c "import json;print(json.load(open('login.json'))['csrf'])")
+        curl -fsS -b cj -H 'content-type: application/json' -H "x-csrf-token: $CSRF" -d '{"code":"002436"}' localhost:8080/api/v1/analyses \
+          | python3 -c "import json,sys; d=json.load(sys.stdin)['analysis']; assert d['input']['bar_count']==250 and len(d['core']['patterns'])==8; print('analysis ok', d['input']['data_hash'])"
+        curl -fsS -b cj localhost:8080/api/v1/version | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['engine']['verified'] and d['compatibility']['ok'], d; print(d['engine']['version'], d['engine']['commit'])"
+        test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/v1/watchlist)" = "401"
+        docker compose -f deploy/docker-compose.yml --env-file deploy/.env ps
+        docker image ls --digests | grep kline-v6 || docker image ls | grep kline
+    - name: Logs
+      if: always()
+      run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs --no-color | tail -200
+
   cross-runtime-parity:
     runs-on: ubuntu-latest
     needs: [python-tests, js-syntax-check]

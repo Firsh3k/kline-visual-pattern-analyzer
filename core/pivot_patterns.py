@@ -194,15 +194,17 @@ class PivotPatternDetectorBase(PatternDetector):
         closes = [k.close for k in klines]
         nl_last = neckline_fn(last)
 
-        # 1) 寻找突破/跌破日：前一日收盘在颈线正确一侧，当日收盘越过颈线 * mult
+        # 1) 寻找突破/跌破日（FIR-39 方案 A，PO 2026-10-14）：当日收盘越过判定线（颈线 × mult），
+        #    且前一日收盘未越过同一条判定线 —— 与平台形态 breakout_day 定义一致。
+        #    旧规则要求前一日收盘 ≤ 颈线本身，导致“先站上颈线、次日才过判定线”的两步越线永远不算突破。
         cross_idx: Optional[int] = None
         for i in range(shape_done_idx + 1, n):
-            nl_i = neckline_fn(i)
-            nl_prev = neckline_fn(i - 1)
+            line_i = neckline_fn(i) * breakout_mult
+            line_prev = neckline_fn(i - 1) * breakout_mult
             if bullish:
-                crossed = closes[i] > nl_i * breakout_mult and closes[i - 1] <= nl_prev
+                crossed = closes[i] > line_i and closes[i - 1] <= line_prev
             else:
-                crossed = closes[i] < nl_i * breakout_mult and closes[i - 1] >= nl_prev
+                crossed = closes[i] < line_i and closes[i - 1] >= line_prev
             if crossed:
                 cross_idx = i
                 break
@@ -516,7 +518,8 @@ class HSBottomDetector(PivotPatternDetectorBase):
        头部→右肩之间最高的 swing high（右颈线点）连线，支持倾斜
        斜率 = (右颈线价 - 左颈线价) / (右颈线索引 - 左颈线索引)
        当前颈线值 = 左颈线价 + 斜率 * (当前索引 - 左颈线索引)
-    6. 突破确认：当前收盘 > 当前颈线值 * 0.98
+    6. 突破确认：当前收盘 > 当前颈线值 * 1.01（FIR-39：原为 0.98）
+    7. 右肩低点必须在颈线下方（FIR-39：右肩已在颈线外侧的结构不报告）
 
     目标价 = 当前颈线值 + (当前颈线值 - 头部价)
     止损   = 头部价 * 0.98
@@ -583,7 +586,11 @@ class HSBottomDetector(PivotPatternDetectorBase):
                 slope = 0.0
             nl_fn = lambda idx, ln=ln, slope=slope: ln.price + slope * (idx - ln.index)
 
-            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=True, breakout_mult=0.98)
+            # --- FIR-39 闸门：右肩低点必须在（外推）颈线下方，否则右肩本身已在颈线外侧，不是有效头肩底 ---
+            if rs.price >= nl_fn(rs.index):
+                continue
+
+            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=True, breakout_mult=1.01)
             stage = bstate["stage"]
             nl_now = nl_fn(len(klines) - 1)
 
@@ -596,7 +603,7 @@ class HSBottomDetector(PivotPatternDetectorBase):
             if slope != 0.0 and nl_now > head.price * MAX_NECKLINE_EXTRAPOLATION_RATIO:
                 continue
 
-            broken = klines[-1].close > nl_now * 0.98
+            broken = klines[-1].close > nl_now * 1.01
 
             target = nl_now + (nl_now - head.price)
             stop = head.price * 0.98
@@ -606,7 +613,7 @@ class HSBottomDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
-            evidence = self._breakout_evidence(klines, bstate, nl_fn, 0.98, broken)
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 1.01, broken)
             key_points = [
                 PatternKeyPoint("左肩", ls.index, ls.date, ls.price, "左肩摆动低点"),
                 PatternKeyPoint("头", head.index, head.date, head.price, "头部摆动低点（最低）"),
@@ -653,7 +660,8 @@ class HSTopDetector(PivotPatternDetectorBase):
     4. 左右肩对称：|ls.price - rs.price| / ls.price ≤ 20%
     5. 颈线：左肩→头部之间最低的 swing low（左颈线点）与
        头部→右肩之间最低的 swing low（右颈线点）连线
-    6. 跌破确认：当前收盘 < 当前颈线值 * 1.02
+    6. 跌破确认：当前收盘 < 当前颈线值 * 0.99（FIR-39：原为 1.02）
+    7. 右肩高点必须在颈线上方（FIR-39：右肩已在颈线外侧的结构不报告）
 
     目标价 = 当前颈线值 - (头部价 - 当前颈线值)
     止损   = 头部价 * 1.02
@@ -718,7 +726,11 @@ class HSTopDetector(PivotPatternDetectorBase):
                 slope = 0.0
             nl_fn = lambda idx, ln=ln, slope=slope: ln.price + slope * (idx - ln.index)
 
-            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=False, breakout_mult=1.02)
+            # --- FIR-39 闸门：右肩高点必须在（外推）颈线上方，否则右肩本身已在颈线外侧，不是有效头肩顶 ---
+            if rs.price <= nl_fn(rs.index):
+                continue
+
+            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=False, breakout_mult=0.99)
             stage = bstate["stage"]
             nl_now = nl_fn(len(klines) - 1)
 
@@ -730,7 +742,7 @@ class HSTopDetector(PivotPatternDetectorBase):
             if slope != 0.0 and nl_now < head.price / MAX_NECKLINE_EXTRAPOLATION_RATIO:
                 continue
 
-            broken = klines[-1].close < nl_now * 1.02
+            broken = klines[-1].close < nl_now * 0.99
 
             target = nl_now - (head.price - nl_now)
             stop = head.price * 1.02
@@ -740,7 +752,7 @@ class HSTopDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
-            evidence = self._breakout_evidence(klines, bstate, nl_fn, 1.02, broken)
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 0.99, broken)
             key_points = [
                 PatternKeyPoint("左肩", ls.index, ls.date, ls.price, "左肩摆动高点"),
                 PatternKeyPoint("头", head.index, head.date, head.price, "头部摆动高点（最高）"),

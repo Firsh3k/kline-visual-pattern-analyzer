@@ -3,13 +3,101 @@
  "source_file": "kline_analyzer.html",
  "source_sha256": "053eb17e1ad0fd28e181f04aae2c487d8c8908d59828831b2228bfc957c14eae",
  "removed_claims": "未迁移：reliability / reliability_pct / sample_note 中的成功率百分比，以及 PATTERN_ENV_ACCURACY（均未经校准，FIR-13）",
+ "corrections": {
+  "w_bottom": [
+   [
+    "第二个低点不低于第一个低点，",
+    "第二个低点不低于第一个低点的 97%，"
+   ],
+   [
+    "第二个低点不低于第一个，",
+    "第二个低点不低于第一个的 97%，"
+   ],
+   [
+    "右底：第二次探底，多头力量增强不再创新低",
+    "右底：第二次探底，不低于左底 3% 以上"
+   ],
+   [
+    "右底创新低则W底失败。",
+    "右底低于左底 3% 以上则 W 底不成立。"
+   ],
+   [
+    "假W底：右底创新低，",
+    "假W底：右底低于左底 3% 以上，"
+   ],
+   [
+    "右底不低于左底",
+    "右底不低于左底 97%"
+   ]
+  ],
+  "m_top": [
+   [
+    "第二个高点不高于第一个高点，",
+    "第二个高点不高于第一个高点的 103%，"
+   ],
+   [
+    "第二个高点不高于第一个，",
+    "第二个高点不高于第一个的 103%，"
+   ],
+   [
+    "右头：第二次冲高，多头力量减弱不再创新高",
+    "右头：第二次冲高，不高于左头 3% 以上"
+   ],
+   [
+    "右头创新高则M头失败。",
+    "右头高于左头 3% 以上则 M 头不成立。"
+   ],
+   [
+    "假M头：右头创新高，",
+    "假M头：右头高于左头 3% 以上，"
+   ],
+   [
+    "右头不高于左头",
+    "右头不高于左头 103%"
+   ]
+  ],
+  "hs_bottom": [
+   [
+    "（>1.5倍）",
+    "（引擎：近 5 日均量 > 近 20 日均量 1.1 倍）"
+   ]
+  ],
+  "platform_break": [
+   [
+    "（通常20日以上）",
+    "（引擎取最近 5 根之前的 35 根 K 线为平台区间）"
+   ],
+   [
+    "（量能>5日均量1.5倍）",
+    "（引擎：当日量 > 5 日均量 1.3 倍）"
+   ],
+   [
+    "振幅<15%为窄幅整理，主力控盘度高；振幅>25%不是平台，是震荡市，假突破多。",
+    "引擎以平台区间振幅 < 18% 视为平台；振幅越小越可靠，振幅过大是震荡市，假突破多。"
+   ],
+   [
+    "②放量>1.5倍",
+    "②放量（引擎：当日量 > 5 日均量 1.3 倍）"
+   ]
+  ],
+  "platform_break_down": [
+   [
+    "（通常20日以上）",
+    "（引擎取最近 5 根之前的 35 根 K 线为平台区间）"
+   ],
+   [
+    "（量能>5日均量1.5倍）",
+    "（引擎：当日量 > 5 日均量 1.3 倍）"
+   ]
+  ]
+ },
  "items": [
   {
    "id": "w_bottom",
    "name": "W底/双底",
    "direction": "bull",
    "category": "price_pattern",
-   "desc": "股价两次探底，第二个低点不低于第一个低点，放量突破颈线。",
+   "desc": "股价两次探底，第二个低点不低于第一个低点的 97%，放量突破颈线。",
    "features": [
     "两个低点，第二个低点等于或高于第一个",
     "两次探底之间有一个反弹高点（颈线位）",
@@ -19,16 +107,16 @@
    "action": "突破颈线时买入，回踩颈线不破加仓，跌破颈线止损",
    "knowledge": {
     "title": "W底/双底",
-    "essence": "股价两次探底，第二个低点不低于第一个，放量突破颈线反转。",
+    "essence": "股价两次探底，第二个低点不低于第一个的 97%，放量突破颈线反转。",
     "causes": [
      "左底：第一波下跌结束，抄底资金入场",
-     "右底：第二次探底，多头力量增强不再创新低",
+     "右底：第二次探底，不低于左底 3% 以上",
      "突破颈线：双底正式确立"
     ],
     "keyPoints": [
      {
-      "label": "右底不低于左底",
-      "desc": "右底低点应高于或接近左底（不低于97%），说明空头力量衰竭。右底创新低则W底失败。"
+      "label": "右底不低于左底 97%",
+      "desc": "右底低点应高于或接近左底（不低于97%），说明空头力量衰竭。右底低于左底 3% 以上则 W 底不成立。"
      },
      {
       "label": "右底缩量是关键",
@@ -44,16 +132,24 @@
      }
     ],
     "strategy": "右底形成时轻仓 → 突破颈线加仓 → 回踩颈线不破再加仓 → 跌破颈线止损",
-    "traps": "假W底：右底创新低，或突破颈线后快速跌回。"
+    "traps": "假W底：右底低于左底 3% 以上，或突破颈线后快速跌回。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,30 40,50 70,90 100,50 130,85 160,50 190,30 220,20 270,10\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"70\" y1=\"50\" x2=\"160\" y2=\"50\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"115\" y=\"46\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><circle cx=\"70\" cy=\"90\" r=\"3\" fill=\"#2ecc71\"/><circle cx=\"130\" cy=\"85\" r=\"3\" fill=\"#2ecc71\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,30 40,50 70,90 100,50 130,85 160,50 190,30 220,20 270,10\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"70\" y1=\"50\" x2=\"160\" y2=\"50\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"115\" y=\"46\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><circle cx=\"70\" cy=\"90\" r=\"3\" fill=\"#2ecc71\"/><circle cx=\"130\" cy=\"85\" r=\"3\" fill=\"#2ecc71\"/></svg>",
+   "engine_rules": [
+    "两个相邻的已确认摆动低点（左右各 5 根 K 线确认）",
+    "两底差距 ≤ 5%，右底 ≥ 左底 × 0.97",
+    "颈线 = 两底之间最高的摆动高点",
+    "突破：收盘 > 颈线 × 1.01，且前一日未越过",
+    "突破后连续 3 日收盘回到颈线下方 = 突破失败",
+    "目标 = 颈线 + (颈线 − 两底最低)；止损 = 右底 × 0.98"
+   ]
   },
   {
    "id": "m_top",
    "name": "M头/双头",
    "direction": "bear",
    "category": "price_pattern",
-   "desc": "股价两次冲高，第二个高点不高于第一个高点，放量跌破颈线。",
+   "desc": "股价两次冲高，第二个高点不高于第一个高点的 103%，放量跌破颈线。",
    "features": [
     "两个高点，第二个高点等于或低于第一个",
     "两次冲高之间有一个回调低点（颈线位）",
@@ -63,16 +159,16 @@
    "action": "跌破颈线时止损，最小跌幅=头部到颈线距离",
    "knowledge": {
     "title": "M头/双头",
-    "essence": "股价两次冲高，第二个高点不高于第一个，放量跌破颈线反转。",
+    "essence": "股价两次冲高，第二个高点不高于第一个的 103%，放量跌破颈线反转。",
     "causes": [
      "左头：第一波上涨结束，获利盘涌出",
-     "右头：第二次冲高，多头力量减弱不再创新高",
+     "右头：第二次冲高，不高于左头 3% 以上",
      "跌破颈线：双头正式确立"
     ],
     "keyPoints": [
      {
-      "label": "右头不高于左头",
-      "desc": "右头高点应低于或接近左头（不高于103%），说明多头力量衰竭。右头创新高则M头失败。"
+      "label": "右头不高于左头 103%",
+      "desc": "右头高点应低于或接近左头（不高于103%），说明多头力量衰竭。右头高于左头 3% 以上则 M 头不成立。"
      },
      {
       "label": "右头缩量是关键",
@@ -88,9 +184,17 @@
      }
     ],
     "strategy": "右头形成时减仓 → 跌破颈线清仓 → 回抽颈线不过再加仓卖出",
-    "traps": "假M头：右头创新高，或跌破颈线后快速收回。"
+    "traps": "假M头：右头高于左头 3% 以上，或跌破颈线后快速收回。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 40,60 70,20 100,60 130,25 160,60 190,80 220,95 270,105\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"70\" y1=\"60\" x2=\"160\" y2=\"60\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"115\" y=\"56\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><circle cx=\"70\" cy=\"20\" r=\"3\" fill=\"#e74c3c\"/><circle cx=\"130\" cy=\"25\" r=\"3\" fill=\"#e74c3c\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 40,60 70,20 100,60 130,25 160,60 190,80 220,95 270,105\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"70\" y1=\"60\" x2=\"160\" y2=\"60\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"115\" y=\"56\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><circle cx=\"70\" cy=\"20\" r=\"3\" fill=\"#e74c3c\"/><circle cx=\"130\" cy=\"25\" r=\"3\" fill=\"#e74c3c\"/></svg>",
+   "engine_rules": [
+    "两个相邻的已确认摆动高点（左右各 5 根 K 线确认）",
+    "两顶差距 ≤ 5%，右顶 ≤ 左顶 × 1.03",
+    "颈线 = 两顶之间最低的摆动低点",
+    "跌破：收盘 < 颈线 × 0.99，且前一日未越过",
+    "跌破后连续 3 日收盘回到颈线上方 = 跌破失败",
+    "目标 = 颈线 − (两顶最高 − 颈线)；止损 = 右顶 × 1.02"
+   ]
   },
   {
    "id": "hs_bottom",
@@ -125,7 +229,7 @@
      },
      {
       "label": "突破颈线要放量",
-      "desc": "突破颈线时成交量必须放大（>1.5倍），否则可能是假突破。"
+      "desc": "突破颈线时成交量必须放大（引擎：近 5 日均量 > 近 20 日均量 1.1 倍），否则可能是假突破。"
      },
      {
       "label": "最小涨幅=头到颈线距离",
@@ -139,7 +243,15 @@
     "strategy": "右肩形成时轻仓试探 → 突破颈线时加仓 → 回踩颈线不破再加仓 → 跌破颈线止损",
     "traps": "失败头肩底：右肩低于左肩，或突破颈线后快速跌回。遇到这种情况立即止损，不要硬扛。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,30 35,55 60,75 85,50 110,100 135,50 160,70 185,45 210,25 270,10\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"35\" y1=\"50\" x2=\"185\" y2=\"45\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"110\" y=\"42\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><text x=\"60\" y=\"72\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">左肩</text><text x=\"110\" y=\"97\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">头</text><text x=\"160\" y=\"67\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">右肩</text></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,30 35,55 60,75 85,50 110,100 135,50 160,70 185,45 210,25 270,10\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"35\" y1=\"50\" x2=\"185\" y2=\"45\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"110\" y=\"42\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><text x=\"60\" y=\"72\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">左肩</text><text x=\"110\" y=\"97\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">头</text><text x=\"160\" y=\"67\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">右肩</text></svg>",
+   "engine_rules": [
+    "三个相邻的已确认摆动低点：头最低，左右肩差距 ≤ 20%",
+    "头相对双肩均价的突出度 ≥ 3%",
+    "颈线连接左右两个反弹高点（可倾斜），外推不超过头部 1.5 倍",
+    "右肩低点必须在颈线下方",
+    "突破：收盘 > 颈线 × 1.01，且前一日未越过",
+    "目标 = 颈线 + (颈线 − 头部)；止损 = 头部 × 0.98"
+   ]
   },
   {
    "id": "hs_top",
@@ -188,7 +300,15 @@
     "strategy": "右肩形成时减仓 → 跌破颈线时清仓 → 回抽颈线不过再加仓卖出 → 不要抄底",
     "traps": "失败头肩顶：右肩高于左肩，或跌破颈线后快速收回。但即使是失败形态，也应先减仓观察。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 35,60 60,40 85,65 110,15 135,65 160,45 185,70 210,85 270,100\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"35\" y1=\"65\" x2=\"185\" y2=\"70\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"110\" y=\"62\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><text x=\"60\" y=\"37\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">左肩</text><text x=\"110\" y=\"12\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">头</text><text x=\"160\" y=\"42\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">右肩</text></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 35,60 60,40 85,65 110,15 135,65 160,45 185,70 210,85 270,100\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"35\" y1=\"65\" x2=\"185\" y2=\"70\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"110\" y=\"62\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">颈线</text><text x=\"60\" y=\"37\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">左肩</text><text x=\"110\" y=\"12\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">头</text><text x=\"160\" y=\"42\" fill=\"#8899aa\" font-size=\"8\" text-anchor=\"middle\">右肩</text></svg>",
+   "engine_rules": [
+    "三个相邻的已确认摆动高点：头最高，左右肩差距 ≤ 20%",
+    "头相对双肩均价的突出度 ≥ 3%",
+    "颈线连接左右两个回调低点（可倾斜）",
+    "右肩高点必须在颈线上方",
+    "跌破：收盘 < 颈线 × 0.99，且前一日未越过",
+    "目标 = 颈线 − (头部 − 颈线)；止损 = 头部 × 1.02"
+   ]
   },
   {
    "id": "platform_break",
@@ -197,9 +317,9 @@
    "category": "price_pattern",
    "desc": "长期横盘整理后放量突破平台上沿，开启新一波上涨。",
    "features": [
-    "股价在一个窄幅区间内横盘整理（通常20日以上）",
+    "股价在一个窄幅区间内横盘整理（引擎取最近 5 根之前的 35 根 K 线为平台区间）",
     "横盘期间振幅收窄，均线粘合",
-    "突破平台上沿时放量（量能>5日均量1.5倍）"
+    "突破平台上沿时放量（引擎：当日量 > 5 日均量 1.3 倍）"
    ],
    "volume": "横盘期间缩量，突破日放量，突破后缩量回踩不破平台",
    "action": "突破日买入，回踩平台上沿不破加仓，跌破平台止损",
@@ -218,7 +338,7 @@
      },
      {
       "label": "振幅越小越可靠",
-      "desc": "振幅<15%为窄幅整理，主力控盘度高；振幅>25%不是平台，是震荡市，假突破多。"
+      "desc": "引擎以平台区间振幅 < 18% 视为平台；振幅越小越可靠，振幅过大是震荡市，假突破多。"
      },
      {
       "label": "量价关系定方向",
@@ -230,13 +350,19 @@
      },
      {
       "label": "突破确认三要素",
-      "desc": "①收盘价站上平台上沿 ②放量>1.5倍 ③连续2-3天站稳。三者齐备才是有效突破。"
+      "desc": "①收盘价站上平台上沿 ②放量（引擎：当日量 > 5 日均量 1.3 倍） ③连续2-3天站稳。三者齐备才是有效突破。"
      }
     ],
     "strategy": "平台内不操作（高抛低吸容易被打脸）→ 突破后等回踩上沿不破再进 → 最小涨幅=平台高度 → 跌破平台上沿止损",
     "traps": "假突破：盘中刺破上沿但收盘回落，或缩量突破后快速跌回。遇到这种情况不要追，等回踩确认。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><rect x=\"10\" y=\"55\" width=\"140\" height=\"30\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1\" stroke-dasharray=\"3,3\"/><polyline points=\"10,70 30,65 50,72 70,66 90,70 110,64 130,68 150,60 170,40 200,25 270,12\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"10\" y1=\"55\" x2=\"150\" y2=\"55\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"80\" y=\"52\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">平台上沿</text><rect x=\"155\" y=\"85\" width=\"8\" height=\"25\" fill=\"#e74c3c\" opacity=\"0.6\"/><rect x=\"170\" y=\"90\" width=\"8\" height=\"20\" fill=\"#e74c3c\" opacity=\"0.4\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><rect x=\"10\" y=\"55\" width=\"140\" height=\"30\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1\" stroke-dasharray=\"3,3\"/><polyline points=\"10,70 30,65 50,72 70,66 90,70 110,64 130,68 150,60 170,40 200,25 270,12\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><line x1=\"10\" y1=\"55\" x2=\"150\" y2=\"55\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"80\" y=\"52\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">平台上沿</text><rect x=\"155\" y=\"85\" width=\"8\" height=\"25\" fill=\"#e74c3c\" opacity=\"0.6\"/><rect x=\"170\" y=\"90\" width=\"8\" height=\"20\" fill=\"#e74c3c\" opacity=\"0.4\"/></svg>",
+   "engine_rules": [
+    "平台区间：最近 5 根之前的 35 根 K 线，振幅 < 18%",
+    "突破线 = 平台上沿 × 1.01；当日首次越过 = 突破当日",
+    "放量确认：当日量 > 5 日均量 1.3 倍；否则为缩量待确认",
+    "回踩：此前 9 日曾收盘越过上沿 2%，今日回到上沿 ±3% 以内且非首次越过日"
+   ]
   },
   {
    "id": "platform_break_down",
@@ -245,9 +371,9 @@
    "category": "price_pattern",
    "desc": "长期横盘整理后放量跌破平台下沿，开启新一波下跌。",
    "features": [
-    "股价在窄幅区间横盘整理（通常20日以上）",
+    "股价在窄幅区间横盘整理（引擎取最近 5 根之前的 35 根 K 线为平台区间）",
     "横盘期间振幅收窄，均线粘合",
-    "跌破平台下沿时放量（量能>5日均量1.5倍）"
+    "跌破平台下沿时放量（引擎：当日量 > 5 日均量 1.3 倍）"
    ],
    "volume": "横盘期间缩量，破位日放量，跌破后反弹不过平台",
    "action": "破位日立即止损，不要抱有幻想",
@@ -284,7 +410,13 @@
     "strategy": "破位日立即止损（不要等反弹）→ 破位后不抄底（下跌中继概率大）→ 等下跌动能释放完、出现底背离再考虑",
     "traps": "空头陷阱：跌破后快速收回，可能是主力洗盘。判断标准：跌破后3天内收回且放量=假破位；持续在下方=真破位。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><rect x=\"10\" y=\"35\" width=\"140\" height=\"30\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1\" stroke-dasharray=\"3,3\"/><polyline points=\"10,50 30,55 50,48 70,54 90,50 110,56 130,52 150,60 170,80 200,95 270,108\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"10\" y1=\"65\" x2=\"150\" y2=\"65\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"80\" y=\"62\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">平台下沿</text><rect x=\"155\" y=\"10\" width=\"8\" height=\"25\" fill=\"#2ecc71\" opacity=\"0.6\"/><rect x=\"170\" y=\"15\" width=\"8\" height=\"20\" fill=\"#2ecc71\" opacity=\"0.4\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><rect x=\"10\" y=\"35\" width=\"140\" height=\"30\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1\" stroke-dasharray=\"3,3\"/><polyline points=\"10,50 30,55 50,48 70,54 90,50 110,56 130,52 150,60 170,80 200,95 270,108\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><line x1=\"10\" y1=\"65\" x2=\"150\" y2=\"65\" stroke=\"#f39c12\" stroke-width=\"1\" stroke-dasharray=\"4,4\"/><text x=\"80\" y=\"62\" fill=\"#f39c12\" font-size=\"9\" text-anchor=\"middle\">平台下沿</text><rect x=\"155\" y=\"10\" width=\"8\" height=\"25\" fill=\"#2ecc71\" opacity=\"0.6\"/><rect x=\"170\" y=\"15\" width=\"8\" height=\"20\" fill=\"#2ecc71\" opacity=\"0.4\"/></svg>",
+   "engine_rules": [
+    "平台区间：最近 5 根之前的 35 根 K 线，振幅 < 18%",
+    "跌破线 = 平台下沿 × 0.99；当日首次越过 = 跌破当日",
+    "放量确认：当日量 > 5 日均量 1.3 倍；否则为缩量待确认",
+    "回抽：此前 9 日曾收盘跌破下沿 2%，今日回到下沿 ±3% 以内且非首次越过日"
+   ]
   },
   {
    "id": "ma_bull",
@@ -328,7 +460,12 @@
     "strategy": "持股待涨 → 回踩MA10/MA20不破加仓 → 跌破MA20减仓 → 跌破MA60清仓",
     "traps": "均线粘合后方向选择：均线从发散到粘合，说明趋势可能反转，等待方向明确再操作。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 50,80 90,70 130,55 170,40 210,25 270,15\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><polyline points=\"10,95 50,88 90,78 130,65 170,50 210,35 270,22\" fill=\"none\" stroke=\"#f39c12\" stroke-width=\"1.5\"/><polyline points=\"10,100 50,94 90,86 130,75 170,62 210,48 270,32\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1.5\"/><polyline points=\"10,105 50,100 90,94 130,85 170,74 210,62 270,48\" fill=\"none\" stroke=\"#9b59b6\" stroke-width=\"1.5\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,90 50,80 90,70 130,55 170,40 210,25 270,15\" fill=\"none\" stroke=\"#e74c3c\" stroke-width=\"2\"/><polyline points=\"10,95 50,88 90,78 130,65 170,50 210,35 270,22\" fill=\"none\" stroke=\"#f39c12\" stroke-width=\"1.5\"/><polyline points=\"10,100 50,94 90,86 130,75 170,62 210,48 270,32\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1.5\"/><polyline points=\"10,105 50,100 90,94 130,85 170,74 210,62 270,48\" fill=\"none\" stroke=\"#9b59b6\" stroke-width=\"1.5\"/></svg>",
+   "engine_rules": [
+    "MA5 > MA10 > MA20 > MA60 为完全多头排列",
+    "收盘在 MA5 上方、MA5 五日斜率向上",
+    "属于“趋势状态”，不是价格形态"
+   ]
   },
   {
    "id": "ma_bear",
@@ -372,7 +509,12 @@
     "strategy": "止损离场 → 不要抄底 → 反弹到MA20减仓 → 等MA60走平再考虑",
     "traps": "下跌中继反弹：空头排列中的反弹往往是减仓机会，不是抄底机会。"
    },
-   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,15 50,25 90,40 130,55 170,70 210,85 270,95\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><polyline points=\"10,22 50,32 90,45 130,60 170,75 210,88 270,98\" fill=\"none\" stroke=\"#f39c12\" stroke-width=\"1.5\"/><polyline points=\"10,30 50,40 90,52 130,65 170,78 210,90 270,100\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1.5\"/><polyline points=\"10,38 50,48 90,58 130,70 170,82 210,92 270,102\" fill=\"none\" stroke=\"#9b59b6\" stroke-width=\"1.5\"/></svg>"
+   "svg": "<svg viewBox=\"0 0 280 120\"><polyline points=\"10,15 50,25 90,40 130,55 170,70 210,85 270,95\" fill=\"none\" stroke=\"#2ecc71\" stroke-width=\"2\"/><polyline points=\"10,22 50,32 90,45 130,60 170,75 210,88 270,98\" fill=\"none\" stroke=\"#f39c12\" stroke-width=\"1.5\"/><polyline points=\"10,30 50,40 90,52 130,65 170,78 210,90 270,100\" fill=\"none\" stroke=\"#3498db\" stroke-width=\"1.5\"/><polyline points=\"10,38 50,48 90,58 130,70 170,82 210,92 270,102\" fill=\"none\" stroke=\"#9b59b6\" stroke-width=\"1.5\"/></svg>",
+   "engine_rules": [
+    "MA5 < MA10 < MA20 < MA60 为完全空头排列",
+    "收盘在 MA5 下方、MA5 五日斜率向下",
+    "属于“趋势状态”，不是价格形态"
+   ]
   }
  ]
 }

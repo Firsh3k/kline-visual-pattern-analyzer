@@ -526,9 +526,10 @@
       const m = g.metrics_by_horizon['20'];
       return `历史统计（T+20，${m.sample_size} 个信号，${esc(m.confidence_label)}）：方向胜率 ${F.pct(m.win_rate)}`;
     };
-    main.innerHTML = `<section class="panel"><h2>形态图鉴</h2><p class="small muted">说明文字沿用 V5 页面；识别规则以引擎为准。旧页面中未经校准的“可靠性 / 成功率”百分比已移除，历史统计来自校准数据，证据不足显示 N/A。</p></section>
+    main.innerHTML = `<section class="panel"><h2>形态图鉴</h2><p class="small muted">说明文字沿用 V5 页面，其中与引擎矛盾的说法已按引擎口径更正；每个形态下列出引擎实际使用的判定规则。未经校准的“可靠性 / 成功率”百分比已移除，历史统计来自校准数据，证据不足显示 N/A。</p></section>
       <div class="catalog">${catalogCache.items.map((p) => `<article class="panel" id="cat-${esc(p.id)}"><div class="head"><h2>${esc(p.name)}</h2><span class="dir ${esc(p.direction)}">${p.direction === 'bull' ? '看涨' : '看跌'}</span></div>
         ${p.svg}<p>${esc(p.desc)}</p><p class="small muted">${stat(p.id)}</p>
+        <h3>引擎判定规则</h3><ul class="small" data-testid="engine-rules">${(p.engine_rules || []).map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
         <h3>形态特征</h3><ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
         <h3>量价配合</h3><p>${esc(p.volume)}</p><h3>操作参考</h3><p>${esc(p.action)}</p>
         ${p.knowledge ? `<details><summary>形态知识卡片</summary><p><b>形态本质：</b>${esc(p.knowledge.essence)}</p><ul>${p.knowledge.causes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>

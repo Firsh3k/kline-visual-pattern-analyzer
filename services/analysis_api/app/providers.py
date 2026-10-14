@@ -83,7 +83,20 @@ class LiveProvider(Provider):
         return f
 
     def index_daily(self) -> Fetched:
-        return self._to_fetched(self._series("sh000001", "none"), "sh000001", "none")
+        # 大盘只用腾讯：实测新浪 getKLineData 对 sh000001 会返回个股 000001（平安银行）或过期数据。
+        from core import AdjustmentType, FrequencyType
+        from core.market_data.tencent_provider import TencentDataProvider
+        start = (datetime.now(A.CN_TZ) - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
+        try:
+            series = TencentDataProvider().fetch_klines("sh000001", start_date=start, frequency=FrequencyType.DAILY,
+                                                        adjustment=AdjustmentType.NONE)
+        except Exception as e:
+            raise UpstreamUnavailable("行情源不可用：sh000001（none）", details={"upstream_error": str(e)[:300]})
+        f = self._to_fetched(series, "sh000001", "none")
+        last = f.bars[-1]["close"] if f.bars else 0
+        if not (500 < last < 20000):   # 上证指数量级校验，防止拿到个股
+            raise UpstreamUnavailable(f"行情源返回的上证指数收盘价 {last} 不合理，拒绝使用")
+        return f
 
     def names(self, codes: List[str]) -> Dict[str, str]:
         """股票名称（仅展示用；失败返回空，不影响分析）。TLS 使用系统默认校验。"""

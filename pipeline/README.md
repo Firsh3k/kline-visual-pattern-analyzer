@@ -16,7 +16,8 @@ V4 的综合“推荐度”评分不再计算（PO 决策 D4）。
 每个形态结果额外带两个字段（PO 决策 D1 / D3）：
 
 - `category`：`price_pattern`（价格形态：W底 / M头 / 头肩 / 平台）或 `trend_state`（趋势状态：均线多头 / 空头），UI 与 API 据此分开标注。
-- `evidence`：机器可读的判定证据，例如平台形态的 `broke` / `broke_today` / `volume_confirmed`。平台“当日首次越过突破线”记为 `breakout_day`。W/M/头肩暂为空，见 FIR-36。
+- `evidence`：机器可读的判定证据，例如平台形态的 `broke` / `broke_today` / `volume_confirmed`。平台“当日首次越过突破线”记为 `breakout_day`。
+- W底 / M头 / 头肩（FIR-36）：`breakout_date` / `breakout_close` / `bars_since_breakout`、`back_inside_neckline` + `days_back_inside`（突破后收盘回到颈线内的连续天数；满 3 天阶段才变为 `failed_break`）、`close_beyond_breakout_line`、`volume_confirmed`。`breakout_price` = 突破日收盘价（未突破为空），不再随当前价变化。已知漏判见 FIR-39。
 
 ## V4 迁移说明
 

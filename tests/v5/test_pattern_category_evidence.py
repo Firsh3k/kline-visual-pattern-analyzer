@@ -6,7 +6,7 @@ D3：PatternResult.evidence 提供机器可读的判定证据；平台形态在�
     stage = breakout_day（前一日收盘未越过同一条线），之后为 post_break；
     放量 / 缩量由 evidence.volume_confirmed 区分，不再只靠 notes 文字。
 
-W底 / M头 / 头肩底 / 头肩顶 的 evidence 暂为空（其突破状态细化见 FIR-36）。
+W底 / M头 / 头肩底 / 头肩顶 的突破证据见 FIR-36（tests/v5/test_fir36_breakout_evidence.py）。
 """
 import json
 import math
@@ -30,6 +30,12 @@ EXPECTED_CATEGORY = {
     "hs_bottom": PATTERN_CATEGORY_PRICE, "hs_top": PATTERN_CATEGORY_PRICE,
     "platform_break": PATTERN_CATEGORY_PRICE, "platform_break_down": PATTERN_CATEGORY_PRICE,
     "ma_bull": PATTERN_CATEGORY_TREND, "ma_bear": PATTERN_CATEGORY_TREND,
+}
+
+
+PIVOT_EVIDENCE_KEYS = {
+    "breakout_line", "close_beyond_breakout_line", "breakout_occurred", "breakout_date", "breakout_close",
+    "bars_since_breakout", "back_inside_neckline", "days_back_inside", "failed_break_days", "volume_confirmed",
 }
 
 
@@ -148,4 +154,5 @@ def test_002436_frozen_outputs():
     assert registry.get_pattern("ma_bull").detect(kl) == []
     for pid in ("w_bottom", "m_top"):
         for r in registry.get_pattern(pid).detect(kl):
-            assert r.category == PATTERN_CATEGORY_PRICE and r.evidence == {}
+            assert r.category == PATTERN_CATEGORY_PRICE
+            assert set(r.evidence) == PIVOT_EVIDENCE_KEYS

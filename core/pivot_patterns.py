@@ -22,7 +22,7 @@ FIR-12 Pattern Migration — 基于 SwingPivotEngine 的经典形态识别器
 
 from __future__ import annotations
 
-from typing import List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from .types import (
     OHLCV,
@@ -32,6 +32,7 @@ from .types import (
     TrendDirection,
     PatternStage,
     ConfidenceLevel,
+    PATTERN_CATEGORY_PRICE,
 )
 from .interfaces import PatternDetector
 from .swing_pivot import SwingPivotEngine
@@ -159,6 +160,17 @@ class PivotPatternDetectorBase(PatternDetector):
         bullish: bool,
         breakout_mult: float,
     ) -> PatternStage:
+        """通用突破/跌破状态机（只返回阶段；详细状态见 _breakout_state）"""
+        return self._breakout_state(klines, shape_done_idx, neckline_fn, bullish, breakout_mult)["stage"]
+
+    def _breakout_state(
+        self,
+        klines: List[OHLCV],
+        shape_done_idx: int,
+        neckline_fn: Callable[[int], float],
+        bullish: bool,
+        breakout_mult: float,
+    ) -> Dict[str, Any]:
         """
         通用突破/跌破状态机。
 
@@ -173,7 +185,9 @@ class PivotPatternDetectorBase(PatternDetector):
                            （看涨：收盘 > 颈线 * mult；看跌：收盘 < 颈线 * mult）
 
         Returns:
-            PatternStage 形态阶段
+            {"stage": PatternStage, "cross_idx": 突破日索引或 None,
+             "days_back_inside": 突破后、截至今日连续收盘回到颈线另一侧的天数（未突破为 None）}
+            FIR-36：阶段语义不变（≥3 日才判 failed_break），1–2 日的回落由 days_back_inside 标注。
         """
         n = len(klines)
         last = n - 1
@@ -196,12 +210,12 @@ class PivotPatternDetectorBase(PatternDetector):
         # 2) 尚未突破：价格接近颈线 ±3% → PRE_BREAK，否则 FORMING
         if cross_idx is None:
             if nl_last > 0 and abs(closes[last] - nl_last) / nl_last <= 0.03:
-                return PatternStage.PRE_BREAK
-            return PatternStage.FORMING
+                return {'stage': PatternStage.PRE_BREAK, 'cross_idx': None, 'days_back_inside': None}
+            return {'stage': PatternStage.FORMING, 'cross_idx': None, 'days_back_inside': None}
 
         # 3) 突破当日
         if cross_idx == last:
-            return PatternStage.BREAKOUT_DAY
+            return {'stage': PatternStage.BREAKOUT_DAY, 'cross_idx': cross_idx, 'days_back_inside': 0}
 
         if bullish:
             # 3a) 突破失败：突破后连续 ≥3 日收盘跌破颈线，且当前价在颈线下方
@@ -212,7 +226,7 @@ class PivotPatternDetectorBase(PatternDetector):
                 else:
                     break
             if below_streak >= 3:
-                return PatternStage.FAILED_BREAK
+                return {'stage': PatternStage.FAILED_BREAK, 'cross_idx': cross_idx, 'days_back_inside': below_streak}
 
             # 3b) 回踩：突破后最低价触及颈线 ±2% 区间，且当前收盘在颈线上方 8% 内
             touched = any(
@@ -221,8 +235,8 @@ class PivotPatternDetectorBase(PatternDetector):
             )
             in_band = nl_last < closes[last] <= nl_last * 1.08
             if touched and in_band:
-                return PatternStage.RETEST
-            return PatternStage.POST_BREAK
+                return {'stage': PatternStage.RETEST, 'cross_idx': cross_idx, 'days_back_inside': below_streak}
+            return {'stage': PatternStage.POST_BREAK, 'cross_idx': cross_idx, 'days_back_inside': below_streak}
         else:
             # 看跌形态对称：跌破失败 = 连续 ≥3 日收盘站回颈线上方
             above_streak = 0
@@ -232,7 +246,7 @@ class PivotPatternDetectorBase(PatternDetector):
                 else:
                     break
             if above_streak >= 3:
-                return PatternStage.FAILED_BREAK
+                return {'stage': PatternStage.FAILED_BREAK, 'cross_idx': cross_idx, 'days_back_inside': above_streak}
 
             # 回抽：跌破后最高价触及颈线 ±2%，且当前收盘在颈线下方 8% 内
             touched = any(
@@ -241,8 +255,33 @@ class PivotPatternDetectorBase(PatternDetector):
             )
             in_band = nl_last * 0.92 <= closes[last] < nl_last
             if touched and in_band:
-                return PatternStage.RETEST
-            return PatternStage.POST_BREAK
+                return {'stage': PatternStage.RETEST, 'cross_idx': cross_idx, 'days_back_inside': above_streak}
+            return {'stage': PatternStage.POST_BREAK, 'cross_idx': cross_idx, 'days_back_inside': above_streak}
+
+    def _breakout_evidence(
+        self,
+        klines: List[OHLCV],
+        state: Dict[str, Any],
+        neckline_fn: Callable[[int], float],
+        breakout_mult: float,
+        close_beyond_line: bool,
+    ) -> Dict[str, Any]:
+        """FIR-36 / FIR-32 D3：机器可读的突破证据（阶段语义不变）"""
+        last = len(klines) - 1
+        ci = state["cross_idx"]
+        back = state["days_back_inside"]
+        return {
+            "breakout_line": round(neckline_fn(last) * breakout_mult, 4),
+            "close_beyond_breakout_line": close_beyond_line,
+            "breakout_occurred": ci is not None,
+            "breakout_date": klines[ci].date if ci is not None else None,
+            "breakout_close": round(klines[ci].close, 4) if ci is not None else None,
+            "bars_since_breakout": (last - ci) if ci is not None else None,
+            "back_inside_neckline": (back > 0) if ci is not None else None,
+            "days_back_inside": back,
+            "failed_break_days": 3,
+            "volume_confirmed": self._volume_confirmed(klines),
+        }
 
     # ---------- 颈线点定位辅助 ----------
 
@@ -320,7 +359,8 @@ class WBottomDetector(PivotPatternDetectorBase):
             # 水平颈线：常数函数
             nl_fn = lambda idx, nl=neckline: nl
 
-            stage = self._classify_stage(klines, b.index, nl_fn, bullish=True, breakout_mult=1.01)
+            bstate = self._breakout_state(klines, b.index, nl_fn, bullish=True, breakout_mult=1.01)
+            stage = bstate["stage"]
             broken = klines[-1].close > neckline * 1.01
 
             low_min = min(a.price, b.price)
@@ -332,6 +372,7 @@ class WBottomDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 1.01, broken)
             key_points = [
                 PatternKeyPoint("左底", a.index, a.date, a.price, "第一个摆动低点"),
                 PatternKeyPoint("右底", b.index, b.date, b.price, "第二个摆动低点（不低于左底 3% 以上）"),
@@ -347,9 +388,12 @@ class WBottomDetector(PivotPatternDetectorBase):
                 confidence=self._confidence(score),
                 key_points=key_points,
                 neckline_price=round(neckline, 4),
-                breakout_price=round(klines[-1].close, 4) if broken else None,
+                # FIR-36：breakout_price = 突破日收盘价（未发生突破为 None），不再随当前价变化
+                breakout_price=evidence["breakout_close"],
                 target_price=round(target, 4),
                 stop_loss=round(stop, 4),
+                category=PATTERN_CATEGORY_PRICE,
+                evidence=evidence,
                 notes=f"W底：左底{a.price:.2f} 右底{b.price:.2f} 颈线{neckline:.2f}",
             ))
         return results
@@ -414,7 +458,8 @@ class MTopDetector(PivotPatternDetectorBase):
 
             nl_fn = lambda idx, nl=neckline: nl
 
-            stage = self._classify_stage(klines, b.index, nl_fn, bullish=False, breakout_mult=0.99)
+            bstate = self._breakout_state(klines, b.index, nl_fn, bullish=False, breakout_mult=0.99)
+            stage = bstate["stage"]
             broken = klines[-1].close < neckline * 0.99
 
             top_max = max(a.price, b.price)
@@ -426,6 +471,7 @@ class MTopDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 0.99, broken)
             key_points = [
                 PatternKeyPoint("左顶", a.index, a.date, a.price, "第一个摆动高点"),
                 PatternKeyPoint("右顶", b.index, b.date, b.price, "第二个摆动高点（不高于左顶 3% 以上）"),
@@ -441,9 +487,12 @@ class MTopDetector(PivotPatternDetectorBase):
                 confidence=self._confidence(score),
                 key_points=key_points,
                 neckline_price=round(neckline, 4),
-                breakout_price=round(klines[-1].close, 4) if broken else None,
+                # FIR-36：breakout_price = 突破日收盘价（未发生突破为 None），不再随当前价变化
+                breakout_price=evidence["breakout_close"],
                 target_price=round(target, 4),
                 stop_loss=round(stop, 4),
+                category=PATTERN_CATEGORY_PRICE,
+                evidence=evidence,
                 notes=f"M头：左顶{a.price:.2f} 右顶{b.price:.2f} 颈线{neckline:.2f}",
             ))
         return results
@@ -534,7 +583,8 @@ class HSBottomDetector(PivotPatternDetectorBase):
                 slope = 0.0
             nl_fn = lambda idx, ln=ln, slope=slope: ln.price + slope * (idx - ln.index)
 
-            stage = self._classify_stage(klines, rs.index, nl_fn, bullish=True, breakout_mult=0.98)
+            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=True, breakout_mult=0.98)
+            stage = bstate["stage"]
             nl_now = nl_fn(len(klines) - 1)
 
             # --- FIR-24 guardrail 1b：倾斜颈线外推合理性 ---
@@ -556,6 +606,7 @@ class HSBottomDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 0.98, broken)
             key_points = [
                 PatternKeyPoint("左肩", ls.index, ls.date, ls.price, "左肩摆动低点"),
                 PatternKeyPoint("头", head.index, head.date, head.price, "头部摆动低点（最低）"),
@@ -574,9 +625,12 @@ class HSBottomDetector(PivotPatternDetectorBase):
                 confidence=self._confidence(score),
                 key_points=key_points,
                 neckline_price=round(nl_now, 4),
-                breakout_price=round(klines[-1].close, 4) if broken else None,
+                # FIR-36：breakout_price = 突破日收盘价（未发生突破为 None），不再随当前价变化
+                breakout_price=evidence["breakout_close"],
                 target_price=round(target, 4),
                 stop_loss=round(stop, 4),
+                category=PATTERN_CATEGORY_PRICE,
+                evidence=evidence,
                 notes=f"头肩底：左肩{ls.price:.2f} 头{head.price:.2f} "
                       f"右肩{rs.price:.2f} 颈线{ln.price:.2f}→{rn.price:.2f}(斜率{slope:.4f})",
             ))
@@ -664,7 +718,8 @@ class HSTopDetector(PivotPatternDetectorBase):
                 slope = 0.0
             nl_fn = lambda idx, ln=ln, slope=slope: ln.price + slope * (idx - ln.index)
 
-            stage = self._classify_stage(klines, rs.index, nl_fn, bullish=False, breakout_mult=1.02)
+            bstate = self._breakout_state(klines, rs.index, nl_fn, bullish=False, breakout_mult=1.02)
+            stage = bstate["stage"]
             nl_now = nl_fn(len(klines) - 1)
 
             # --- FIR-24 guardrail 1b：倾斜颈线外推合理性（与头肩底对称） ---
@@ -685,6 +740,7 @@ class HSTopDetector(PivotPatternDetectorBase):
             if stage == PatternStage.FAILED_BREAK:
                 score = max(10, score - 30)
 
+            evidence = self._breakout_evidence(klines, bstate, nl_fn, 1.02, broken)
             key_points = [
                 PatternKeyPoint("左肩", ls.index, ls.date, ls.price, "左肩摆动高点"),
                 PatternKeyPoint("头", head.index, head.date, head.price, "头部摆动高点（最高）"),
@@ -703,9 +759,12 @@ class HSTopDetector(PivotPatternDetectorBase):
                 confidence=self._confidence(score),
                 key_points=key_points,
                 neckline_price=round(nl_now, 4),
-                breakout_price=round(klines[-1].close, 4) if broken else None,
+                # FIR-36：breakout_price = 突破日收盘价（未发生突破为 None），不再随当前价变化
+                breakout_price=evidence["breakout_close"],
                 target_price=round(target, 4),
                 stop_loss=round(stop, 4),
+                category=PATTERN_CATEGORY_PRICE,
+                evidence=evidence,
                 notes=f"头肩顶：左肩{ls.price:.2f} 头{head.price:.2f} "
                       f"右肩{rs.price:.2f} 颈线{ln.price:.2f}→{rn.price:.2f}(斜率{slope:.4f})",
             ))

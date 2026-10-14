@@ -1,0 +1,44 @@
+# 发布预构建镜像到 GHCR，供群晖 NAS 等自托管环境直接拉取（NAS 不再需要访问 Docker Hub / PyPI / npm）。
+# 触发：推送到 release/nas 分支，或推送 v6.* 标签。不做定时运行。
+name: publish-images
+on:
+  push:
+    branches: [release/nas]
+    tags: ['v6.*']
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Version
+      id: v
+      run: |
+        if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME}"; else V="v6.0.0-nas.$(date -u +%Y%m%d)-${GITHUB_SHA::7}"; fi
+        echo "version=$V" >> "$GITHUB_OUTPUT"
+        echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build and push
+      env:
+        V: ${{ steps.v.outputs.version }}
+      run: |
+        OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
+        A=ghcr.io/$OWNER/kline-analysis-api; B=ghcr.io/$OWNER/kline-bff
+        docker build -f services/analysis_api/Dockerfile \
+          --build-arg ENGINE_VERSION="$V" --build-arg ENGINE_COMMIT="$GITHUB_SHA" --build-arg BUILD_TIME="${{ steps.v.outputs.time }}" \
+          -t "$A:$V" -t "$A:nas" .
+        docker build -f apps/bff/Dockerfile \
+          --build-arg RELEASE_VERSION="$V" --build-arg RELEASE_COMMIT="$GITHUB_SHA" \
+          --build-arg RELEASED_AT="${{ steps.v.outputs.day }}" --build-arg RELEASE_ENV=staging \
+          -t "$B:$V" -t "$B:nas" .
+        for t in "$A:$V" "$A:nas" "$B:$V" "$B:nas"; do docker push "$t"; done
+        echo "### 已发布 $V" >> "$GITHUB_STEP_SUMMARY"
+        echo "- $A:$V" >> "$GITHUB_STEP_SUMMARY"
+        echo "- $B:$V" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,6 @@
+{
+  "_说明": "每日快照扫描范围。watchlist 可以是代码数组，或指向自选股文件；ths_sectors 填同花顺板块指数代码；preset_sectors 填 config/preset_sectors.json 里的预置板块名称。",
+  "watchlist": "config/watchlist.json",
+  "ths_sectors": ["886032"],
+  "preset_sectors": []
+}

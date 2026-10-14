@@ -270,7 +270,7 @@ class WBottomDetector(PivotPatternDetectorBase):
     判断条件：
     1. 两个相邻的已确认 swing low（左底 a、右底 b）
     2. 两底价格差距 ≤ 5%
-    3. 右底不低于左底的 97%（不创新低）
+    3. 右底不低于左底的 97%（允许比左底低至多 3%，见 FIR-34）
     4. 颈线 = 两底之间最高的 swing high（水平颈线）
     5. 突破确认：当前收盘 > 颈线 * 1.01
 
@@ -334,7 +334,7 @@ class WBottomDetector(PivotPatternDetectorBase):
 
             key_points = [
                 PatternKeyPoint("左底", a.index, a.date, a.price, "第一个摆动低点"),
-                PatternKeyPoint("右底", b.index, b.date, b.price, "第二个摆动低点（不创新低）"),
+                PatternKeyPoint("右底", b.index, b.date, b.price, "第二个摆动低点（不低于左底 3% 以上）"),
                 PatternKeyPoint("颈线点", nl_pt.index, nl_pt.date, neckline,
                                 "两底之间的最高点"),
             ]
@@ -367,7 +367,7 @@ class MTopDetector(PivotPatternDetectorBase):
     判断条件：
     1. 两个相邻的已确认 swing high（左顶 a、右顶 b）
     2. 两顶价格差距 ≤ 5%
-    3. 右顶不高于左顶的 103%（不过度创新高）
+    3. 右顶不高于左顶的 103%（允许比左顶高至多 3%，见 FIR-34）
     4. 颈线 = 两顶之间最低的 swing low（水平颈线）
     5. 跌破确认：当前收盘 < 颈线 * 0.99
 
@@ -428,7 +428,7 @@ class MTopDetector(PivotPatternDetectorBase):
 
             key_points = [
                 PatternKeyPoint("左顶", a.index, a.date, a.price, "第一个摆动高点"),
-                PatternKeyPoint("右顶", b.index, b.date, b.price, "第二个摆动高点（不过度创新高）"),
+                PatternKeyPoint("右顶", b.index, b.date, b.price, "第二个摆动高点（不高于左顶 3% 以上）"),
                 PatternKeyPoint("颈线点", nl_pt.index, nl_pt.date, neckline,
                                 "两顶之间的最低点"),
             ]

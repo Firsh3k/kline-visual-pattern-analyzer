@@ -122,7 +122,7 @@ def test_conventions_are_documented_for_every_output():
 
 def test_reference_values_not_used_by_any_detector():
     for p in (ROOT / "core").rglob("*.py"):
-        if p.name in ("indicators.py", "__init__.py"):
-            continue
+        if p.name in ("indicators.py", "__init__.py") or p.relative_to(ROOT).as_posix() == "core/analysis.py":
+            continue   # analysis.py 只把对照值原样放入输出（见 test_core_analysis）
         t = p.read_text(encoding="utf-8")
         assert "ReferenceIndicators" not in t and "_wilder14" not in t and "_sample20" not in t, p

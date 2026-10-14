@@ -28,10 +28,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import os
-import subprocess
 import sys
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -42,19 +40,17 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import core  # noqa: E402
-from core import (  # noqa: E402
-    OHLCV, SwingPivotEngine, WBottomDetector, ClassicIndicators, ClassicMarketRegimeAnalyzer,
-    volume_status, atr_stop, registry, AdjustmentType, FrequencyType,
-    ReferenceIndicators, INDICATOR_CONVENTIONS,
-)
+from core import AdjustmentType, FrequencyType  # noqa: E402
+from core import analysis as A  # noqa: E402  所有入口共用的单一分析实现（FIR-38）
 
-SCHEMA_VERSION = "2.0"
-WINDOW = 250               # 分析窗口：最近 250 根日K（所有计算使用同一窗口）
-FETCH_CALENDAR_DAYS = 420  # 约 250+ 个交易日
-CN_TZ = timezone(timedelta(hours=8))
-PATTERN_ORDER = ["w_bottom", "m_top", "hs_bottom", "hs_top",
-                 "ma_bull", "ma_bear", "platform_break", "platform_break_down"]
-INDICATOR_SERIES = ("ma5", "ma10", "ma20", "ma60")  # 输出完整序列，供图表叠加
+SCHEMA_VERSION = A.ANALYSIS_SCHEMA_VERSION
+WINDOW = A.WINDOW           # 分析窗口：最近 250 根日K（所有计算使用同一窗口）
+FETCH_CALENDAR_DAYS = 420   # 约 250+ 个交易日
+CN_TZ = A.CN_TZ
+PATTERN_ORDER = A.PATTERN_ORDER
+INDICATOR_SERIES = A.INDICATOR_SERIES
+run_core = A.run_core
+to_klines = A.to_klines
 
 
 # ------------------------------------------------------------------
@@ -72,28 +68,31 @@ def _norm_date(s: str) -> str:
     raise ValueError(f"无法识别的日期格式: {s!r}")
 
 
+def _num(v: str) -> float:
+    """CSV 数值；空串 / 非数字 → NaN（交给 core.analysis 校验拒绝，不在这里静默修补）"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def load_csv(path: Path) -> List[Dict[str, Any]]:
+    """原样读取（不排序、不去重）：乱序 / 重复 / 非法值由 core.analysis.validate_bars 拒绝"""
     bars = []
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             bars.append({
                 "day": _norm_date(row["date"]),
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-                "volume": float(row["volume"]),
+                "open": _num(row["open"]),
+                "high": _num(row["high"]),
+                "low": _num(row["low"]),
+                "close": _num(row["close"]),
+                "volume": _num(row["volume"]),
             })
-    bars.sort(key=lambda b: b["day"])
     return bars
 
 
-def _symbol(code: str) -> str:
-    from core.market_data.sina_provider import _market_prefix
-    prefix = _market_prefix(code)
-    if prefix is None:
-        raise ValueError(f"无法识别交易所: {code}")
-    return f"{prefix}{code}"
+_symbol = A.exchange_symbol
 
 
 def _fetch_series(symbol: str, adjustment: AdjustmentType):
@@ -138,99 +137,30 @@ def fetch_names_live(codes: List[str]) -> Dict[str, str]:
     return names
 
 
-def to_klines(bars: List[Dict[str, Any]]) -> List[OHLCV]:
-    return [OHLCV(date=b["day"], open=b["open"], high=b["high"], low=b["low"],
-                  close=b["close"], volume=b["volume"]) for b in bars]
-
-
 # ------------------------------------------------------------------
-# V5 core 计算
+# 计算与输出（全部委托给 core.analysis，与 API / 扫描同源）
 # ------------------------------------------------------------------
-
-def run_core(klines: List[OHLCV]) -> Dict[str, Any]:
-    left, right = WBottomDetector.left_bars, WBottomDetector.right_bars
-    pivots = SwingPivotEngine(left_bars=left, right_bars=right).detect(klines)
-    patterns = {pid: [r.to_dict() for r in registry.get_pattern(pid).detect(klines)]
-                for pid in PATTERN_ORDER}
-    ind = ClassicIndicators().calculate(klines)
-    ref = ReferenceIndicators().calculate(klines)
-    last = len(klines) - 1
-    latest = {k: ind[k][last] for k in ind}
-    return {
-        "core_version": core.__version__,
-        "pivot_params": {"left_bars": left, "right_bars": right},
-        "pivots": [p.to_dict() for p in pivots],
-        "patterns": patterns,
-        "indicators": {
-            "latest": latest,
-            "series": {k: ind[k] for k in INDICATOR_SERIES},
-            "volume": volume_status(klines, ind),
-            "atr_stop": atr_stop(klines, ind),
-            # FIR-37：口径说明 + 行情软件常用口径对照值（仅展示，不参与任何判定）
-            "conventions": INDICATOR_CONVENTIONS,
-            "reference": {"latest": {k: v[last] for k, v in ref.items()}, "series": ref},
-        },
-    }
-
-
-# ------------------------------------------------------------------
-# 输出
-# ------------------------------------------------------------------
-
-def _json_roundtrip(obj: Any) -> Any:
-    return json.loads(json.dumps(obj, ensure_ascii=False))
-
-
-def _engine_commit() -> str:
-    if os.environ.get("GITHUB_SHA"):
-        return os.environ["GITHUB_SHA"]
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                                       stderr=subprocess.DEVNULL).decode().strip()
-    except Exception:
-        return "unknown"
-
 
 def _sha256(obj: Any) -> str:
-    return hashlib.sha256(json.dumps(obj, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return A.sha256_json(obj)
 
 
-def analyze_one(code: str, name: str, loaded: Dict[str, Any]) -> Dict[str, Any]:
-    bars = loaded["bars"][-WINDOW:]
-    if len(bars) < 60:
-        raise ValueError(f"K线不足 60 根（实际 {len(bars)} 根），均线形态与指标无法计算")
-    result = _json_roundtrip(run_core(to_klines(bars)))
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "code": code,
-        "name": name,
-        "as_of": bars[-1]["day"],
-        "data": {**loaded["provenance"], "bar_count": len(bars),
-                 "first_date": bars[0]["day"], "last_date": bars[-1]["day"]},
-        "bars": [[b["day"], b["open"], b["high"], b["low"], b["close"], b["volume"]] for b in bars],
-        "core": {**result, "result_sha256": _sha256(result)},
-    }
+def analyze_one(code: str, name: str, loaded: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+    prov = loaded["provenance"]
+    return A.analyze(code, loaded["bars"], adjustment=prov.get("adjustment", "unknown"),
+                     provenance=prov, name=name, now=now)
 
 
 def summarize(doc: Dict[str, Any]) -> Dict[str, Any]:
-    bars = doc["bars"]
-    last_idx = len(bars) - 1
-    close, prev = bars[-1][4], bars[-2][4]
-    latest = {}
-    for pid, results in doc["core"]["patterns"].items():
-        if results:
-            r = max(results, key=lambda x: max(kp["index"] for kp in x["key_points"]))
-            k = max(kp["index"] for kp in r["key_points"])
-            latest[pid] = {"pattern_name": r["pattern_name"], "direction": r["direction"],
-                           "category": r["category"],
-                           "stage": r["stage"], "score": r["score"], "confidence": r["confidence"],
-                           "last_key_date": bars[k][0], "bars_since": last_idx - k}
-    return {
-        "code": doc["code"], "name": doc["name"], "as_of": doc["as_of"],
-        "close": close, "change": round(close - prev, 2), "change_pct": round((close - prev) / prev * 100, 2),
-        "patterns_latest": latest,
-        "data_source": doc["data"]["source"], "adjustment": doc["data"]["adjustment"],
-    }
+    return A.pattern_summary(doc)
+
+
+def _previous_doc(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        return doc if doc.get("schema_version") == SCHEMA_VERSION else None
+    except Exception:
+        return None
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -241,12 +171,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--index-csv", type=Path, help="离线模式：上证指数 CSV（用于大盘环境）")
     ap.add_argument("--out", type=Path, required=True, help="输出目录")
     ap.add_argument("--adjustment", choices=["qfq", "none"], default="qfq")
-    ap.add_argument("--expect-date", help="期望的最新交易日 YYYY-MM-DD；最后一根K线早于此日期的股票标记为 stale")
-    ap.add_argument("--calendar", default="verified", help="交易日历状态（verified/unverified）")
+    ap.add_argument("--expect-date", help="期望的最新交易日 YYYY-MM-DD；最后一根K线早于此日期的股票标记为 stale"
+                                         "（不指定时由权威交易日历推导；日历未覆盖则为 null）")
+    ap.add_argument("--now", help="计算收盘状态 / 期望交易日所用的当前时间（ISO8601，默认系统时间，北京时间）")
     ap.add_argument("--provenance-json", type=Path, help="离线模式：数据来源说明 JSON（{代码: {...}}）")
     args = ap.parse_args(argv)
 
     adjustment = AdjustmentType.FORWARD if args.adjustment == "qfq" else AdjustmentType.NONE
+    now = datetime.fromisoformat(args.now) if args.now else datetime.now(CN_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=CN_TZ)
     offline = args.csv_dir is not None
     if args.codes:
         codes = args.codes
@@ -265,7 +199,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_errors.append({"code": "sh000001", "error": f"大盘数据获取失败: {e}"})
     market = None
     if index_bars:
-        market = ClassicMarketRegimeAnalyzer().analyze_dict(to_klines(index_bars[-WINDOW:]))
+        try:
+            market = A.analyze_market(index_bars)
+        except A.InvalidInputError as e:
+            run_errors.append({"code": "sh000001", "error": f"大盘数据不合法: {e}", "issues": e.issues[:20]})
     if market is None:
         run_errors.append({"code": "sh000001", "error": "无大盘数据，大盘环境不显示"})
 
@@ -289,26 +226,46 @@ def main(argv: Optional[List[str]] = None) -> int:
                     loaded["provenance"].update(extra_prov[code])
             else:
                 loaded = fetch_live(code, adjustment)
-            doc = analyze_one(code, name, loaded)
+            doc = analyze_one(code, name, loaded, now)
             (stocks_dir / f"{code}.json").write_text(
-                json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                json.dumps(doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False), encoding="utf-8")
             summary = summarize(doc)
-            summary["stale"] = bool(args.expect_date and doc["as_of"] < args.expect_date)
+            if args.expect_date:
+                summary["stale"] = doc["as_of"] < args.expect_date
+            summary["status"] = "ok"
             summaries.append(summary)
-            print(f"[ok]   {code} {name}  {doc['as_of']}  bars={doc['data']['bar_count']}", file=sys.stderr)
+            print(f"[ok]   {code} {name}  {doc['as_of']}  bars={doc['input']['bar_count']}", file=sys.stderr)
         except Exception as e:
-            run_errors.append({"code": code, "error": f"{type(e).__name__}: {e}"})
+            err = {"code": code, "error": f"{type(e).__name__}: {e}"}
+            if isinstance(e, A.InvalidInputError):
+                err["issues"] = e.issues[:20]
+            # 失败后旧结果：保留上次成功的文件，但在摘要中明确标记为“上次结果（本次失败）”，绝不冒充本次结果
+            prev = _previous_doc(stocks_dir / f"{code}.json")
+            if prev is not None:
+                summary = summarize(prev)
+                summary.update({"status": "stale_previous", "stale": True,
+                                "previous_as_of": prev["as_of"], "error": err["error"]})
+                summaries.append(summary)
+                err["kept_previous_as_of"] = prev["as_of"]
+            else:
+                stale_file = stocks_dir / f"{code}.json"
+                if stale_file.exists():
+                    stale_file.unlink()   # 旧格式或损坏的文件不能留在输出里
+            run_errors.append(err)
             print(f"[fail] {code}: {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
+    run_cal = A.calendar_info("sh000001", now.astimezone(CN_TZ).date().isoformat(), now)
     index = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(CN_TZ).isoformat(timespec="seconds"),
-        "engine_commit": _engine_commit(),
+        "engine_commit": A.engine_commit(),
         "core_version": core.__version__,
         "mode": "offline_csv" if offline else "live",
-        "expected_trade_date": args.expect_date,
-        "calendar": args.calendar,
+        "computed_at": now.isoformat(timespec="seconds"),
+        "expected_trade_date": args.expect_date or run_cal["expected_trade_date"],
+        "expected_trade_date_source": "argument" if args.expect_date else "trading_calendar",
+        "calendar": {"status": run_cal["status"], "source": run_cal["source"], "reason": run_cal.get("reason")},
         "market_env": market,
         "stocks": summaries,
         "errors": run_errors,
@@ -316,7 +273,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     (args.out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"完成：{len(summaries)} 成功，{len([e for e in run_errors if e['code'] != 'sh000001'])} 失败 → {args.out}",
           file=sys.stderr)
-    return 1 if codes and not summaries else 0
+    return 1 if codes and not any(x["status"] == "ok" for x in summaries) else 0
 
 
 if __name__ == "__main__":

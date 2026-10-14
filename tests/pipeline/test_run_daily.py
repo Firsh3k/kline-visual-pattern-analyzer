@@ -28,12 +28,14 @@ from core import (ClassicIndicators, ClassicMarketRegimeAnalyzer, SwingPivotEngi
 CSV_DIR = ROOT / "data" / "v5_validation"
 INDEX_CSV = ROOT / "tests" / "v5" / "fixtures" / "sh000001_20261013.csv"
 CODES = sorted(p.stem for p in CSV_DIR.glob("*.csv"))
+NOW = "2026-10-14T16:00:00+08:00"
 
 
 def _run(out: Path, seed: str = "0") -> None:
     env = {**os.environ, "PYTHONHASHSEED": seed}
     subprocess.run([sys.executable, str(ROOT / "pipeline" / "run_daily.py"),
-                    "--csv-dir", str(CSV_DIR), "--index-csv", str(INDEX_CSV), "--out", str(out)],
+                    "--csv-dir", str(CSV_DIR), "--index-csv", str(INDEX_CSV), "--out", str(out),
+                    "--now", NOW],
                    check=True, env=env, capture_output=True)
 
 
@@ -109,7 +111,10 @@ def test_points_anchor_to_real_bars(out, code):
 def test_market_env_matches_direct_call(out):
     idx = json.loads((out / "index.json").read_text(encoding="utf-8"))
     kl = run_daily.to_klines(run_daily.load_csv(INDEX_CSV)[-run_daily.WINDOW:])
-    assert idx["market_env"] == _rt(ClassicMarketRegimeAnalyzer().analyze_dict(kl))
+    env = dict(idx["market_env"])
+    assert env.pop("as_of") == kl[-1].date and env.pop("bar_count") == len(kl)
+    assert env.pop("data_hash") == run_daily.A.data_hash(run_daily.load_csv(INDEX_CSV)[-run_daily.WINDOW:])
+    assert env == _rt(ClassicMarketRegimeAnalyzer().analyze_dict(kl))
 
 
 def test_index_summary_consistent(out):
@@ -128,3 +133,70 @@ def test_deterministic_across_runs_and_hash_seeds(out, tmp_path):
     _run(other, seed="12345")
     for code in CODES:
         assert (out / "stocks" / f"{code}.json").read_bytes() == (other / "stocks" / f"{code}.json").read_bytes(), code
+
+
+# ------------------------------------------------------------------ 数据合同（FIR-23/25/27 + 本轮审核）
+
+def test_doc_carries_data_contract(out):
+    for code in CODES:
+        doc = _doc(out, code)
+        assert doc["schema_version"] == run_daily.A.ANALYSIS_SCHEMA_VERSION
+        bars = run_daily.load_csv(CSV_DIR / f"{code}.csv")[-run_daily.WINDOW:]
+        assert doc["input"]["data_hash"] == run_daily.A.data_hash(bars)
+        assert doc["input"]["adjustment"] == "unknown"          # 离线 CSV 未声明复权方式时如实记录
+        assert doc["session_state"] in ("close_confirmed", "intraday", "unknown")
+        assert doc["calendar"]["status"] == "verified" and doc["calendar"]["calendar_id"] in ("SSE", "SZSE")
+
+
+def test_index_calendar_is_derived_not_defaulted(out, tmp_path):
+    idx = json.loads((out / "index.json").read_text(encoding="utf-8"))
+    assert idx["calendar"]["status"] == "verified" and idx["expected_trade_date"] == "2026-10-14"
+    assert idx["expected_trade_date_source"] == "trading_calendar"
+    # 2027 年日历未核实：不得标为 verified
+    o2 = tmp_path / "y2027"
+    subprocess.run([sys.executable, str(ROOT / "pipeline" / "run_daily.py"), "--csv-dir", str(CSV_DIR),
+                    "--codes", CODES[0], "--out", str(o2), "--now", "2027-03-01T16:00:00+08:00"],
+                   check=True, capture_output=True)
+    idx2 = json.loads((o2 / "index.json").read_text(encoding="utf-8"))
+    assert idx2["calendar"]["status"] == "unverified" and idx2["expected_trade_date"] is None
+    doc = json.loads((o2 / "stocks" / f"{CODES[0]}.json").read_text(encoding="utf-8"))
+    assert doc["calendar"]["status"] == "unverified" and doc["session_state"] == "unknown"
+
+
+def _write_csv(path, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "open", "high", "low", "close", "volume"])
+        w.writerows(rows)
+
+
+@pytest.mark.parametrize("mutate,reason", [
+    (lambda r: r.__setitem__(70, [r[70][0], r[70][1], "1.0", r[70][3], r[70][4], r[70][5]]), "最高价"),
+    (lambda r: r.__setitem__(70, r[70][:5] + ["-5"]), "成交量不能为负"),
+    (lambda r: r.__setitem__(70, r[70][:4] + ["nan", r[70][5]]), "有限数"),
+    (lambda r: r.__setitem__(70, r[70][:4] + ["", r[70][5]]), "有限数"),
+    (lambda r: r.insert(71, list(r[70])), "重复日期"),
+    (lambda r: r.__setitem__(70, [r[69][0]] + r[70][1:]), "重复日期"),
+    (lambda r: r.__setitem__(69, [r[71][0]] + r[69][1:]), "乱序"),
+])
+def test_pipeline_rejects_invalid_input_and_keeps_previous_result(tmp_path, mutate, reason):
+    code = CODES[0]
+    with open(CSV_DIR / f"{code}.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))[1:]
+    d = tmp_path / "csv"; d.mkdir()
+    _write_csv(d / f"{code}.csv", rows)
+    o = tmp_path / "out"
+    args = [sys.executable, str(ROOT / "pipeline" / "run_daily.py"), "--csv-dir", str(d), "--out", str(o), "--now", NOW]
+    subprocess.run(args, check=True, capture_output=True)
+    good = (o / "stocks" / f"{code}.json").read_bytes()
+    mutate(rows)
+    _write_csv(d / f"{code}.csv", rows)
+    r = subprocess.run(args, capture_output=True)
+    assert r.returncode == 1                     # 没有任何一只本次成功
+    idx = json.loads((o / "index.json").read_text(encoding="utf-8"))
+    (err,) = [e for e in idx["errors"] if e["code"] == code]
+    assert "InvalidInputError" in err["error"] and any(reason in i["reason"] for i in err["issues"]), err
+    # 旧结果保留，但明确标记为上次结果，绝不冒充本次
+    (s,) = idx["stocks"]
+    assert s["status"] == "stale_previous" and s["stale"] is True and s["error"] == err["error"]
+    assert (o / "stocks" / f"{code}.json").read_bytes() == good

@@ -24,6 +24,7 @@ import analyze_stock_v4 as v4  # noqa: E402
 from core import (  # noqa: E402
     OHLCV, ClassicIndicators, volume_status, atr_stop, ClassicMarketRegimeAnalyzer,
     MABullDetector, MABearDetector, PlatformBreakDetector, PlatformBreakdownDetector,
+    PatternStage,
 )
 from core.ma_platform_patterns import _MA_STAGE, _PLAT_STAGE  # noqa: E402
 
@@ -126,6 +127,7 @@ def _prefixes(rows, start=60):
 
 
 SEEN_STAGES = set()
+SEEN_BREAKOUT = set()  # FIR-32 D3：平台“当日首次突破 / 突破后 / 未突破”三种情况都必须被覆盖
 
 
 # ------------------------------------------------------------------ 指标
@@ -182,6 +184,14 @@ def _check_ma(name, n, v4d, results, bull):
     assert r.direction.value == ("bull" if bull else "bear")
     assert [(k.name, k.price) for k in r.key_points] == [(p["name"], p["price"]) for p in v4d["key_points"]]
     assert all(k.index == n - 1 for k in r.key_points)
+    # FIR-32 D1 / D3
+    assert r.category == "trend_state"
+    ev = r.evidence
+    assert ev["v4_stage"] == v4d["stage"]
+    flags = (ev["aligned_ma5_ma10"], ev["aligned_ma10_ma20"], ev["aligned_ma20_ma60"],
+             ev["close_beyond_ma5"], ev["ma5_slope_ok"])
+    assert v4d["score"] == sum(w for w, f in zip((25, 25, 20, 15, 15), flags) if f), (name, n)
+    assert ev["fully_aligned"] == (flags[0] and flags[1] and flags[2])
 
 
 def _check_plat(name, n, v4d, results, up, klines):
@@ -198,7 +208,20 @@ def _check_plat(name, n, v4d, results, up, klines):
     mine = {k.name: k for k in r.key_points}
     assert r.score == v4d["score"], (name, n)
     assert r.notes.split("｜")[0] == v4d["stage"], (name, n)
-    assert r.stage == _PLAT_STAGE[v4d["stage"]]
+    # FIR-32 D3：独立计算“当日首次越过突破线”，据此确定期望阶段
+    line = mine["平台上沿"].price * 1.01 if up else mine["平台下沿"].price * 0.99
+    c_now, c_prev = klines[-1].close, klines[-2].close
+    beyond = (lambda c: c > line) if up else (lambda c: c < line)
+    broke_today = beyond(c_now) and not beyond(c_prev)
+    expected_stage = PatternStage.BREAKOUT_DAY if broke_today else _PLAT_STAGE[v4d["stage"]]
+    assert r.stage == expected_stage, (name, n)
+    assert r.category == "price_pattern"
+    ev = r.evidence
+    assert ev["v4_stage"] == v4d["stage"]
+    assert ev["broke"] == beyond(c_now) and ev["broke_today"] == broke_today
+    if ev["broke"]:
+        assert ev["volume_confirmed"] == ("放量" in v4d["stage"]), (name, n)
+    SEEN_BREAKOUT.add("today" if broke_today else ("later" if ev["broke"] else "none"))
     assert round(mine["平台上沿"].price, 2) == kp["平台上沿"]
     assert round(mine["平台下沿"].price, 2) == kp["平台下沿"]
     assert round(mine["当前价"].price, 2) == kp["当前价"]
@@ -238,6 +261,7 @@ def test_every_v4_stage_branch_was_exercised():
         "均线未形成多头排列", "均线未形成空头排列", "非平台整理：振幅过大"}
     missing = expected - V4_UNREACHABLE - SEEN_STAGES
     assert not missing, f"以下 V4 分支没有被任何数据覆盖：{sorted(missing)}"
+    assert SEEN_BREAKOUT == {"today", "later", "none"}, f"平台突破时点覆盖不全：{SEEN_BREAKOUT}"
     # 若有人修改了判定顺序使其可达，这里会失败，提醒同步更新文档与映射
     assert not (V4_UNREACHABLE & SEEN_STAGES)
 

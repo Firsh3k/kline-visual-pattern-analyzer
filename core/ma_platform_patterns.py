@@ -11,6 +11,17 @@ match_patterns / match_bear_patterns) 迁移为 V5 PatternDetector
    V4 在这两种情况下仍给出 20~30 分，这是迁移中唯一有意改变的行为。
 4. V4 的中文阶段描述原样保留在 notes 中；stage 映射到 V5 PatternStage 枚举（映射表见下）。
 
+FIR-32 产品决策（2026-10-14）：
+- D1：均线形态 category = "trend_state"（趋势状态），平台形态 category = "price_pattern"（价格形态）。
+- D3：evidence 提供机器可读的判定证据（键见下）；平台形态在“当日首次”越过突破线时
+  stage 记为 breakout_day，其余阶段仍按映射表。分数与 V4 完全一致，不受影响。
+
+  均线 evidence：aligned_ma5_ma10 / aligned_ma10_ma20 / aligned_ma20_ma60（按形态方向排列）、
+    fully_aligned、close_beyond_ma5、ma5_slope_5d、ma5_slope_ok、v4_stage
+  平台 evidence：range_pct、platform_start_date / platform_end_date、breakout_line、
+    broke（当日收盘越过突破线）、broke_today（当日越过且前一日收盘未越过同一条线）、
+    near_line、had_break_10d、volume_confirmed（当日量 > 1.3×VMA5）、ma_converge、v4_stage
+
 V4 已知局限（原样保留，未修改）：
 - 平台固定取“最近 5 根之前的 15~35 根”，不随实际整理区间伸缩。
 - 均线形态只看最后一根 K 线的均线排列。
@@ -26,6 +37,7 @@ from .pivot_patterns import PivotPatternDetectorBase
 from .registry import registry
 from .types import (
     OHLCV, PivotPoint, PatternResult, PatternKeyPoint, TrendDirection, PatternStage,
+    PATTERN_CATEGORY_PRICE, PATTERN_CATEGORY_TREND,
 )
 
 _confidence = PivotPatternDetectorBase._confidence
@@ -81,7 +93,8 @@ def _eval_ma(klines: List[OHLCV], ind: Dict[str, Any], bull: bool) -> Optional[D
         else:
             stage = '均线未形成空头排列'
     return {'score': score, 'stage': stage, 'last': last,
-            'ma': {'MA5': ma5, 'MA10': ma10, 'MA20': ma20, 'MA60': ma60}}
+            'ma': {'MA5': ma5, 'MA10': ma10, 'MA20': ma20, 'MA60': ma60},
+            'flags': {'c1': c1, 'c2': c2, 'c3': c3, 'c4': c4, 'c5': c5, 'slope': slope}}
 
 
 def _eval_platform(klines: List[OHLCV], ind: Dict[str, Any], up: bool) -> Optional[Dict[str, Any]]:
@@ -127,10 +140,17 @@ def _eval_platform(klines: List[OHLCV], ind: Dict[str, Any], up: bool) -> Option
         stage = '平台整理中'
     hi_idx = plat_start + next(i for i, k in enumerate(plat) if k.high == plat_high)
     lo_idx = plat_start + next(i for i, k in enumerate(plat) if k.low == plat_low)
+    # FIR-32 D3：当日首次越过 = 今日收盘越过突破线，且前一日收盘未越过同一条线
+    line = plat_high * 1.01 if up else plat_low * 0.99
+    prev_close = klines[last - 1].close
+    prev_broke = prev_close > line if up else prev_close < line
     return {'score': score, 'stage': stage, 'tight': tight, 'last': last,
             'plat_start': plat_start, 'plat_end': n - 6, 'plat_len': plat_len,
             'plat_high': plat_high, 'plat_low': plat_low, 'range_pct': range_pct,
-            'hi_idx': hi_idx, 'lo_idx': lo_idx}
+            'hi_idx': hi_idx, 'lo_idx': lo_idx,
+            'flags': {'broke': broke, 'broke_today': broke and not prev_broke, 'near': near,
+                      'had': had, 'vol_boost': vol_boost, 'ma_converge': bool(ma_converge),
+                      'line': line}}
 
 
 # ------------------------------------------------------------------
@@ -177,6 +197,17 @@ class _MADetectorBase(PatternDetector):
         kps = [PatternKeyPoint(name=name, index=last, date=date, price=round(v, 2),
                                description=f'{date} 的 {name} 数值')
                for name, v in ev['ma'].items()]
+        f = ev['flags']
+        evidence = {
+            'aligned_ma5_ma10': f['c1'],
+            'aligned_ma10_ma20': f['c2'],
+            'aligned_ma20_ma60': f['c3'],
+            'fully_aligned': f['c1'] and f['c2'] and f['c3'],
+            'close_beyond_ma5': f['c4'],
+            'ma5_slope_5d': round(f['slope'], 4),
+            'ma5_slope_ok': f['c5'],
+            'v4_stage': ev['stage'],
+        }
         return [PatternResult(
             pattern_id=self.pattern_id,
             pattern_name=self.pattern_name,
@@ -186,6 +217,8 @@ class _MADetectorBase(PatternDetector):
             confidence=_confidence(ev['score']),
             key_points=kps,
             notes=ev['stage'],
+            category=PATTERN_CATEGORY_TREND,
+            evidence=evidence,
         )]
 
 
@@ -225,17 +258,36 @@ class _PlatformDetectorBase(PatternDetector):
         ]
         level = ev['plat_high'] if self._up else ev['plat_low']
         threshold = '上沿 ×1.01' if self._up else '下沿 ×0.99'
+        f = ev['flags']
+        stage = _PLAT_STAGE[ev['stage']]
+        if f['broke_today']:
+            stage = PatternStage.BREAKOUT_DAY  # FIR-32 D3：当日首次越过突破线
+        evidence = {
+            'range_pct': round(ev['range_pct'], 6),
+            'platform_start_date': s,
+            'platform_end_date': e,
+            'breakout_line': round(f['line'], 4),
+            'broke': f['broke'],
+            'broke_today': f['broke_today'],
+            'near_line': f['near'],
+            'had_break_10d': f['had'],
+            'volume_confirmed': f['vol_boost'],
+            'ma_converge': f['ma_converge'],
+            'v4_stage': ev['stage'],
+        }
         return [PatternResult(
             pattern_id=self.pattern_id,
             pattern_name=self.pattern_name,
             direction=TrendDirection.BULL if self._up else TrendDirection.BEAR,
-            stage=_PLAT_STAGE[ev['stage']],
+            stage=stage,
             score=ev['score'],
             confidence=_confidence(ev['score']),
             key_points=kps,
             neckline_price=level,
             notes=(f"{ev['stage']}｜平台区间 {s} ~ {e}（{ev['plat_len']} 根），"
                    f"振幅 {ev['range_pct']*100:.1f}%，突破判定线 {threshold}"),
+            category=PATTERN_CATEGORY_PRICE,
+            evidence=evidence,
         )]
 
 

@@ -113,7 +113,8 @@ def test_index_summary_consistent(out):
         doc = _doc(out, s["code"])
         assert s["close"] == doc["bars"][-1][4]
         for pid, lt in s["patterns_latest"].items():
-            assert any(r["score"] == lt["score"] and r["stage"] == lt["stage"] for r in doc["core"]["patterns"][pid])
+            assert any(r["score"] == lt["score"] and r["stage"] == lt["stage"] and r["category"] == lt["category"]
+                       for r in doc["core"]["patterns"][pid])
 
 
 def test_deterministic_across_runs_and_hash_seeds(out, tmp_path):

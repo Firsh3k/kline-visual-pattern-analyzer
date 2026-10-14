@@ -217,6 +217,7 @@ def summarize(doc: Dict[str, Any]) -> Dict[str, Any]:
             r = max(results, key=lambda x: max(kp["index"] for kp in x["key_points"]))
             k = max(kp["index"] for kp in r["key_points"])
             latest[pid] = {"pattern_name": r["pattern_name"], "direction": r["direction"],
+                           "category": r["category"],
                            "stage": r["stage"], "score": r["score"], "confidence": r["confidence"],
                            "last_key_date": bars[k][0], "bars_since": last_idx - k}
     return {

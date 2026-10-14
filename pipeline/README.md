@@ -11,7 +11,12 @@
 | 技术指标 | MA5/10/20/60、MACD、RSI14、KDJ、BOLL、ATR、量价状态、2×ATR 止损位 | `core/indicators.py`（由 V4 迁移） |
 | 大盘环境 | 上证指数评分、阶段、周/月线趋势 | `core/market_regime.py`（由 V4 迁移） |
 
-V4 的综合“推荐度”评分不再计算。
+V4 的综合“推荐度”评分不再计算（PO 决策 D4）。
+
+每个形态结果额外带两个字段（PO 决策 D1 / D3）：
+
+- `category`：`price_pattern`（价格形态：W底 / M头 / 头肩 / 平台）或 `trend_state`（趋势状态：均线多头 / 空头），UI 与 API 据此分开标注。
+- `evidence`：机器可读的判定证据，例如平台形态的 `broke` / `broke_today` / `volume_confirmed`。平台“当日首次越过突破线”记为 `breakout_day`。W/M/头肩暂为空，见 FIR-36。
 
 ## V4 迁移说明
 

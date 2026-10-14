@@ -2,7 +2,7 @@ name: Kline Pattern Analyzer CI
 
 on:
   push:
-    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**' ]
+    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**', 'v6/**' ]
   pull_request:
     branches: [ main ]
 
@@ -161,6 +161,22 @@ jobs:
     - name: Run FIR-28 release identity regression tests
       run: |
         node tests/test_fir28_release_identity.js
+
+  analysis-api:
+    # V6 Python 分析服务（FIR-31 / FIR-38）：契约、迁移、预置板块一致性
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install pinned dependencies
+      run: pip install -r services/analysis_api/requirements-dev.txt
+    - name: Preset sectors identical to V5 page
+      run: python scripts/extract_preset_sectors.py --check
+    - name: Analysis API tests
+      run: cd services/analysis_api && python -m pytest tests -q -W ignore::DeprecationWarning
 
   cross-runtime-parity:
     runs-on: ubuntu-latest

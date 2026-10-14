@@ -81,6 +81,12 @@ def test_core_matches_direct_calls(out, code):
         assert c["indicators"]["series"][k] == _rt(ind[k])
     assert c["indicators"]["volume"] == volume_status(kl, ind)
     assert c["indicators"]["atr_stop"] == _rt(atr_stop(kl, ind))
+    # FIR-37：口径说明与对照值
+    from core import ReferenceIndicators, INDICATOR_CONVENTIONS
+    ref = ReferenceIndicators().calculate(kl)
+    assert c["indicators"]["conventions"] == _rt(INDICATOR_CONVENTIONS)
+    assert c["indicators"]["reference"]["series"] == _rt(ref)
+    assert c["indicators"]["reference"]["latest"] == _rt({k: v[-1] for k, v in ref.items()})
     body = {k: v for k, v in c.items() if k != "result_sha256"}
     assert c["result_sha256"] == run_daily._sha256(body)
 

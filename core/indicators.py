@@ -6,11 +6,13 @@
   （tests/v5/test_v4_migration_parity.py 以 V4 为对照逐根断言）。
 - 输入改为 V5 标准 OHLCV 列表。
 
-注意（与行情软件的已知口径差异，迁移时保持 V4 原样，未做修改）：
+口径（FIR-37，PO 2026-10-14 决定：保留现有口径并注明，另给行情软件常用口径的对照值）：
 - RSI(14) 使用最近 14 日涨跌的简单平均，不是 Wilder 平滑；前 14 根固定为 50。
 - ATR(14) 前 14 根直接取当日 TR，第 15 根起才做 Wilder 平滑。
-- BOLL 前 19 根上中下轨均等于收盘价，带宽为 0。
-因此 RSI / ATR 数值可能与同花顺等软件显示的不同。
+- BOLL(20,2) 使用总体标准差；前 19 根上中下轨均等于收盘价，带宽为 0。
+- MACD / KDJ 从分析窗口第一根起算初值。
+机器可读口径见 INDICATOR_CONVENTIONS；对照值（Wilder RSI / Wilder ATR / 样本标准差 BOLL）
+由 ReferenceIndicators 计算，仅供对照显示，不参与任何形态、信号或评分。
 """
 
 from __future__ import annotations
@@ -140,6 +142,74 @@ class ClassicIndicators(IndicatorCalculator):
             'boll_mid': boll_mid, 'boll_up': boll_up, 'boll_low': boll_low,
             'boll_width': boll_width, 'atr': atr,
         }
+
+
+# ------------------------------------------------------------------
+# FIR-37：口径说明（机器可读）与对照值
+# ------------------------------------------------------------------
+
+INDICATOR_CONVENTIONS: Dict[str, Dict[str, str]] = {
+    "ma": {"label": "MA5/10/20/60", "convention": "收盘价简单移动平均；不足周期为 null"},
+    "macd": {"label": "MACD(12,26,9)", "convention": "EMA 以分析窗口第一根收盘价为初值；柱 = (DIF-DEA)×2"},
+    "rsi": {"label": "RSI(14)", "convention": "最近 14 日涨跌幅简单平均（非 Wilder 平滑）；前 14 根为 50；无下跌时为 100",
+            "reference": "rsi_wilder14"},
+    "kdj": {"label": "KDJ(9,3,3)", "convention": "K、D 以 50 为初值，按 2/3、1/3 平滑；前 8 根为 50；最高=最低时 RSV=50"},
+    "boll": {"label": "BOLL(20,2)", "convention": "中轨 MA20，上下轨 ±2×总体标准差（除以 20）；前 19 根三轨=收盘价",
+             "reference": "boll_up_sample20 / boll_low_sample20"},
+    "atr": {"label": "ATR(14)", "convention": "前 14 根取当日 TR，第 15 根起 Wilder 平滑 (ATR×13+TR)/14",
+            "reference": "atr_wilder14"},
+    "rsi_wilder14": {"label": "RSI(14) 对照：Wilder", "convention":
+                     "第 14 根起：首值为前 14 个涨跌的简单平均，之后 (前值×13+当日)/14；无下跌时为 100，无涨跌时为 50；之前为 null"},
+    "atr_wilder14": {"label": "ATR(14) 对照：Wilder", "convention":
+                     "TR 从第 2 根起算（需前收盘）；第 14 根（索引 14）首值为第 1~14 根 TR 的简单平均，之后 (前值×13+TR)/14；之前为 null"},
+    "boll_sample20": {"label": "BOLL(20,2) 对照：样本标准差", "convention":
+                      "中轨 MA20，上下轨 ±2×样本标准差（除以 19）；前 19 根为 null"},
+}
+
+REFERENCE_SERIES = ("rsi_wilder14", "atr_wilder14", "boll_up_sample20", "boll_low_sample20")
+
+
+class ReferenceIndicators:
+    """FIR-37：行情软件常用口径的对照值。仅供展示对照，不参与形态 / 信号 / 评分。"""
+
+    def calculate(self, klines: List[OHLCV]) -> Dict[str, List[Optional[float]]]:
+        n = len(klines)
+        closes = [k.close for k in klines]
+        highs = [k.high for k in klines]
+        lows = [k.low for k in klines]
+
+        rsi: List[Optional[float]] = [None] * n
+        if n > 14:
+            ch = [closes[i] - closes[i - 1] for i in range(1, n)]
+            g = sum(max(c, 0.0) for c in ch[:14]) / 14
+            l_ = sum(max(-c, 0.0) for c in ch[:14]) / 14
+            for i in range(14, n):
+                if i > 14:
+                    c = ch[i - 1]
+                    g = (g * 13 + max(c, 0.0)) / 14
+                    l_ = (l_ * 13 + max(-c, 0.0)) / 14
+                rsi[i] = 50.0 if g == 0 and l_ == 0 else (100.0 if l_ == 0 else 100 - 100 / (1 + g / l_))
+
+        atr: List[Optional[float]] = [None] * n
+        if n > 14:
+            tr = [None] + [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+                           for i in range(1, n)]
+            a = sum(tr[1:15]) / 14
+            atr[14] = a
+            for i in range(15, n):
+                a = (a * 13 + tr[i]) / 14
+                atr[i] = a
+
+        up: List[Optional[float]] = [None] * n
+        low: List[Optional[float]] = [None] * n
+        for i in range(19, n):
+            w = closes[i - 19:i + 1]
+            mid = sum(w) / 20
+            sd = math.sqrt(sum((x - mid) ** 2 for x in w) / 19)
+            up[i] = mid + 2 * sd
+            low[i] = mid - 2 * sd
+
+        return {"rsi_wilder14": rsi, "atr_wilder14": atr, "boll_up_sample20": up, "boll_low_sample20": low}
 
 
 def volume_status(klines: List[OHLCV], ind: Dict[str, Any]) -> Dict[str, str]:

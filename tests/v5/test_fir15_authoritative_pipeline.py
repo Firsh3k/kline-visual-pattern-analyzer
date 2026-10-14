@@ -152,6 +152,28 @@ def test_snapshot_future_as_of_date_fails_closed(tmp_path):
         load_authoritative_snapshot(str(path))
 
 
+def test_snapshot_dated_beijing_today_accepted_while_utc_is_yesterday(tmp_path, monkeypatch):
+    """北京时间 0–8 点（UTC 仍是前一天）时，当天日期的快照不是“未来日期”。"""
+    from datetime import datetime, timezone
+    from core.sector_validation import pipeline
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 14, 17, 0, tzinfo=timezone.utc).astimezone(tz)   # 北京 10-15 01:00
+
+    monkeypatch.setattr(pipeline, "datetime", FixedDateTime)
+    path = tmp_path / "beijing_today.json"
+    snap = {"schema_version": "1.0", "source": "ths_web", "as_of_date": "2026-10-15",
+            "sectors": {"创新药": {"codes": ["600276"]}}}
+    path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+    assert load_authoritative_snapshot(str(path))["as_of_date"] == "2026-10-15"
+    snap["as_of_date"] = "2026-10-16"
+    path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(AuthoritativeSnapshotError):
+        load_authoritative_snapshot(str(path))
+
+
 def test_run_validation_as_of_makes_freshness_deterministic(tmp_path):
     """CI gate determinism: freshness is evaluated at an explicit as_of date when given,
     and at today's date (production default) when not."""

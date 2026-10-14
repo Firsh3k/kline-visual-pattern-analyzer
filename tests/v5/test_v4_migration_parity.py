@@ -127,6 +127,7 @@ def _prefixes(rows, start=60):
 
 
 SEEN_STAGES = set()
+SEEN_RETEST = set()    # FIR-35：(方向, V4 当时给出的阶段)
 SEEN_BREAKOUT = set()  # FIR-32 D3：平台“当日首次突破 / 突破后 / 未突破”三种情况都必须被覆盖
 
 
@@ -207,17 +208,29 @@ def _check_plat(name, n, v4d, results, up, klines):
     kp = {p["name"]: p["price"] for p in v4d["key_points"]}
     mine = {k.name: k for k in r.key_points}
     assert r.score == v4d["score"], (name, n)
-    assert r.notes.split("｜")[0] == v4d["stage"], (name, n)
     # FIR-32 D3：独立计算“当日首次越过突破线”，据此确定期望阶段
-    line = mine["平台上沿"].price * 1.01 if up else mine["平台下沿"].price * 0.99
+    level = mine["平台上沿"].price if up else mine["平台下沿"].price
+    line = level * 1.01 if up else level * 0.99
     c_now, c_prev = klines[-1].close, klines[-2].close
     beyond = (lambda c: c > line) if up else (lambda c: c < line)
     broke_today = beyond(c_now) and not beyond(c_prev)
-    expected_stage = PatternStage.BREAKOUT_DAY if broke_today else _PLAT_STAGE[v4d["stage"]]
+    # FIR-35（有意偏离 V4）：独立计算“回踩/回抽”——此前 9 日曾收盘越过 2%、今日回到 ±3% 区间、今日非首次越过
+    far = (lambda c: c > level * 1.02) if up else (lambda c: c < level * 0.98)
+    retest = (any(far(k.close) for k in klines[-10:-1])
+              and level * 0.97 < c_now < level * 1.03 and not broke_today)
+    retest_text = "突破后回踩平台上沿确认中" if up else "破位后回抽平台下沿确认中"
+    if retest:
+        assert r.notes.split("｜")[0] == retest_text, (name, n)
+        expected_stage = PatternStage.RETEST
+        SEEN_RETEST.add(("up" if up else "down", v4d["stage"]))
+    else:
+        assert r.notes.split("｜")[0] == v4d["stage"], (name, n)
+        expected_stage = PatternStage.BREAKOUT_DAY if broke_today else _PLAT_STAGE[v4d["stage"]]
     assert r.stage == expected_stage, (name, n)
     assert r.category == "price_pattern"
     ev = r.evidence
-    assert ev["v4_stage"] == v4d["stage"]
+    assert ev["v4_stage"] == v4d["stage"]   # V4 原判定顺序的结论始终可追溯
+    assert ev["retest"] == retest, (name, n)
     assert ev["broke"] == beyond(c_now) and ev["broke_today"] == broke_today
     if ev["broke"]:
         assert ev["volume_confirmed"] == ("放量" in v4d["stage"]), (name, n)
@@ -248,7 +261,7 @@ def test_patterns_identical_every_prefix(name):
         _check_plat(name, n, bear["platform_break_down"], dets[3].detect(k), False, k)
 
 
-# V4 中永远走不到的分支（迁移时原样保留，属于 V4 逻辑缺陷，待产品决定是否修正）：
+# V4 中永远走不到的分支（V4 逻辑缺陷；FIR-35 已在 V5 中调整顺序使其可达，evidence.v4_stage 仍记录 V4 结论）：
 # 平台突破：“回踩”要求 0.97×上沿 < 现价 < 1.03×上沿；但现价 > 1.01×上沿 时先命中“突破”，
 #           现价 ≤ 1.01×上沿 时先命中“突破前夜”（0.97×上沿 < 现价 且未突破）。两者覆盖了整个回踩区间。
 # 平台破位：对称地被“跌破”（< 0.99×下沿）与“破位前夜”（< 1.03×下沿 且未跌破）完全覆盖。
@@ -262,8 +275,14 @@ def test_every_v4_stage_branch_was_exercised():
     missing = expected - V4_UNREACHABLE - SEEN_STAGES
     assert not missing, f"以下 V4 分支没有被任何数据覆盖：{sorted(missing)}"
     assert SEEN_BREAKOUT == {"today", "later", "none"}, f"平台突破时点覆盖不全：{SEEN_BREAKOUT}"
-    # 若有人修改了判定顺序使其可达，这里会失败，提醒同步更新文档与映射
+    # V4 自身的顺序仍使其不可达（V4 冻结副本不改）
     assert not (V4_UNREACHABLE & SEEN_STAGES)
+    # FIR-35：V5 中回踩 / 回抽必须真实出现，且覆盖 V4 原先吞掉它的两种分支（突破前夜 / 已突破）
+    dirs = {d for d, _ in SEEN_RETEST}
+    assert dirs == {"up", "down"}, f"回踩/回抽未被覆盖：{SEEN_RETEST}"
+    v4_hidden = {s for _, s in SEEN_RETEST}
+    assert any("前夜" in s for s in v4_hidden) and any("平台：" in s and "前夜" not in s for s in v4_hidden), \
+        f"回踩覆盖不全（应同时覆盖 V4 判为“前夜”与“已突破/跌破”的情形）：{sorted(v4_hidden)}"
 
 
 def test_unreachable_branches_are_truly_unreachable():

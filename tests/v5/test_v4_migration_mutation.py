@@ -74,7 +74,7 @@ def _pattern_mismatch(pat_mod) -> bool:
             for v4d, det in pairs:
                 res = det.detect(k)
                 if res:
-                    if res[0].score != v4d["score"] or res[0].notes.split("｜")[0] != v4d["stage"]:
+                    if res[0].score != v4d["score"] or res[0].evidence["v4_stage"] != v4d["stage"]:
                         return True
                 elif v4d["stage"] in pat_mod._MA_STAGE or (
                         v4d["stage"] in pat_mod._PLAT_STAGE):

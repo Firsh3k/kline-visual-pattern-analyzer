@@ -68,8 +68,13 @@ def run_validation(
     sector_filter: Optional[str] = None,
     authoritative_reports: Optional[Dict[str, SectorValidationReport]] = None,
     provenance_dir: Optional[str] = None,
+    as_of: Optional[str] = None,
 ) -> Dict:
-    """生成最终报告；已有权威 report 时禁止再降级重建为 UNVERIFIED。"""
+    """生成最终报告；已有权威 report 时禁止再降级重建为 UNVERIFIED。
+
+    as_of: 计算新鲜度所用的“当前日期”（YYYY-MM-DD），默认取今天（UTC）。
+           受控快照的 CI gate 传入快照日期，使结果不随运行日期漂移。
+    """
     if sector_filter:
         if sector_filter not in sectors:
             raise ValueError(f"板块 '{sector_filter}' 不存在")
@@ -90,7 +95,7 @@ def run_validation(
         )
 
     summary = get_validation_summary(reports)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     freshness_info = {
         name: check_freshness(name, current_date=today, provenance_dir=provenance_dir).value
         for name in sectors
@@ -220,6 +225,8 @@ def main():
                         help="使用带 source/as_of_date 的受控权威 snapshot")
     parser.add_argument("--sector", default=None, help="指定板块名称")
     parser.add_argument("--json", action="store_true", help="输出 JSON 报告")
+    parser.add_argument("--as-of", default=None, metavar="YYYY-MM-DD",
+                        help="计算新鲜度所用的当前日期（默认今天）；受控快照 gate 传快照日期以保证结果确定")
     parser.add_argument("--sector-file", default=None, help="板块数据文件路径")
     parser.add_argument("--provenance-dir", default=None,
                         help="provenance 输出目录（CI/测试可指向临时目录）")
@@ -279,6 +286,7 @@ def main():
             sector_filter=args.sector,
             authoritative_reports=authoritative_reports,
             provenance_dir=args.provenance_dir,
+            as_of=args.as_of,
         )
     except ValueError as exc:
         print(f"错误：{exc}", file=sys.stderr)

@@ -100,6 +100,7 @@ jobs:
           --reconcile-with-snapshot tests/v5/fixtures/fir15_innovation_drug_snapshot.json \
           --provenance-dir /tmp/fir15-provenance \
           --evidence-dir /tmp/fir15-evidence \
+          --as-of "$(python -c "import json;print(json.load(open('tests/v5/fixtures/fir15_innovation_drug_snapshot.json'))['as_of_date'])")" \
           --json > /tmp/fir15_authoritative_report.json
         python - <<'PY'
         import json

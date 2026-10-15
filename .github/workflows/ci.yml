@@ -194,6 +194,8 @@ jobs:
       run: node scripts/extract_pattern_catalog.js --check
     - name: Web JS syntax
       run: for f in apps/web/js/*.js; do node --check "$f"; done
+    - name: V5 界面（V6 引擎）JS syntax
+      run: for f in apps/web-v5/js/*.js; do node --check "$f"; done
 
   e2e-web:
     # 真实浏览器（手机 + PC）：Core → Python API → BFF → 网页 逐字段一致（价格容差 1e-4）

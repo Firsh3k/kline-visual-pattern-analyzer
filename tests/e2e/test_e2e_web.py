@@ -88,14 +88,6 @@ DEVICES = {
 }
 
 
-@pytest.fixture(scope="session")
-def browser():
-    with playwright.sync_playwright() as p:
-        b = p.chromium.launch()
-        yield b
-        b.close()
-
-
 def _login(browser, stack, device):
     ctx = browser.new_context(**DEVICES[device])
     page = ctx.new_page()

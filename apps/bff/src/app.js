@@ -81,9 +81,9 @@ function createApp(config, { fetchImpl = globalThis.fetch, logger = console } = 
 
   const send = (res, { status, body }) => res.status(status).json(body);
 
-  // 跨域（CORS）：只对白名单来源开放 /api 与 /auth/token；不带 Cookie（Allow-Credentials 不设置）
+  // 跨域（CORS）：只对白名单来源开放 /api、/auth/token 和形态图鉴数据 /data；不带 Cookie（Allow-Credentials 不设置）
   const corsOrigins = new Set(config.corsOrigins || []);
-  app.use(['/api', '/auth/token'], (req, res, next) => {
+  app.use(['/api', '/auth/token', '/data'], (req, res, next) => {
     const origin = req.get('origin');
     if (origin && corsOrigins.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -310,6 +310,11 @@ function createApp(config, { fetchImpl = globalThis.fetch, logger = console } = 
   app.use('/api', (req, res) => send(res, errorBody(req.requestId, 404, 'not_found', '接口不存在')));
 
   // ---------------------------------------------------------------- 静态网页
+  // V5 界面（数据全部来自同一个 Python 引擎）：/v5/
+  if (config.staticDirV5) {
+    app.use('/v5', express.static(config.staticDirV5, { index: 'index.html', maxAge: 0, etag: true,
+      setHeaders: (res, p) => { if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
+  }
   app.use(express.static(config.staticDir, { index: 'index.html', maxAge: 0, etag: true,
     setHeaders: (res, p) => { if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
   app.get('*', (req, res) => res.sendFile(path.join(config.staticDir, 'index.html')));

@@ -94,6 +94,7 @@ function loadConfig(env = process.env) {
     expectedSchemas: { api: '1.0', analysis: '3.0' },
     releaseInfo,
     staticDir: env.STATIC_DIR || path.resolve(__dirname, '../../web'),
+    staticDirV5: env.STATIC_DIR_V5 || path.resolve(__dirname, '../../web-v5'),
   };
 }
 

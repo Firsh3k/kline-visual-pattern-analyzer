@@ -228,3 +228,47 @@ test('static web served with SPA fallback and no secrets', async () => {
     assert.equal(r.status, 404);
   } finally { t.close(); }
 });
+
+test('token auth + CORS allowlist for cross-origin pages', async () => {
+  const PAGE = 'https://kline.miaoda.example';
+  const base0 = { PYTHON_API_TOKEN: TOKEN, SESSION_SECRET: 's'.repeat(40), LOGIN_USERNAME: 'u', LOGIN_PASSWORD_HASH: HASH, PYTHON_API_BASE_URL: 'https://x.example.com' };
+  assert.throws(() => loadConfig({ ...base0, CORS_ALLOWED_ORIGINS: 'http://kline.example.com' }), /CORS_ALLOWED_ORIGINS/);
+  assert.throws(() => loadConfig({ ...base0, CORS_ALLOWED_ORIGINS: 'https://kline.example.com/' }), /CORS_ALLOWED_ORIGINS/);
+  assert.deepEqual(loadConfig({ ...base0, CORS_ALLOWED_ORIGINS: `${PAGE}, https://b.example.com` }).corsOrigins, [PAGE, 'https://b.example.com']);
+  const t = await setup({ env: { CORS_ALLOWED_ORIGINS: PAGE } });
+  try {
+    // 预检：白名单来源放行，其他来源不带 CORS 头
+    let r = await fetch(`${t.base}/api/v1/analyses`, { method: 'OPTIONS', headers: { origin: PAGE, 'access-control-request-method': 'POST' } });
+    assert.equal(r.status, 204);
+    assert.equal(r.headers.get('access-control-allow-origin'), PAGE);
+    assert.match(r.headers.get('access-control-allow-headers'), /Authorization/);
+    assert.equal(r.headers.get('access-control-allow-credentials'), null);
+    r = await fetch(`${t.base}/api/v1/analyses`, { method: 'OPTIONS', headers: { origin: 'https://evil.example' } });
+    assert.equal(r.headers.get('access-control-allow-origin'), null);
+    // 令牌登录
+    r = await fetch(`${t.base}/auth/token`, { method: 'POST', headers: { origin: PAGE, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'owner', password: 'nope' }) });
+    assert.equal(r.status, 401);
+    r = await fetch(`${t.base}/auth/token`, { method: 'POST', headers: { origin: PAGE, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'owner', password: PW }) });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('access-control-allow-origin'), PAGE);
+    assert.equal(r.headers.getSetCookie().length, 0);                                    // 不发 Cookie
+    const { token } = await r.json();
+    const auth = { authorization: `Bearer ${token}`, origin: PAGE, 'content-type': 'application/json' };
+    // 令牌写操作不需要 CSRF；白名单来源可用
+    r = await fetch(`${t.base}/api/v1/analyses`, { method: 'POST', headers: auth, body: JSON.stringify({ code: '002436' }) });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('access-control-allow-origin'), PAGE);
+    assert.equal(t.up.calls.find((c) => c.url === '/api/v1/analyses').headers.authorization, `Bearer ${TOKEN}`);   // 上游仍用服务端凭证
+    // 非白名单来源、伪造或过期令牌都拒绝
+    r = await fetch(`${t.base}/api/v1/analyses`, { method: 'POST', headers: { ...auth, origin: 'https://evil.example' }, body: JSON.stringify({ code: '002436' }) });
+    assert.equal(r.status, 403);
+    r = await fetch(`${t.base}/api/v1/market`, { headers: { authorization: `Bearer ${token}x` } });
+    assert.equal(r.status, 401);
+    const old = sec.issueSession('s'.repeat(40), 'owner', 60, Date.now() - 3600 * 1000).token;
+    r = await fetch(`${t.base}/api/v1/market`, { headers: { authorization: `Bearer ${old}` } });
+    assert.equal(r.status, 401);
+    // 同源页面也可用令牌（不带 Origin）
+    r = await fetch(`${t.base}/api/v1/market`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(r.status, 200);
+  } finally { t.close(); }
+});

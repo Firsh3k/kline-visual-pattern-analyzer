@@ -81,9 +81,32 @@ function createApp(config, { fetchImpl = globalThis.fetch, logger = console } = 
 
   const send = (res, { status, body }) => res.status(status).json(body);
 
+  // 跨域（CORS）：只对白名单来源开放 /api 与 /auth/token；不带 Cookie（Allow-Credentials 不设置）
+  const corsOrigins = new Set(config.corsOrigins || []);
+  app.use(['/api', '/auth/token'], (req, res, next) => {
+    const origin = req.get('origin');
+    if (origin && corsOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Request-Id, Retry-After');
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-Match, X-Request-Id');
+        res.setHeader('Access-Control-Max-Age', '600');
+        return res.status(204).end();
+      }
+    }
+    return next();
+  });
+
   function session(req) {
     const c = sec.parseCookies(req.headers.cookie);
     return sec.readSession(config.sessionSecret, c[sec.SESSION_COOKIE]);
+  }
+
+  function bearer(req) {
+    const m = /^Bearer (.+)$/.exec(req.get('authorization') || '');
+    return m ? sec.readSession(config.sessionSecret, m[1]) : undefined;
   }
 
   function rate(kind, key, req, res) {
@@ -177,6 +200,20 @@ function createApp(config, { fetchImpl = globalThis.fetch, logger = console } = 
     res.json({ requestId: req.requestId, authenticated: true, user: payload.u, csrf: payload.csrf, expiresAt: payload.exp });
   });
 
+  // 令牌登录：给跨域网页用（如妙搭托管的 V5 界面）。令牌放在 Authorization 头里，浏览器不会自动带上，所以不需要 CSRF。
+  app.post('/auth/token', express.json({ limit: '4kb' }), (req, res) => {
+    if (!rate('login', `ip:${req.ip}`, req, res)) return;
+    const { username, password } = req.body || {};
+    const okUser = typeof username === 'string' && sec.safeEqual(username, config.loginUsername);
+    const okPass = typeof password === 'string' && password.length <= 256 && sec.verifyPassword(password, config.passwordHash);
+    if (!okUser || !okPass) {
+      return send(res, errorBody(req.requestId, 401, 'invalid_credentials', '用户名或密码错误'));
+    }
+    const { token, payload } = sec.issueSession(config.sessionSecret, config.userId, config.sessionTtlS);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ requestId: req.requestId, authenticated: true, user: payload.u, token, expiresAt: payload.exp });
+  });
+
   app.post('/auth/logout', (req, res) => {
     res.setHeader('Set-Cookie', [
       sec.cookie(sec.SESSION_COOKIE, '', { maxAge: 0, secure: config.cookieSecure }),
@@ -193,6 +230,17 @@ function createApp(config, { fetchImpl = globalThis.fetch, logger = console } = 
 
   // ---------------------------------------------------------------- API
   const apiGuard = (req, res, next) => {
+    const b = bearer(req);
+    if (b === null) return send(res, errorBody(req.requestId, 401, 'unauthenticated', '登录已过期，请重新登录'));
+    if (b) {   // 令牌访问：跨域来源必须在白名单里
+      const origin = req.get('origin');
+      if (origin && origin !== `${req.protocol}://${req.get('host')}` && !corsOrigins.has(origin)) {
+        return send(res, errorBody(req.requestId, 403, 'cross_origin', '这个网页来源不在允许列表里（CORS_ALLOWED_ORIGINS）'));
+      }
+      req.session = b;
+      if (!rate('api', `u:${b.u}`, req, res)) return;
+      return next();
+    }
     const s = session(req);
     if (!s) return send(res, errorBody(req.requestId, 401, 'unauthenticated', '请先登录'));
     req.session = s;

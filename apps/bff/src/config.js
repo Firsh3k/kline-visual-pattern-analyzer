@@ -50,6 +50,17 @@ function loadConfig(env = process.env) {
   const cookieSecure = env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : deployEnv !== 'development';
   if (!cookieSecure && deployEnv !== 'development') throw new ConfigError('非开发环境 Cookie 必须 Secure');
 
+  // 跨域访问（如妙搭托管的网页）：只允许列出的来源，用 Authorization: Bearer 令牌访问，不用 Cookie
+  const corsOrigins = String(env.CORS_ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+  for (const o of corsOrigins) {
+    let u;
+    try { u = new URL(o); } catch (e) { throw new ConfigError(`CORS_ALLOWED_ORIGINS 里的 ${o} 不是合法来源`); }
+    const localDev = u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname) && deployEnv === 'development';
+    if ((u.protocol !== 'https:' && !localDev) || u.origin !== o) {
+      throw new ConfigError(`CORS_ALLOWED_ORIGINS 里的 ${o} 必须是 https://域名 形式（不带路径和结尾斜杠）`);
+    }
+  }
+
   const releaseFile = env.FRONTEND_RELEASE_FILE || path.resolve(__dirname, '../../../release-info.json');
   let releaseInfo = null;
   try { releaseInfo = JSON.parse(fs.readFileSync(releaseFile, 'utf8')); } catch (e) { releaseInfo = null; }
@@ -66,6 +77,7 @@ function loadConfig(env = process.env) {
     userId: env.SESSION_USER_ID || 'owner',
     sessionTtlS: int(env, 'SESSION_TTL_S', 7 * 24 * 3600, 300, 30 * 24 * 3600),
     cookieSecure,
+    corsOrigins,
     trustProxy: int(env, 'TRUST_PROXY_HOPS', 1, 0, 5),
     timeouts: {
       connectAndDefault: int(env, 'UPSTREAM_TIMEOUT_MS', 8000, 500, 60000),

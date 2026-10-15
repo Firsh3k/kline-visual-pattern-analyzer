@@ -4,6 +4,7 @@ V6 本机一键启动（不需要 Docker，也不需要服务器）
 
     python scripts/run_local.py          # 只允许本机浏览器访问 http://localhost:8080
     python scripts/run_local.py --lan    # 同一 Wi-Fi 下的手机也能访问
+    KLINE_LOGIN_PASSWORD='至少12位' python scripts/run_local.py --lan --no-browser   # 云服务器等无法交互输入密码时
 
 第一次运行会：
   1. 在 var/local/venv 建 Python 虚拟环境并安装分析服务依赖；
@@ -89,9 +90,7 @@ def install_node_deps(npm: str) -> None:
     stamp.write_text(digest)
 
 
-def load_secrets() -> dict:
-    if SECRETS.exists():
-        return json.loads(SECRETS.read_text(encoding="utf-8"))
+def ask_password() -> str:
     print("\n🔐 第一次运行：设置网页登录密码（至少 12 位，输入时不显示）")
     while True:
         pw = getpass.getpass("密码：")
@@ -101,7 +100,17 @@ def load_secrets() -> dict:
         if getpass.getpass("再输一次：") != pw:
             print("两次不一致，请重新输入")
             continue
-        break
+        return pw
+
+
+def load_secrets() -> dict:
+    if SECRETS.exists():
+        return json.loads(SECRETS.read_text(encoding="utf-8"))
+    pw = os.environ.get("KLINE_LOGIN_PASSWORD", "")   # 无法交互输入时（云服务器、自动化部署）用环境变量
+    if pw and len(pw) < 12:
+        fail("环境变量 KLINE_LOGIN_PASSWORD 至少要 12 位")
+    if not pw:
+        pw = ask_password()
     h = subprocess.run(["node", str(BFF / "src" / "hash-password.js")], input=pw, capture_output=True,
                        text=True, check=True).stdout.strip()
     data = {"username": "owner", "password_hash": h,

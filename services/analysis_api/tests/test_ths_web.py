@@ -6,7 +6,7 @@
 """
 import json
 import urllib.error
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from conftest import NOW, TOKEN, make_settings
 from app.main import create_app
 from app.ths_web import SectorSourceError, THSWebSectorSource, URL_TEMPLATE
+from core import analysis as A
 
 
 def _jsonp(code, items, name="固态电池"):
@@ -21,8 +22,9 @@ def _jsonp(code, items, name="固态电池"):
     return f"quotebridge_v2_blockrank_{code}_199112_d1000({body})".encode("utf-8")
 
 
-TODAY = date.today().isoformat()
-RECENT = (date.today() - timedelta(days=3)).isoformat()   # 7 天内：仍可扫描
+_CN_TODAY = datetime.now(A.CN_TZ).date()   # 与服务端一致按北京时间取“今天”，避免 UTC 跨日时测试失败
+TODAY = _CN_TODAY.isoformat()
+RECENT = (_CN_TODAY - timedelta(days=3)).isoformat()   # 7 天内：仍可扫描
 
 
 def _source(payloads, calls=None):

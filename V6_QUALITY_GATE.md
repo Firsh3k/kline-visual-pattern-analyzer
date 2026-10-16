@@ -15,6 +15,12 @@
 - 判定：CI 全绿才允许合并；任一形态漂移即红，阻断合并。
 - 位置：CI 步骤 "Run golden pattern tests (algorithm drift gate)"，位于稳定的 core 测试段。
 
+### 硬闸门只跑确定性测试（网络测试不阻断）
+- `tests/v5/` 硬闸门步骤设 `SKIP_NETWORK_TESTS=1`，排除真实访问新浪/腾讯的 `test_data_providers.py`，
+  保证信号只由确定性算法/契约测试决定，不被外部数据源 SSL 超时/限频抖动拖红（run #246 教训）。
+- 真实数据源连通性单独跑一个 `continue-on-error` 的 non-blocking 步骤，仅作信息参考，不阻断合并。
+- 黄金测试（`test_golden_patterns.py`）为纯合成数据、无网络、无时间依赖，是算法漂移的最终硬闸门。
+
 ## 第二层：部署后 — 生产路径验收（部署后自动执行，给信号）
 
 每次 App Builder 部署/修改后，由助手在沙箱内走**真实生产请求**（非 mock），逐项核对：

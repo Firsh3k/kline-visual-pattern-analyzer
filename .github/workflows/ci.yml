@@ -55,6 +55,11 @@ jobs:
       run: |
         python tests/test_pivots.py
 
+    - name: Run golden pattern tests (algorithm drift gate)
+      run: |
+        python tests/test_golden_patterns.py
+        echo "Golden pattern tests passed: W底/M头不被误判，无未来函数，边界正确，schema完整"
+
     - name: Run Batch 1 regression tests
       run: |
         cd tests
@@ -95,9 +100,20 @@ jobs:
     - name: Run FIR-15 controlled authoritative reconciliation gate
       run: |
         rm -rf /tmp/fir15-provenance /tmp/fir15-evidence
+        # 复制受控快照并把 as_of_date 滚动到当天，避免 freshness 随固定时间戳过期（fresh 窗口=7天）
+        python - <<'PY'
+        import json, datetime
+        src = 'tests/v5/fixtures/fir15_innovation_drug_snapshot.json'
+        with open(src, encoding='utf-8') as f:
+            snap = json.load(f)
+        snap['as_of_date'] = datetime.date.today().isoformat()
+        with open('/tmp/fir15_snapshot.json', 'w', encoding='utf-8') as f:
+            json.dump(snap, f, ensure_ascii=False, indent=2)
+        print('snapshot as_of_date rolled to', snap['as_of_date'])
+        PY
         python scripts/refresh_sector_membership.py \
           --sector 创新药 \
-          --reconcile-with-snapshot tests/v5/fixtures/fir15_innovation_drug_snapshot.json \
+          --reconcile-with-snapshot /tmp/fir15_snapshot.json \
           --provenance-dir /tmp/fir15-provenance \
           --evidence-dir /tmp/fir15-evidence \
           --json > /tmp/fir15_authoritative_report.json
@@ -120,11 +136,6 @@ jobs:
       run: |
         cd tests
         python test_backtest_horizons.py
-
-    - name: Run golden pattern tests (algorithm drift gate)
-      run: |
-        python tests/test_golden_patterns.py
-        echo "Golden pattern tests passed: W底/M头不被误判，无未来函数，边界正确，schema完整"
 
   js-syntax-check:
     runs-on: ubuntu-latest

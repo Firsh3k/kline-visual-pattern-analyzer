@@ -35,10 +35,16 @@ jobs:
         python -m py_compile skill/scripts/batch_scan.py
         echo "Python syntax OK"
 
-    - name: Run V5 Canonical Core tests (FIR-14)
+    - name: Run V5 Canonical Core tests (FIR-14, deterministic gate)
       run: |
-        python -m pytest tests/v5/ -v --tb=short
-        echo "V5 Canonical Core tests passed"
+        SKIP_NETWORK_TESTS=1 python -m pytest tests/v5/ -v --tb=short
+        echo "V5 Canonical Core deterministic tests passed (live network integration excluded from gate)"
+
+    - name: Run live data-provider network integration tests (non-blocking)
+      continue-on-error: true
+      run: |
+        python -m pytest tests/v5/test_data_providers.py -v --tb=short
+        echo "Live data-provider network checks finished (informational only; external-source timeout does not block merge)"
 
     - name: Run FIR-25 exchange calendar provenance verifier
       run: |

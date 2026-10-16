@@ -5000,71 +5000,91 @@ function loadExampleWatchlist() {
   analyzeAllWatchlist();
 }
 
-// 分析单只股票（添加时自动调用）
-async function analyzeSingleStock(code, marketEnv = null) {
+// 分析单只股票（添加时自动调用）— 使用后端 Python Core
+async function analyzeSingleStock(code) {
   const status = document.getElementById('batchStatus');
-  status.textContent = `正在分析 ${code}...`;
+  status.innerHTML = `<span style="color:#f39c12;">正在分析 ${code}（Python Core）...</span>`;
+  const apiBase = _getApiBasePath();
+  const csrfMatch = document.cookie.match(/(?:^|;\s*)suda-csrf-token=([^;]+)/);
+  const csrfToken = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+  const headers = { 'Accept': 'application/json' };
+  if (csrfToken) headers['X-Suda-Csrf-Token'] = csrfToken;
   try {
-    // 如果没有传入大盘环境，自动拉取
-    if (!marketEnv) {
-      try {
-        marketEnv = await fetchMarketEnv();
-      } catch(e) { console.warn('大盘环境获取失败，使用默认值', e); }
+    const resp = await fetch(`${apiBase}/analyze/${code}`, {
+      method: 'GET',
+      credentials: 'include',
+      headers,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 200)}`);
     }
-    const result = await fetchKline(code);
-    if (result && result.data && result.data.length > 20) {
-      const r = calculateStockResult(result, marketEnv);
-      watchlistResults[code] = r;
-      renderWatchlistTags(); // 更新标签中的股票名称
-      renderWatchlistTable();
-      status.textContent = `已添加 ${r.name} (${code}) - 买入${r.buyAccuracy}%/卖出${r.sellAccuracy}%`;
+    const json = await resp.json();
+    if (json.engine?.analyzer !== 'real_core') {
+      throw new Error(`引擎非 real_core（${json.engine?.analyzer || 'unknown'}）`);
     }
-  } catch(e) { console.error(code, e); status.textContent = `分析 ${code} 失败`; }
-}
 
-// 计算单只股票的分析结果（复用逻辑）
-function calculateStockResult(result, marketEnv = null) {
-  const code = result.code;
-  const ind = calcIndicators(result.data);
-  const matches = matchPatterns(result.data, ind);
-  const bearMatches = matchBearPatterns(result.data, ind);
-  const vol = analyzeVolume(result.data, ind);
-  const sorted = Object.entries(matches).sort((a,b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a,b) => b[1].score - a[1].score);
-  const isBearDom = bearSorted[0][1].score > sorted[0][1].score && bearSorted[0][1].score >= 50;
-  const bestDetail = isBearDom ? bearMatches[bearSorted[0][0]] : matches[sorted[0][0]];
-  const bestType = isBearDom ? 'bear' : 'bull';
-  const macdDiv = detectMACDDivergence(result.data, ind);
-  const volDiv = detectVolumeDivergence(result.data, ind);
-  const neckConfirm = calcNecklineConfirm(result.data, bestDetail, bestType === 'bear');
-  const attention = calcAttentionScore(result.data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm);
-  const last = result.data[result.data.length - 1];
-  const prev = result.data[result.data.length - 2];
-  const pct = ((last.close - prev.close) / prev.close * 100).toFixed(2);
+    const attention = json.attention || {};
+    const patterns = json.patterns || {};
+    let topPatternName = '无';
+    let topPatternScore = 0;
+    for (const k of ['w_bottom', 'hs_bottom', 'm_top', 'hs_top']) {
+      const p = patterns[k];
+      if (p?.detected && p.score > topPatternScore) {
+        topPatternScore = p.score;
+        topPatternName = p.name || k;
+      }
+    }
+    const levelColor = attention.level === 'bull' ? '#e74c3c'
+      : attention.level === 'bear' ? '#2ecc71' : '#f39c12';
+    const klines = json.klines || [];
+    let price = json.latest_close ?? 0;
+    let pct = '0.00';
+    if (klines.length >= 2) {
+      const last = Number(klines[klines.length - 1].close);
+      const prev = Number(klines[klines.length - 2].close);
+      if (prev > 0) pct = (((last - prev) / prev) * 100).toFixed(2);
+    }
 
-  // 买卖信号可信度（需要大盘环境）
-  let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
-  if (marketEnv) {
-    const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
-    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
-    bullEnvRate = bullEnv.historicalAccuracy;
-    bearEnvRate = bearEnv.historicalAccuracy;
-    buyAccuracy = Math.round(sorted[0][1].score * bullEnv.historicalAccuracy / 100);
-    sellAccuracy = Math.round(bearSorted[0][1].score * bearEnv.historicalAccuracy / 100);
+    watchlistResults[code] = {
+      code,
+      name: json.name || code,
+      price,
+      pct,
+      bullScore: Math.max(patterns.w_bottom?.score || 0, patterns.hs_bottom?.score || 0),
+      bullName: patterns.w_bottom?.detected ? patterns.w_bottom.name : (patterns.hs_bottom?.detected ? patterns.hs_bottom.name : '无'),
+      bearScore: Math.max(patterns.m_top?.score || 0, patterns.hs_top?.score || 0),
+      bearName: patterns.hs_top?.detected ? patterns.hs_top.name : (patterns.m_top?.detected ? patterns.m_top.name : '无'),
+      buyAccuracy: Math.max(patterns.w_bottom?.score || 0, patterns.hs_bottom?.score || 0),
+      sellAccuracy: Math.max(patterns.m_top?.score || 0, patterns.hs_top?.score || 0),
+      bullEnvRate: '--',
+      bearEnvRate: '--',
+      attention: attention.score ?? 0,
+      level: attention.level || 'unknown',
+      levelColor,
+      advice: attention.advice || '',
+      engine: 'real_core',
+    };
+    renderWatchlistTags();
+    renderWatchlistTable();
+    status.innerHTML = `已添加 <b>${json.name || code}</b> (${code}) · <span style="color:#f39c12;">Python Core</span> · 关注分<b>${attention.score ?? 0}</b> · <span style="color:${levelColor};">${attention.level || '-'}</span> · 主要形态: ${topPatternName}${topPatternScore ? `(${topPatternScore})` : ''}`;
+  } catch(err) {
+    const errMsg = err.message || String(err);
+    watchlistResults[code] = {
+      code, name: code, price: 0, pct: '0.00',
+      bullScore: 0, bullName: '--',
+      bearScore: 0, bearName: '--',
+      buyAccuracy: 0, sellAccuracy: 0,
+      bullEnvRate: '--', bearEnvRate: '--',
+      attention: 0, level: 'unknown', levelColor: '#8899aa',
+      advice: 'Python引擎暂不可用，请点击【批量分析】重试',
+      engine: 'unavailable',
+    };
+    renderWatchlistTags();
+    renderWatchlistTable();
+    status.innerHTML = `<span style="color:#f39c12;">已添加 ${code}（Python引擎暂不可用，请点【批量分析】重试）</span>`;
+    console.error('[analyzeSingleStock] failed:', errMsg);
   }
-
-  return {
-    code, name: result.name, price: last.close, pct,
-    bullScore: sorted[0][1].score,
-    bullName: PATTERNS.find(p => p.id === sorted[0][0]).name,
-    bearScore: bearSorted[0][1].score,
-    bearName: BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]).name,
-    buyAccuracy, sellAccuracy, bullEnvRate, bearEnvRate,
-    attention: attention.score,
-    level: attention.level,
-    levelColor: attention.levelColor,
-    advice: attention.advice
-  };
 }
 
 // 分析全部自选股（调用后端 Python Core，不再使用本地JS）
@@ -5083,10 +5103,11 @@ async function analyzeAllWatchlist() {
   if (csrfToken) headers['X-Suda-Csrf-Token'] = csrfToken;
 
   try {
-    const resp = await fetch(`${apiBase}/watchlist/analyze`, {
+    const resp = await fetch(`${apiBase}/scan`, {
       method: 'POST',
       credentials: 'include',
       headers,
+      body: JSON.stringify({ codes }),
     });
     if (!resp.ok) {
       const errText = await resp.text();

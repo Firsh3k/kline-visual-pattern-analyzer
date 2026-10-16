@@ -2,7 +2,7 @@ name: Kline Pattern Analyzer CI
 
 on:
   push:
-    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**' ]
+    branches: [ main, develop, 'feature/**', 'bugfix/**', 'paios/**', 'v5/**', 'v6/**' ]
   pull_request:
     branches: [ main ]
 
@@ -120,6 +120,11 @@ jobs:
       run: |
         cd tests
         python test_backtest_horizons.py
+
+    - name: Run golden pattern tests (algorithm drift gate)
+      run: |
+        python tests/test_golden_patterns.py
+        echo "Golden pattern tests passed: W底/M头不被误判，无未来函数，边界正确，schema完整"
 
   js-syntax-check:
     runs-on: ubuntu-latest

@@ -1,7 +1,12 @@
 """
-Standalone K-line Pattern Analyzer
-自包含版本，无需core模块依赖
-Python Canonical Core - Source of Truth
+!!! DEPRECATED / 废弃实验文件 — 禁止运行，禁止作为分析结果来源 !!!
+
+Standalone K-line Pattern Analyzer（早期自包含原型，已内联一份历史 core 快照）
+- 本文件是 FIR-31 探索阶段的未完成实验，内联拼接处存在残缺（已知含语法错误，无法运行）。
+- 它不依赖仓库根 core，且其中算法不会随 core 更新，已与当前 Canonical Core 漂移。
+- 当前生产架构：v6/app-builder/（NestJS child_process 调用 python_analyzer.py）。
+- 唯一算法 Source of Truth：仓库根 core/（swing_pivot.py / pivot_patterns.py）。
+- 本文件仅作历史留存，不要 import、不要运行、不要参考其算法输出。详见同目录 README.md。
 """
 import sys
 import os

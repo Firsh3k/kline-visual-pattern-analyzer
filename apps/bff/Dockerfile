@@ -11,6 +11,7 @@ RUN cd apps/bff && npm ci --omit=dev --no-audit --no-fund && npm cache clean --f
 COPY release_identity.js ./
 COPY apps/bff/src apps/bff/src
 COPY apps/web apps/web
+COPY apps/web-v5 apps/web-v5
 
 ARG RELEASE_VERSION=""
 ARG RELEASE_COMMIT=""
@@ -18,7 +19,7 @@ ARG RELEASED_AT=""
 ARG RELEASE_ENV=""
 RUN RELEASE_VERSION="$RELEASE_VERSION" RELEASE_COMMIT="$RELEASE_COMMIT" RELEASED_AT="$RELEASED_AT" \
     RELEASE_ENV="$RELEASE_ENV" node apps/bff/src/write-release-info.js /srv/release-info.json
-ENV FRONTEND_RELEASE_FILE=/srv/release-info.json STATIC_DIR=/srv/apps/web PORT=8080
+ENV FRONTEND_RELEASE_FILE=/srv/release-info.json STATIC_DIR=/srv/apps/web STATIC_DIR_V5=/srv/apps/web-v5 PORT=8080
 LABEL org.opencontainers.image.source="https://github.com/Firsh3k/kline-visual-pattern-analyzer" \
       org.opencontainers.image.revision="${RELEASE_COMMIT}" org.opencontainers.image.version="${RELEASE_VERSION}"
 

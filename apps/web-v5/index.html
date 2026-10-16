@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<!-- 默认分析引擎地址（V6 BFF）。由 /v5/ 提供时忽略（使用本站）；单文件版由 scripts/build_v5_single.py --engine 写入 -->
+<meta name="kline-engine" content="">
+<title>K线形态分析工具 · V5 界面 · V6 引擎</title>
+<link rel="stylesheet" href="css/app.css">
+<script src="js/format.js" defer></script>
+<script src="js/api.js" defer></script>
+<script src="js/common.js" defer></script>
+<script src="js/chart.js" defer></script>
+<script src="js/catalog.js" defer></script>
+<script src="js/analyze.js" defer></script>
+<script src="js/jobs.js" defer></script>
+<script src="js/watchlist.js" defer></script>
+<script src="js/scanner.js" defer></script>
+<script src="js/app.js" defer></script>
+</head>
+<body>
+
+<div class="header">
+  <h1>K线形态分析工具 <span>·</span> 上升找买点 + 下降找卖点</h1>
+  <div class="header-right">
+    <button class="version-badge" id="versionBadge" type="button" title="点击查看引擎版本">
+      <span class="version-tag" id="versionTag">V5 界面 · V6 引擎</span>
+      <span class="version-dot"></span>
+    </button>
+    <button class="hbtn hidden" id="engineBtn" type="button" title="设置分析引擎地址">⚙ 引擎</button>
+    <button class="hbtn hidden" id="logoutBtn" type="button">退出</button>
+  </div>
+  <nav class="tabs" id="tabs" aria-label="主导航">
+    <button class="tab" type="button" data-tab="patterns">典型图形库</button>
+    <button class="tab active" type="button" data-tab="analyze">股票分析</button>
+    <button class="tab" type="button" data-tab="watchlist">自选股池</button>
+    <button class="tab" type="button" data-tab="scanner">市场扫描</button>
+  </nav>
+</div>
+
+<!-- 引擎版本弹窗 -->
+<div id="versionModal" class="version-modal hidden" role="dialog" aria-modal="true" aria-labelledby="versionModalTitle">
+  <div class="version-modal-content">
+    <div class="version-modal-header">
+      <h3 id="versionModalTitle">分析引擎信息</h3>
+      <button class="version-modal-close" id="versionModalClose" type="button" aria-label="关闭">&times;</button>
+    </div>
+    <div class="version-modal-body" id="versionModalBody"></div>
+    <div class="version-modal-footer"><span class="version-hint">V5 界面只展示 V6 Python 引擎的结果</span></div>
+  </div>
+</div>
+
+<div class="container">
+  <!-- 引擎地址设置（单文件版 / 非 /v5/ 部署时使用） -->
+  <section class="engine-panel hidden" id="enginePanel" aria-label="引擎地址">
+    <form id="engineForm" class="row-wrap">
+      <label class="field grow">引擎地址
+        <input type="url" name="engine" id="engineInput" placeholder="https://你的分析服务域名" autocomplete="url" required>
+      </label>
+      <button class="btn btn-primary" type="submit">保存</button>
+      <button class="btn btn-ghost" type="button" id="engineCancel">取消</button>
+    </form>
+    <p class="hint">填写 V6 分析服务（BFF）的网址，例如 https://kline.example.com。该服务的 CORS_ALLOWED_ORIGINS 需要包含本网页的来源 <code id="pageOrigin"></code>。</p>
+    <div id="engineMsg"></div>
+  </section>
+
+  <!-- 登录 -->
+  <section class="login-panel hidden" id="loginPanel" aria-label="登录">
+    <form id="loginForm" autocomplete="on">
+      <h2>登录分析引擎</h2>
+      <p class="hint">私人内部系统，请使用部署时配置的账号。引擎：<code id="loginEngine">—</code> <button class="link-btn hidden" type="button" id="loginEngineEdit">修改</button></p>
+      <label class="field">用户名<input name="username" autocomplete="username" required></label>
+      <label class="field">密码<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary" type="submit" id="loginSubmit">登录</button>
+      <div id="loginErr"></div>
+    </form>
+  </section>
+
+  <!-- 典型图形库 -->
+  <div id="page-patterns" class="page">
+    <div class="pattern-tabs">
+      <button class="pattern-tab active-bull" type="button" data-ptype="bull">上升形态（找买点）</button>
+      <button class="pattern-tab" type="button" data-ptype="bear">下降形态（找卖点）</button>
+    </div>
+    <p class="hint" id="catalogNote"></p>
+    <div class="pattern-grid" id="patternGrid"></div>
+  </div>
+
+  <!-- 股票分析 -->
+  <div id="page-analyze" class="page active">
+    <form class="search-bar" id="analyzeForm" role="search">
+      <input type="text" id="codeInput" name="code" placeholder="输入股票代码，如 002436、600519" maxlength="6" inputmode="numeric" aria-label="股票代码">
+      <div class="bt-box">
+        <span class="bt-label">📅 回测</span>
+        <label class="switch"><input type="checkbox" id="backtestMode" aria-label="回测模式"><span class="slider"></span></label>
+        <input type="date" id="backtestDate" class="bt-date hidden" aria-label="回测日期">
+      </div>
+      <button type="submit" id="analyzeBtn">开始分析</button>
+    </form>
+    <div class="quick-codes" id="quickCodes">
+      <button class="quick-code" type="button" data-code="002436">兴森科技 002436</button>
+      <button class="quick-code" type="button" data-code="600519">贵州茅台 600519</button>
+      <button class="quick-code" type="button" data-code="002594">比亚迪 002594</button>
+      <button class="quick-code" type="button" data-code="300750">宁德时代 300750</button>
+      <button class="quick-code" type="button" data-code="688105">诺唯赞 688105</button>
+    </div>
+    <div id="resultArea"></div>
+  </div>
+
+  <!-- 自选股池 -->
+  <div id="page-watchlist" class="page">
+    <div class="sec-head">
+      <h3>我的自选股池 <span class="ver" id="wlVer"></span></h3>
+      <div class="row-wrap">
+        <button class="btn btn-primary" type="button" id="wlAnalyzeAll">分析全部</button>
+        <button class="btn btn-ghost" type="button" id="wlClear">清空全部</button>
+      </div>
+    </div>
+    <p class="hint">自选股保存在 V6 分析服务器上，手机和电脑自动同步；删除记录会保留，旧设备离线时的添加不会让已删除的股票复活。单击结果行查看详情，双击在新标签页打开。</p>
+    <form class="row-wrap add-row" id="wlAddForm">
+      <input type="text" class="inp grow" id="addStockInput" name="code" placeholder="输入6位股票代码，如 002436" maxlength="6" inputmode="numeric" aria-label="股票代码">
+      <button class="btn btn-blue" type="submit">添加</button>
+    </form>
+    <div id="watchlistTags" class="tags"></div>
+    <div id="wlJob"></div>
+  </div>
+
+  <!-- 市场扫描 -->
+  <div id="page-scanner" class="page">
+    <form id="scanForm">
+      <div class="sec-head">
+        <h3>市场扫描</h3>
+        <div class="row-wrap">
+          <label class="lbl" for="scanSignalType">信号类型:</label>
+          <select id="scanSignalType" name="direction" class="sel">
+            <option value="bull" selected>仅上升形态（找买点）</option>
+            <option value="bear">仅下降形态（找卖点）</option>
+            <option value="any">全部信号</option>
+          </select>
+          <label class="lbl" for="scanMinScore">最低形态分数:</label>
+          <select id="scanMinScore" name="minScore" class="sel">
+            <option value="0">全部</option>
+            <option value="50">≥50分</option>
+            <option value="60" selected>≥60分</option>
+            <option value="70">≥70分</option>
+            <option value="80">≥80分</option>
+          </select>
+          <button class="btn btn-primary" type="submit" id="scanStart">开始扫描</button>
+          <button class="btn btn-blue" type="button" id="scanAddWatch">加入自选股</button>
+        </div>
+      </div>
+      <p class="hint">选择板块范围，扫描符合上升/下降形态的个股（形态、阶段、分数全部由 V6 引擎计算）。勾选结果可批量加入自选股池。</p>
+      <details class="filters">
+        <summary>更多过滤条件（形态 / 阶段 / 关键点距今）</summary>
+        <div class="filter-body">
+          <div class="filter-row"><span class="lbl">形态：</span><span id="scanPatterns" class="checks"></span></div>
+          <div class="filter-row"><span class="lbl">阶段：</span><span id="scanStages" class="checks"></span></div>
+          <label class="filter-row lbl">关键点距今不超过（根）：<input class="inp inp-sm" name="maxBarsSince" type="number" min="0" max="250" placeholder="不限"></label>
+        </div>
+      </details>
+      <div class="scope-title">选择扫描范围（可多选）：</div>
+      <div id="sectorList" class="sector-list"><span class="hint">登录后加载板块…</span></div>
+    </form>
+
+    <!-- 自定义板块 -->
+    <form class="row-wrap add-row" id="customSectorForm">
+      <input type="text" class="inp inp-name" name="name" placeholder="自定义板块名称" maxlength="20" aria-label="自定义板块名称">
+      <input type="text" class="inp grow" name="codes" placeholder="股票代码，逗号或空格分隔" aria-label="股票代码">
+      <button class="btn btn-ghost" type="submit">添加板块</button>
+    </form>
+
+    <!-- 同花顺动态板块 -->
+    <form class="row-wrap add-row" id="thsForm">
+      <span class="lbl nowrap">同花顺板块指数:</span>
+      <input type="text" class="inp inp-ths" id="thsSectorCode" name="code" placeholder="如 886032（固态电池）" maxlength="6" inputmode="numeric" aria-label="同花顺板块代码">
+      <button class="btn btn-ths" type="submit">添加并拉取成分股</button>
+    </form>
+    <div id="thsMsg"></div>
+    <div id="dynList"></div>
+
+    <div id="scanJob"></div>
+  </div>
+</div>
+
+<div class="footer">
+  本页只展示 Python 引擎的计算结果，不做任何形态判断或评分；形态分析是技术面参考，不构成投资建议。<br>
+  股市有风险，投资需谨慎<br>
+  <span class="footer-version">V5 界面 · 数据与分析：V6 引擎 <span class="code" id="footerEngine">—</span></span>
+</div>
+
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+<noscript><p class="error-msg">此页面需要启用 JavaScript。</p></noscript>
+</body>
+</html>

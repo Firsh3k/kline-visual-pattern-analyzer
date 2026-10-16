@@ -19,12 +19,26 @@
 
 每次 App Builder 部署/修改后，由助手在沙箱内走**真实生产请求**（非 mock），逐项核对：
 
-- [ ] `/api/health` → 200，`core_analyzer=real_core`
+**引擎与个股主诊**
+- [ ] `/api/health` → 200，`core_analyzer=real_core`、`fail_closed`
 - [ ] `/api/analyze/603068` → 200，`engine.analyzer=real_core`
 - [ ] 603068 底部最佳 = W底（w_bottom=85，hs_bottom=0）
-- [ ] 603068 顶部最佳 = 头肩顶（hs_top=100）
-- [ ] 不存在静默降级（后端 fail-closed + 前端红色错误面板）
+- [ ] 603068 顶部最佳 = 头肩顶（hs_top=100），attention=42 偏空
 - [ ] 页面正常加载（非"页面待开发"、非 404）
+
+**批量/旁路链路（同样必须走 Python Core，不得本地JS）**
+- [ ] 添加单只自选股 → 走 `GET /api/analyze/:code`，状态栏显示"Python Core · 关注分 · 等级 · 形态"，不显示本地"买入X%/卖出Y%"
+- [ ] 批量分析（自选股）→ 走 `POST /api/scan`（前端传 localStorage codes），真实返回非0只，每行标 Python Core
+- [ ] 市场扫描 → 走 `POST /api/scan`，每行 Python Core，形态分与个股页一致
+- [ ] 无效码（如 999999）计入 `failed`，状态栏"成功X失败Y"可展开，不崩溃、不静默跳过
+
+**静默降级清零（残缺数据必须显式警告，不得伪造）**
+- [ ] 大盘数据失败：推荐度 ⚠️ 标注缺维度、假信号面板标红、可信度显示 `--`（非 0%）
+- [ ] 形态来源：核心4形态标"Python Core"，其余标"本地指标"，徽章"Python Core·核心形态"
+- [ ] Python attention 缺失：标注"Python关注指数缺失，使用本地估算"
+- [ ] 技术指标数据不足（RSI/KDJ/BOLL 预热期）：显示 `--`/虚线，不填 50/收盘价
+- [ ] 个股名拉取失败：名称旁标注"（名称获取失败）"
+- [ ] 后端 core 失败：非零退出，不返回骨架假数据（`calculateStockResult` 等本地形态批量函数零调用）
 
 全部通过才给 **✅ PRODUCTION GATE PASS**；任一失败给 **❌ FAIL** 并列出阻断项。
 

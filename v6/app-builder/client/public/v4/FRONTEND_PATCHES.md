@@ -71,3 +71,31 @@
 | attention | 42 分，偏空 |
 
 该基准同时固化在仓库根 `tests/test_golden_patterns.py`（CI 自动跑）。
+
+---
+
+## 五、静默降级清零（第二轮加固）
+
+在三道防线基础上，对全部真实数据/引擎失败路径做审计，原则：**残缺数据必须显式警告，禁止静默伪造**。
+
+### 主诊链路辅助数据（不再静默）
+| 项 | 行为 |
+|----|------|
+| 大盘环境失败（marketEnv=null） | 推荐度旁 ⚠️"未含大盘维度(±10分)仅供参考"；假信号面板标红；买卖可信度显示 `--`（非误导性 0%） |
+| 形态来源 | 核心4形态标"Python Core"，平台突破/均线/三角形等标"本地指标"；徽章"Python Core·核心形态" |
+| Python attention 缺失 | 标注"Python关注指数缺失，使用本地估算"，不静默用本地 calcAttentionScore |
+| 指标预热期（RSI 14/KDJ 8/BOLL 19 日） | 数据不足显示 `--`/虚线，不填 50/收盘价 |
+| 个股名拉取失败 | 名称旁灰色"（名称获取失败）" |
+
+### 批量/旁路链路（从本地JS改为 Python Core）
+| 功能 | 改动 |
+|------|------|
+| 添加单只自选股 `analyzeSingleStock` | 改走 `GET /api/analyze/:code`，校验 real_core；显示"Python Core·关注分·等级·形态"；失败橙色占位不回退；删除本地 `calculateStockResult` 函数（grep 零调用） |
+| 自选股批量分析 `analyzeAllWatchlist` | 改走 `POST /api/scan`（前端传 localStorage codes；因后端 watchlist 为内存空列表，不能用 /api/watchlist/analyze） |
+| 市场扫描 `startMarketScan` | 改走 `POST /api/scan`，每行标 Python Core |
+| 失败股票 | 收集 `failed=[{code,reason}]`，状态栏"成功X只失败Y只"可展开，不再只 console.error |
+
+### 后端配套（`stock-analysis.service.ts`）
+- `buildBatchItem()`：从真实 Python 返回构造 price/pct（末两根收盘价算）/score/level/advice/bullScore/bearScore/四形态；
+- `analyzeWatchlist`/`scanStocks`：逐只 try/catch，失败计入 `failed` 不阻断，返回 `{items, failed, count, failedCount, run_mode}`；
+- 生产 spawn 不传 `--allow-skeleton`，并拒绝 `engine.analyzer != real_core`。

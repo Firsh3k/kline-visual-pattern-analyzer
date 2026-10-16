@@ -110,12 +110,11 @@ export class StockAnalysisService implements OnModuleInit {
       }
 
       const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-      // ⚠️ 不传 --allow-skeleton：生产路径 fail-closed，core 失败时 Python 非零退出，
-      // reject 后由 Controller 转成明确错误，前端显示红色错误面板，绝不静默降级到假数据。
       const py = spawn(this.pythonBinary.path, [scriptPath, code, '--days', String(days)], {
         cwd: process.cwd(),
         timeout: 30000,
       });
+      // 注意：生产路径不传 --allow-skeleton，Python 侧 fail-closed
 
       let stdout = '';
       let stderr = '';
@@ -135,7 +134,6 @@ export class StockAnalysisService implements OnModuleInit {
         }
         try {
           const result = JSON.parse(stdout.trim());
-          // 双保险：即使脚本意外返回 fallback_skeleton，也拒绝
           const analyzer = result?.engine?.analyzer;
           if (analyzer && analyzer !== 'real_core') {
             reject(new Error(`引擎非 real_core（${analyzer}），生产路径拒绝降级结果`));
@@ -188,6 +186,14 @@ export class StockAnalysisService implements OnModuleInit {
       score: 58,
       stage: '震荡整理',
       stage_desc: '当前市场处于震荡整理阶段，多空力量相对均衡，建议等待方向明确后再操作。',
+      ma_status: {
+        MA5: { value: 3145.2, above: true },
+        MA10: { value: 3138.5, above: true },
+        MA20: { value: 3152.8, above: false },
+        MA60: { value: 3180.3, above: false },
+        MA120: { value: 3210.0, above: false },
+        MA250: { value: 3250.5, above: false },
+      },
       run_mode: 'local',
     };
   }
@@ -213,57 +219,115 @@ export class StockAnalysisService implements OnModuleInit {
     return { success: true, code, watchlist: [...this.watchlist] };
   }
 
-  async analyzeWatchlist(): Promise<{ items: Array<Record<string, unknown>>; count: number; run_mode: string }> {
+  private buildBatchItem(raw: Record<string, unknown>): Record<string, unknown> {
+    const attention = raw.attention as Record<string, unknown> | undefined;
+    const patternsRaw = raw.patterns as Record<string, unknown> | undefined;
+    const klines = raw.klines as Array<Record<string, unknown>> | undefined;
+
+    let pct = '0.00';
+    if (klines && klines.length >= 2) {
+      const lastClose = Number(klines[klines.length - 1].close);
+      const prevClose = Number(klines[klines.length - 2].close);
+      if (prevClose > 0) {
+        pct = (((lastClose - prevClose) / prevClose) * 100).toFixed(2);
+      }
+    }
+
+    const patternsOut: Record<string, unknown> = {};
+    if (patternsRaw && typeof patternsRaw === 'object') {
+      for (const key of ['w_bottom', 'hs_bottom', 'm_top', 'hs_top']) {
+        const p = patternsRaw[key] as Record<string, unknown> | undefined;
+        if (p) {
+          const details = p.details as Record<string, unknown> | undefined;
+          patternsOut[key] = {
+            detected: Boolean(p.detected),
+            score: typeof p.score === 'number' ? p.score : 0,
+            name: String((details && details.pattern_name) ?? p.name ?? key),
+            stage: String(p.stage ?? 'none'),
+            direction: String(p.direction ?? 'none'),
+          };
+        }
+      }
+    }
+
+    return {
+      code: String(raw.code ?? ''),
+      name: String(raw.name ?? ''),
+      engine: 'real_core',
+      price: raw.latest_close ?? null,
+      pct,
+      score: attention?.score ?? null,
+      level: attention?.level ?? 'unknown',
+      advice: attention?.advice ?? '',
+      bullScore: attention?.bull_score ?? 0,
+      bearScore: attention?.bear_score ?? 0,
+      patterns: patternsOut,
+    };
+  }
+
+  async analyzeWatchlist(): Promise<{
+    items: Array<Record<string, unknown>>;
+    failed: Array<{ code: string; reason: string }>;
+    count: number;
+    failedCount: number;
+    run_mode: string;
+  }> {
     if (this.watchlist.length === 0) {
-      return { items: [], count: 0, run_mode: 'local' };
+      return { items: [], failed: [], count: 0, failedCount: 0, run_mode: 'local' };
     }
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const results: Array<Record<string, unknown>> = [];
+    const items: Array<Record<string, unknown>> = [];
+    const failed: Array<{ code: string; reason: string }> = [];
     for (const code of this.watchlist) {
-      const item = await this.callPythonLocal(code) as {
-        code: string; name: string; score: number;
-        patterns?: Array<{ name: string; direction: string }>;
-      };
-      const normalized = this.normalizePatterns(item.patterns);
-      results.push({
-        code: item.code,
-        name: item.name,
-        score: item.score,
-        patterns: normalized.map((p) => ({ name: p.name, direction: p.direction })),
-      });
+      try {
+        const raw = await this.callPythonLocal(code);
+        items.push(this.buildBatchItem(raw));
+      } catch (err) {
+        failed.push({
+          code,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-    results.sort((a, b) => (b.score as number) - (a.score as number));
-    return { items: results, count: results.length, run_mode: 'local' };
+    items.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
+    return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
   async scanStocks(codes: string[], minScore = 0, onlyBull = false): Promise<{
     items: Array<Record<string, unknown>>;
+    failed: Array<{ code: string; reason: string }>;
     count: number;
+    failedCount: number;
     run_mode: string;
   }> {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const results: Array<Record<string, unknown>> = [];
+    const items: Array<Record<string, unknown>> = [];
+    const failed: Array<{ code: string; reason: string }> = [];
     for (const code of codes) {
-      const item = await this.callPythonLocal(code) as {
-        code: string; name: string; score: number;
-        patterns?: Array<{ direction: string; name: string }>;
-      };
-      const bullPatterns = this.normalizePatterns(item.patterns);
-      if (onlyBull && bullPatterns.length === 0) continue;
-      if (item.score < minScore) continue;
-      results.push({
-        code: item.code,
-        name: item.name,
-        score: item.score,
-        patterns: this.normalizePatterns(item.patterns).map((p) => p.name),
-      });
+      try {
+        const raw = await this.callPythonLocal(code);
+        const item = this.buildBatchItem(raw);
+        const score = Number(item.score ?? 0);
+        if (score < minScore) continue;
+        if (onlyBull) {
+          const patterns = item.patterns as Record<string, { detected: boolean; direction: string }>;
+          const hasBull = Object.values(patterns).some(p => p.detected && p.direction === 'bull');
+          if (!hasBull) continue;
+        }
+        items.push(item);
+      } catch (err) {
+        failed.push({
+          code,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-    results.sort((a, b) => (b.score as number) - (a.score as number));
-    return { items: results, count: results.length, run_mode: 'local' };
+    items.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
+    return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
   getSectors(): { items: Array<{ code: string; name: string; desc: string }>; run_mode: string } {

@@ -16,9 +16,15 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
    └─ SwingPivotEngine + WBottom/MTop/HSBottom/HSTop Detector + 新浪数据源
 ```
 
-- **Python 是唯一形态算法来源**；Node/JS 不重新实现形态识别。
-- 通用技术指标（MA/RSI/KDJ/MACD/布林）、大盘环境可在前端本地计算；
-  但 **W底/M头/头肩底/头肩顶 + 推荐度以 Python Core 为准**。
+- **个股一切结论来自 Python**：8 种形态、关键点、阶段、分数、个股页指标序列（`core.indicators.series`）、
+  以及信号层 `doc.signals`（`core/signals.py`，规则版本 `signals-1`）：
+  - 每种形态的最新实例、是否**已确认**（`confirmed` + 未满足原因 `reasons`）、主导形态（`dominant`）；
+  - 可直接绘制的颈线 / 平台线段 `lines`（头肩倾斜颈线从左颈线点到最后一根，必经右颈线点）。
+  - Node 扫描 / 自选股（`summary.dominant`、`patterns_latest[*].confirmed`）与个股页消费同一份，不另立择优规则。
+- 前端只校验 + 展示：`signals` 缺失、规则版本不符、未知阶段 / 方向、缺分数 → 报错，不套默认文案。
+- 大盘环境、假信号风险为**参考**（可由 JS 计算），不参与、不改变个股形态与确认结论。
+- asOf：YYYY-MM-DD、真实存在、不晚于北京时间今天，BFF 与 Python 同一口径，在取行情前校验；
+  已核实交易日历年份内的休市日 K 线一律拒绝。
 
 ## fail-closed（禁止静默降级）
 
@@ -49,7 +55,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 
 1. `/api/health` → 200，`core_analyzer=real_core`
 2. `/api/analyze/603068` → 200，`engine.analyzer=real_core`
-3. 603068：页面 8 种形态与返回文档 `summary.patterns_latest`（每种形态最新实例）逐项一致；行情每天变化，不写死具体分数
+3. 603068：页面 8 种形态、已确认 / 未确认标签、主导形态与返回文档 `signals`（及 `summary`）逐项一致；行情每天变化，不写死具体分数
 4. 不存在任何静默降级路径（后端 fail-closed + 前端红色错误面板）
 5. 页面正常加载（非"页面待开发"、非 404）
 

@@ -8,7 +8,8 @@ python_analyzer.py - K线形态分析本地执行器（App Builder 部署版 · 
 
 口径（与 main 一致）：
     - 个股一律前复权 qfq，固定 250 根窗口；qfq 只走腾讯，失败即报错，绝不静默回退不复权；
-    - 每种形态取【最近一次】实例（按关键点最大 index），旧形态不会冒充当前信号（core.analysis.pattern_summary）；
+    - 每种形态的最新实例、是否确认、主导形态、颈线线段全部由 core 信号层输出（doc.signals，core/signals.py），
+      扫描 / 自选股摘要（summary）与个股页共用这一份，Node 与网页只透传；
     - 8 种形态（W底 / 头肩底 / 平台突破 / 均线多头；M头 / 头肩顶 / 平台破位 / 均线空头）全部由 core 输出；
     - 支持 --as-of 回测：core 只使用截至该日的 K 线，不看未来；
     - 不输出任何综合“推荐度/关注分”，也不输出无来源的历史成功率（每个形态的 score 仅为算法信号强度）。
@@ -144,6 +145,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 
     InvalidInputError = A.InvalidInputError
     symbol = A.exchange_symbol(code)
+    as_of = A.parse_as_of(as_of)  # R67-3：未来 / 不存在的日期在取行情之前就拒绝
     try:
         series = _fetch_series(symbol, adjustment, as_of)
     except Exception as exc:  # noqa: BLE001
@@ -177,6 +179,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 
 def analyze_market(as_of: str | None = None) -> dict:
     from core import analysis as A
+    as_of = A.parse_as_of(as_of)  # R67-3：同一口径
     series = _fetch_series("sh000001", "none", as_of)
     last_close = float(series.bars[-1].close)
     if not (500 < last_close < 20000):

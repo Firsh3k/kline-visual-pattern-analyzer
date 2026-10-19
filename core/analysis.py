@@ -31,17 +31,20 @@ from .market_data import trading_calendar as tc
 from .market_regime import ClassicMarketRegimeAnalyzer
 from .pivot_patterns import WBottomDetector
 from .registry import registry
+from .signals import build_signals
 from .swing_pivot import SwingPivotEngine
 from .types import OHLCV
 
-ANALYSIS_SCHEMA_VERSION = "3.0"
+ANALYSIS_SCHEMA_VERSION = "3.1"   # 3.1：新增 signals 层（R67-1 / R67-2）
 WINDOW = 250
 MIN_BARS = 60
 CN_TZ = timezone(timedelta(hours=8))
 MARKET_CLOSE = time(15, 0)
 PATTERN_ORDER = ["w_bottom", "m_top", "hs_bottom", "hs_top",
                  "ma_bull", "ma_bear", "platform_break", "platform_break_down"]
-INDICATOR_SERIES = ("ma5", "ma10", "ma20", "ma60")
+# R67-1：个股页展示的全部经典指标序列都由 core 输出（前端不再自算），与 ClassicIndicators 键一致
+INDICATOR_SERIES = ("ma5", "ma10", "ma20", "ma60", "vma5", "vma20", "dif", "dea", "macd", "rsi",
+                    "kdj_k", "kdj_d", "kdj_j", "boll_mid", "boll_up", "boll_low", "boll_width", "atr")
 ADJUSTMENTS = ("qfq", "none", "unknown")   # unknown 仅用于来源未声明复权方式的离线 CSV；API 只接受 qfq / none
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -77,7 +80,11 @@ def _finite(x: Any) -> bool:
 
 
 def validate_bars(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    """严格校验 K 线；返回问题清单（空 = 通过）。bars 元素需含 day/open/high/low/close/volume。"""
+    """严格校验 K 线；返回问题清单（空 = 通过）。bars 元素需含 day/open/high/low/close/volume。
+
+    R67-3：日期落在已核实交易日历年份（VERIFIED_YEARS）内时，必须是交易日；休市日出现 K 线即拒绝。
+    未核实年份不做该项判断（结果的 calendar.status 会是 unverified）。
+    """
     issues: List[Dict[str, Any]] = []
 
     def bad(i, field, reason, value=None):
@@ -94,6 +101,9 @@ def validate_bars(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                 datetime.strptime(d, "%Y-%m-%d")
             except ValueError:
                 bad(i, "day", "日期不存在", d)
+            else:
+                if tc.is_calendar_verified(d) and not tc.is_trading_day(d):
+                    bad(i, "day", "休市日（非交易日）出现 K 线", d)
             if prev is not None:
                 if d == prev:
                     bad(i, "day", "重复日期", d)
@@ -223,17 +233,41 @@ def engine_commit() -> str:
         return "unknown"
 
 
+def today_cn(now: Optional[datetime] = None) -> str:
+    """Asia/Shanghai 当前日期（所有入口统一口径）"""
+    return (now or datetime.now(CN_TZ)).astimezone(CN_TZ).date().isoformat()
+
+
+def parse_as_of(as_of: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
+    """
+    R67-3：asOf 统一校验（在取行情之前调用）。None = 最新。
+    必须是 YYYY-MM-DD、真实存在的日期，且不晚于 Asia/Shanghai 今天；否则拒绝，
+    不允许“未来日期 + 截取到旧 K 线”被当作合法请求。
+    """
+    if as_of is None:
+        return None
+    if not isinstance(as_of, str) or not _DATE_RE.match(as_of):
+        raise InvalidInputError(f"asOf 必须为 YYYY-MM-DD：{as_of!r}")
+    try:
+        datetime.strptime(as_of, "%Y-%m-%d")
+    except ValueError:
+        raise InvalidInputError(f"asOf 日期不存在：{as_of}")
+    today = today_cn(now)
+    if as_of > today:
+        raise InvalidInputError(f"asOf {as_of} 晚于今天（{today}，北京时间），不能分析未来日期")
+    return as_of
+
+
 def prepare_window(raw_bars: Iterable[Mapping[str, Any]], as_of: Optional[str] = None,
-                   window: int = WINDOW) -> List[Dict[str, Any]]:
-    """规范化 → 全量校验 → 按 asOf 截断（point-in-time）→ 取最近 window 根"""
+                   window: int = WINDOW, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """asOf 校验 → 规范化 → 全量校验 → 按 asOf 截断（point-in-time）→ 取最近 window 根"""
+    as_of = parse_as_of(as_of, now)
     bars = normalize_bars(raw_bars)
     issues = validate_bars(bars)
     if issues:
         raise InvalidInputError(f"行情数据不合法：{len(issues)} 处问题（首个：第 {issues[0]['index']} 根 "
                                 f"{issues[0]['date']} {issues[0]['field']} {issues[0]['reason']}）", issues)
     if as_of is not None:
-        if not isinstance(as_of, str) or not _DATE_RE.match(as_of):
-            raise InvalidInputError(f"asOf 必须为 YYYY-MM-DD：{as_of!r}")
         bars = [b for b in bars if b["day"] <= as_of]
     bars = bars[-window:]
     if len(bars) < MIN_BARS:
@@ -255,13 +289,15 @@ def analyze(code: str, raw_bars: Iterable[Mapping[str, Any]], *, adjustment: str
     if window != WINDOW:
         raise InvalidInputError(f"window 固定为 {WINDOW}（所有入口必须一致）")
     symbol = exchange_symbol(code)
-    bars = prepare_window(raw_bars, as_of, window)
     now = now or datetime.now(CN_TZ)
+    bars = prepare_window(raw_bars, as_of, window, now=now)
     last_date = bars[-1]["day"]
-    if last_date > now.astimezone(CN_TZ).date().isoformat():
+    if last_date > today_cn(now):
         raise InvalidInputError(f"最后一根 K 线日期 {last_date} 晚于当前日期")
     cal = calendar_info(symbol, last_date, now)
     result = _roundtrip(run_core(to_klines(bars)))
+    bar_rows = [[b["day"], float(b["open"]), float(b["high"]), float(b["low"]),
+                 float(b["close"]), float(b["volume"])] for b in bars]
     return {
         "schema_version": ANALYSIS_SCHEMA_VERSION,
         "code": code,
@@ -281,14 +317,17 @@ def analyze(code: str, raw_bars: Iterable[Mapping[str, Any]], *, adjustment: str
         },
         "engine": {"core_version": CORE_VERSION, "engine_commit": engine_commit(),
                    "pattern_order": PATTERN_ORDER, "window": window},
-        "bars": [[b["day"], float(b["open"]), float(b["high"]), float(b["low"]),
-                  float(b["close"]), float(b["volume"])] for b in bars],
+        "bars": bar_rows,
         "core": {**result, "result_sha256": sha256_json(result)},
+        # 信号层（实例选择 / 确认 / 主导 / 线段）——不进入 core.result_sha256，自带 signals_sha256
+        "signals": _roundtrip(build_signals(result["patterns"], bar_rows, PATTERN_ORDER)),
     }
 
 
-def analyze_market(index_bars: Iterable[Mapping[str, Any]], as_of: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """大盘环境（上证指数）。输入同样严格校验；数据不足返回 None。"""
+def analyze_market(index_bars: Iterable[Mapping[str, Any]], as_of: Optional[str] = None,
+                   now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """大盘环境（上证指数）。输入同样严格校验（含 asOf 与休市日）；数据不足返回 None。"""
+    as_of = parse_as_of(as_of, now)
     bars = normalize_bars(index_bars)
     issues = validate_bars(bars)
     if issues:
@@ -305,23 +344,29 @@ def analyze_market(index_bars: Iterable[Mapping[str, Any]], as_of: Optional[str]
 
 
 def pattern_summary(doc: Mapping[str, Any]) -> Dict[str, Any]:
-    """每种形态最近一次结果的摘要（扫描列表 / 自选股列表共用，保证与个股页同源）"""
+    """
+    每种形态最近一次结果的摘要（扫描列表 / 自选股列表共用，保证与个股页同源）。
+    实例选择、confirmed、dominant 全部取自 doc["signals"]（与个股页同一份），不在这里另立规则。
+    """
     bars = doc["bars"]
-    last_idx = len(bars) - 1
+    sig = doc["signals"]
     latest = {}
-    for pid, results in doc["core"]["patterns"].items():
-        if results:
-            r = max(results, key=lambda x: max(kp["index"] for kp in x["key_points"]))
-            k = max(kp["index"] for kp in r["key_points"])
-            latest[pid] = {"pattern_name": r["pattern_name"], "direction": r["direction"],
-                           "category": r["category"], "stage": r["stage"], "score": r["score"],
-                           "confidence": r["confidence"], "last_key_date": bars[k][0],
-                           "bars_since": last_idx - k}
+    for pid, s in sig["latest"].items():
+        if s is None:
+            continue
+        r = doc["core"]["patterns"][pid][s["instance_index"]]
+        latest[pid] = {"pattern_name": r["pattern_name"], "direction": s["direction"],
+                       "category": s["category"], "stage": s["stage"], "score": s["score"],
+                       "confidence": r["confidence"], "last_key_date": s["last_key_date"],
+                       "bars_since": s["bars_since"], "active": s["active"],
+                       "confirmed": s["confirmed"], "reasons": s["reasons"]}
     close, prev = bars[-1][4], bars[-2][4]
     return {
         "code": doc["code"], "name": doc["name"], "as_of": doc["as_of"],
         "close": close, "change": round(close - prev, 2), "change_pct": round((close - prev) / prev * 100, 2),
         "patterns_latest": latest,
+        "dominant": sig["dominant"],
+        "signal_rule_version": sig["rule_version"],
         "session_state": doc["session_state"],
         "stale": doc["calendar"]["stale"],
         "data_hash": doc["input"]["data_hash"],

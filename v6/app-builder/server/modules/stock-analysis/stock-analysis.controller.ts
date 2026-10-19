@@ -2,6 +2,7 @@ import {
   Controller, Get, Post, Delete, Body, Param, Query,
   BadRequestException, ConflictException, NotFoundException,
 } from '@nestjs/common';
+import { assertAsOf } from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
 
 @Controller('api')
@@ -35,11 +36,14 @@ export class StockAnalysisController {
     if (!code || !/^\d{6}$/.test(code)) {
       throw new BadRequestException('股票代码必须为 6 位数字');
     }
-    if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
-      throw new BadRequestException('asOf 必须为 YYYY-MM-DD');
+    let checkedAsOf: string | undefined;
+    try {
+      checkedAsOf = assertAsOf(asOf);  // R67-3：未来 / 不存在日期在取行情前拒绝
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'asOf 不合法');
     }
     try {
-      return await this.service.analyzeStock(code, asOf);
+      return await this.service.analyzeStock(code, checkedAsOf);
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error ? error.message : '分析失败'

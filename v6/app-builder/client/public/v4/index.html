@@ -665,7 +665,6 @@ async function fetchPythonPatterns(code) {
 // Python Canonical Core —— 个股形态/阶段/评分的唯一 Source of Truth
 // 前端只做：取数 → 展示 → 画图。不在前端重新识别或补算任何形态。
 // ============================================================
-const PY_ACTIVE_STAGES = new Set(['breakout_day', 'post_break', 'retest']);
 const PY_BULL_IDS = ['w_bottom', 'hs_bottom', 'platform_break', 'ma_bull'];
 const PY_BEAR_IDS = ['m_top', 'hs_top', 'platform_break_down', 'ma_bear'];
 
@@ -722,6 +721,11 @@ async function fetchPythonDoc(code, asOf) {
   }
   if (!doc.core || typeof doc.core.patterns !== 'object') return { ok: false, error: '返回缺少 core.patterns', httpStatus: 200 };
   if (!Array.isArray(doc.bars) || doc.bars.length < 30) return { ok: false, error: '返回的K线数据不足或缺失', httpStatus: 200 };
+  const schemaErr = validatePyDoc(doc);
+  if (schemaErr) {
+    console.error(`[PyCore] ✗ ${url} 数据合同不符：${schemaErr}`);
+    return { ok: false, error: `Python Core 返回的数据不符合合同（${schemaErr}），已拒绝展示`, httpStatus: 200 };
+  }
   console.log(`[PyCore] ✓ ${url} 200 (${Date.now() - t0}ms) core=${doc.engine?.core_version} bars=${doc.bars.length} as_of=${doc.as_of}`);
   return { ok: true, doc };
 }
@@ -731,65 +735,157 @@ function docToV4Data(doc) {
   return doc.bars.map(b => ({ date: b[0], open: b[1], high: b[2], low: b[3], close: b[4], volume: b[5] }));
 }
 
-function pyLastKey(inst) {
-  return (inst.key_points || []).length ? Math.max(...inst.key_points.map(k => k.index)) : -1;
+// ---------------- Python 信号层合同（R67-1 / R67-2 / R67-4） ----------------
+// 实例选择、是否确认、主导形态、颈线线段全部由 Python core 的 doc.signals 给出；
+// 前端只校验 + 展示。任何未知阶段 / 方向 / 缺字段一律 fail-closed（报错，不套默认文案）。
+const PY_SIGNAL_RULE_VERSION = 'signals-1';
+const PY_ALL_IDS = ['w_bottom', 'm_top', 'hs_bottom', 'hs_top', 'ma_bull', 'ma_bear', 'platform_break', 'platform_break_down'];
+const PY_KNOWN_STAGES = new Set(['forming', 'pre_break', 'breakout_day', 'post_break', 'retest', 'failed_break', 'complete']);
+const PY_CATEGORIES = new Set(['price_pattern', 'trend_state']);
+const PY_INDICATOR_KEYS = ['ma5', 'ma10', 'ma20', 'ma60', 'vma5', 'vma20', 'dif', 'dea', 'macd', 'rsi',
+  'kdj_k', 'kdj_d', 'kdj_j', 'boll_mid', 'boll_up', 'boll_low', 'boll_width', 'atr'];
+
+class PyContractError extends Error {}
+function pyAssert(cond, msg) { if (!cond) throw new PyContractError(msg); }
+const _isNum = v => typeof v === 'number' && Number.isFinite(v);
+
+function _checkRef(ref, where, latest, mustConfirmed) {
+  if (ref === null) return;
+  pyAssert(ref && typeof ref === 'object', `${where} 不是对象`);
+  pyAssert(PY_ALL_IDS.includes(ref.pattern_id) && latest[ref.pattern_id], `${where}.pattern_id 无效：${ref.pattern_id}`);
+  pyAssert(ref.direction === latest[ref.pattern_id].direction, `${where}.direction 与形态不一致`);
+  pyAssert(ref.confirmed === latest[ref.pattern_id].confirmed, `${where}.confirmed 与形态不一致`);
+  if (mustConfirmed) pyAssert(ref.confirmed === true, `${where} 必须是已确认形态`);
 }
 
-// 每个形态取“最新一次”实例（按关键点最大 index），而非历史最高分实例。
+// 返回错误字符串；通过返回 null。
+function validatePyDoc(doc) {
+  try {
+    const nBars = doc.bars.length;
+    const sig = doc.signals;
+    pyAssert(sig && typeof sig === 'object', '缺少 signals');
+    pyAssert(sig.rule_version === PY_SIGNAL_RULE_VERSION, `signals.rule_version=${sig.rule_version}，前端只支持 ${PY_SIGNAL_RULE_VERSION}`);
+    pyAssert(sig.latest && typeof sig.latest === 'object', '缺少 signals.latest');
+    for (const pid of PY_ALL_IDS) {
+      pyAssert(pid in sig.latest, `signals.latest 缺少 ${pid}`);
+      pyAssert(Array.isArray(doc.core.patterns[pid]), `core.patterns 缺少 ${pid}`);
+      const s = sig.latest[pid];
+      if (s === null) { pyAssert(doc.core.patterns[pid].length === 0, `${pid} 有实例但 signals 为空`); continue; }
+      const inst = doc.core.patterns[pid][s.instance_index];
+      pyAssert(inst, `${pid}.instance_index 越界`);
+      pyAssert(PY_KNOWN_STAGES.has(s.stage) && s.stage === inst.stage, `${pid} 阶段未知或不一致：${s.stage}`);
+      pyAssert((s.direction === 'bull' || s.direction === 'bear') && s.direction === inst.direction, `${pid} 方向未知或不一致：${s.direction}`);
+      pyAssert(PY_BULL_IDS.includes(pid) ? s.direction === 'bull' : s.direction === 'bear', `${pid} 方向与形态分组不符`);
+      pyAssert(PY_CATEGORIES.has(s.category) && s.category === inst.category, `${pid} 类别未知：${s.category}`);
+      pyAssert(_isNum(s.score) && s.score === inst.score, `${pid} 缺少分数`);
+      pyAssert(typeof s.active === 'boolean' && typeof s.confirmed === 'boolean', `${pid} 缺少 active / confirmed`);
+      pyAssert(Array.isArray(s.reasons), `${pid} 缺少 reasons`);
+      pyAssert(Number.isInteger(s.last_key_index) && s.last_key_index >= 0 && s.last_key_index < nBars, `${pid} last_key_index 无效`);
+      pyAssert(Array.isArray(inst.key_points) && inst.key_points.length > 0, `${pid} 缺少关键点`);
+      inst.key_points.forEach(kp => pyAssert(Number.isInteger(kp.index) && kp.index >= 0 && kp.index < nBars && _isNum(kp.price), `${pid} 关键点越界或缺价格`));
+      pyAssert(Array.isArray(s.lines), `${pid} 缺少 lines`);
+      s.lines.forEach(l => pyAssert(Number.isInteger(l.idx1) && Number.isInteger(l.idx2) && l.idx1 >= 0 && l.idx1 <= l.idx2 && l.idx2 < nBars
+        && _isNum(l.price1) && _isNum(l.price2) && typeof l.label === 'string', `${pid} 线段坐标无效`));
+      if (s.category === 'price_pattern') pyAssert(s.lines.length > 0, `${pid} 价格形态缺少颈线 / 平台线段`);
+    }
+    const dm = sig.dominant;
+    pyAssert(dm && typeof dm === 'object' && dm.structure && typeof dm.structure === 'object', '缺少 signals.dominant');
+    _checkRef(dm.overall, 'dominant.overall', sig.latest, false);
+    _checkRef(dm.structure.bull, 'dominant.structure.bull', sig.latest, false);
+    _checkRef(dm.structure.bear, 'dominant.structure.bear', sig.latest, false);
+    for (const side of ['bull', 'bear']) {
+      const pid = dm[side];
+      if (pid !== null) {
+        pyAssert(sig.latest[pid] && sig.latest[pid].confirmed === true && sig.latest[pid].direction === side, `dominant.${side} 不是已确认的${side}形态`);
+      }
+    }
+    const ind = doc.core.indicators;
+    pyAssert(ind && ind.series && typeof ind.series === 'object', '缺少 core.indicators.series');
+    PY_INDICATOR_KEYS.forEach(k => pyAssert(Array.isArray(ind.series[k]) && ind.series[k].length === nBars, `core.indicators.series.${k} 缺失或长度不符`));
+    return null;
+  } catch (e) {
+    if (e instanceof PyContractError) return e.message;
+    return `校验异常：${e.message}`;
+  }
+}
+
+// 个股页正式指标一律取 core.indicators.series（与 Python 同一份计算），不再用 JS 自算。
+function coreIndicatorsFromDoc(doc) {
+  const ind = {};
+  PY_INDICATOR_KEYS.forEach(k => { ind[k] = doc.core.indicators.series[k].slice(); });
+  return ind;
+}
+
+// doc.signals.latest[pid] → 对应的 core 实例（实例选择由 Python 完成）
 function latestInstance(doc, pid) {
-  const arr = (doc.core.patterns && doc.core.patterns[pid]) || [];
-  if (!arr.length) return null;
-  return arr.slice().sort((a, b) => pyLastKey(b) - pyLastKey(a))[0];
+  const s = doc.signals.latest[pid];
+  return s ? { inst: doc.core.patterns[pid][s.instance_index], sig: s } : null;
 }
 
-function pyToV4Match(inst) {
-  const dir = inst.direction === 'bear' ? 'bear' : 'bull';
+const PY_LINE_COLORS = { neckline: '#f39c12', platform_edge: '#f39c12' };
+
+function pyToV4Match(inst, sig) {
+  // fail-closed：未知方向 / 阶段 / 类别 / 缺分数一律抛错，不套“构建中”等默认文案（R67-4）
+  pyAssert(sig && typeof sig === 'object', `${inst && inst.pattern_id} 缺少信号层数据`);
+  const dir = inst.direction;
+  pyAssert(dir === 'bull' || dir === 'bear', `未知方向：${dir}`);
+  pyAssert(PY_KNOWN_STAGES.has(inst.stage), `未知阶段：${inst.stage}`);
+  pyAssert(PY_CATEGORIES.has(inst.category), `未知类别：${inst.category}`);
+  pyAssert(_isNum(inst.score), `缺少分数`);
+  pyAssert(sig.stage === inst.stage && sig.direction === dir, `信号层与实例不一致`);
   const isTrend = inst.category === 'trend_state';
   let st;
   if (isTrend) {
     const formed = ['breakout_day', 'post_break', 'retest', 'complete'].includes(inst.stage);
     st = formed
       ? { t: dir === 'bull' ? '多头排列已形成' : '空头排列已形成',
-          outlook: dir === 'bull' ? '短中期均线已按多头排列，趋势向上。' : '短中期均线已按空头排列，趋势向下。',
-          action: dir === 'bull' ? '持股为主，跌破关键均线减仓。' : '离场观望，等待均线扭转。' }
+          outlook: dir === 'bull' ? '短中期均线已按多头排列，趋势向上（趋势状态，不构成买卖确认）。' : '短中期均线已按空头排列，趋势向下（趋势状态，不构成买卖确认）。',
+          action: dir === 'bull' ? '趋势参考：结合价格形态的确认信号再行动。' : '趋势参考：结合价格形态的确认信号再行动。' }
       : { t: '均线未形成该排列', outlook: '均线尚未完成对应排列，暂无趋势性信号。', action: '等待均线排列确认后再行动。' };
   } else {
-    st = (PY_STAGE_TEXT[dir] && PY_STAGE_TEXT[dir][inst.stage]) || PY_STAGE_TEXT[dir].forming;
+    st = { ...PY_STAGE_TEXT[dir][inst.stage] };
+    if (sig.active && !sig.confirmed) {
+      // 阶段处于突破 / 回踩，但 Python 判定未确认（如缩量、已回到颈线内侧）：不给顺势买卖建议
+      const why = sig.reasons.map(r => r.text).join('；') || '确认条件未满足';
+      st.t = st.t + '（未确认）';
+      st.outlook = `Python 判定未确认：${why}。`;
+      st.action = dir === 'bull' ? '未确认，不构成买入依据，观望；等待放量站稳颈线 / 判定线。'
+                                 : '未确认，不构成卖出依据，观望；等待放量跌破并站稳颈线 / 判定线下方。';
+    }
   }
   const points = [];
   if (inst.neckline_price != null) points.push({ label: '颈线位', value: Number(inst.neckline_price).toFixed(2) });
   if (inst.breakout_price != null) points.push({ label: '突破价', value: Number(inst.breakout_price).toFixed(2) });
   if (inst.target_price != null) points.push({ label: '目标位', value: Number(inst.target_price).toFixed(2) });
   if (inst.stop_loss != null) points.push({ label: '止损位', value: Number(inst.stop_loss).toFixed(2) });
-  // drawKline 关键点字段是 idx；水平标注线只取 price。index 一律基于 doc.bars（与图表同源）。
-  const markers = { points: [], lines: [] };
+  // 关键点 idx 基于 doc.bars（与图表同源）；颈线 / 平台线段由 Python 给出两端锚点，前端原样绘制（R67-2）。
+  const markers = { points: [], lines: [], segments: [] };
   (inst.key_points || []).forEach(kp => {
-    if (kp.index != null && kp.price != null) {
-      markers.points.push({ idx: kp.index, price: Number(kp.price), label: kp.name || '' });
-    }
+    markers.points.push({ idx: kp.index, price: Number(kp.price), label: kp.name || '' });
   });
-  if (inst.neckline_price != null) markers.lines.push({ price: Number(inst.neckline_price), label: '颈线', color: '#f39c12' });
+  sig.lines.forEach(l => markers.segments.push({ idx1: l.idx1, price1: l.price1, idx2: l.idx2, price2: l.price2,
+    label: l.label, color: PY_LINE_COLORS[l.kind] || '#f39c12' }));
   if (inst.target_price != null) markers.lines.push({ price: Number(inst.target_price), label: '目标', color: '#5dade2' });
   if (inst.stop_loss != null) markers.lines.push({ price: Number(inst.stop_loss), label: '止损', color: '#e67e22' });
   return {
-    score: inst.score ?? 0,
+    score: inst.score,
     stage: st.t, outlook: st.outlook, action: st.action,
     points, markers,
     notes: inst.notes || '',
     confidence: inst.confidence || '',
     fromPython: true, __source: 'python',
-    __stage: inst.stage, __active: PY_ACTIVE_STAGES.has(inst.stage),
+    __stage: inst.stage, __active: sig.active, __confirmed: sig.confirmed, __reasons: sig.reasons,
     __dir: dir, __category: inst.category,
-    __lastKey: pyLastKey(inst),
-    __lastDate: (inst.key_points || []).map(k => k.date).sort().slice(-1)[0] || '',
+    __lastKey: sig.last_key_index,
+    __lastDate: sig.last_key_date || '',
     __py: inst,
   };
 }
 
 function pyEmptyMatch() {
   return { score: 0, stage: '未检测到该形态', points: [], outlook: '', action: '',
-    markers: { points: [], lines: [] }, notes: '', confidence: '',
-    fromPython: true, __source: 'python', __stage: null, __active: false,
+    markers: { points: [], lines: [], segments: [] }, notes: '', confidence: '',
+    fromPython: true, __source: 'python', __stage: null, __active: false, __confirmed: false, __reasons: [],
     __dir: null, __category: null, __lastKey: -1, __lastDate: '', __py: null };
 }
 
@@ -797,20 +893,27 @@ function pyEmptyMatch() {
 function buildMatchesFromDoc(doc) {
   const matches = {};
   const bearMatches = {};
-  PY_BULL_IDS.forEach(pid => { const inst = latestInstance(doc, pid); matches[pid] = inst ? pyToV4Match(inst) : pyEmptyMatch(); });
-  PY_BEAR_IDS.forEach(pid => { const inst = latestInstance(doc, pid); bearMatches[pid] = inst ? pyToV4Match(inst) : pyEmptyMatch(); });
+  const conv = pid => { const x = latestInstance(doc, pid); return x ? pyToV4Match(x.inst, x.sig) : pyEmptyMatch(); };
+  PY_BULL_IDS.forEach(pid => { matches[pid] = conv(pid); });
+  PY_BEAR_IDS.forEach(pid => { bearMatches[pid] = conv(pid); });
   return { matches, bearMatches };
 }
 
-// 主导信号：活跃形态（突破/回踩）优先、取最新；无活跃形态则取最近结构但明确标注“未确认（观望）”。
-function pickDominant(matches, bearMatches) {
-  const collect = (obj, type) => Object.entries(obj).map(([id, m]) => ({ id, m, type })).filter(x => x.m.__py);
-  const all = collect(matches, 'bull').concat(collect(bearMatches, 'bear'));
-  const active = all.filter(x => x.m.__active).sort((a, b) => b.m.__lastKey - a.m.__lastKey);
-  if (active.length) return { ...active[0], confirmed: true };
-  const latest = all.slice().sort((a, b) => b.m.__lastKey - a.m.__lastKey);
-  if (latest.length) return { ...latest[0], confirmed: false };
-  return null;
+// 主导形态 / 是否确认：直接取 Python signals.dominant，前端不再按阶段名自行判定（R67-1）。
+function pickDominant(doc, matches, bearMatches) {
+  const ref = doc.signals.dominant.overall;
+  if (!ref) return null;
+  const m = ref.direction === 'bear' ? bearMatches[ref.pattern_id] : matches[ref.pattern_id];
+  pyAssert(m && m.__py, `dominant 指向的 ${ref.pattern_id} 不存在`);
+  return { id: ref.pattern_id, m, type: ref.direction, confirmed: ref.confirmed === true };
+}
+
+// 多 / 空两栏的“当前结构”（Python dominant.structure）
+function pickStructure(doc, side, matches, bearMatches) {
+  const ref = doc.signals.dominant.structure[side];
+  if (!ref) return null;
+  const m = side === 'bear' ? bearMatches[ref.pattern_id] : matches[ref.pattern_id];
+  return { id: ref.pattern_id, m, confirmed: ref.confirmed === true };
 }
 
 // ============ API 返回 Schema 校验（旧路径，仅 runSelfTest 引用保留兼容） ============
@@ -2716,6 +2819,15 @@ function calcLevels(data, ind) {
 }
 
 // ============ K线图绘制 ============
+// 线段裁剪到可见 K 线区间 [lo, hi]（按原斜率线性插值）；完全不可见返回 null
+function clipSegment(seg, lo, hi) {
+  const i1 = Math.max(seg.idx1, lo), i2 = Math.min(seg.idx2, hi);
+  if (i1 > i2) return null;
+  const at = i => seg.idx2 === seg.idx1 ? seg.price1
+    : seg.price1 + (seg.price2 - seg.price1) * (i - seg.idx1) / (seg.idx2 - seg.idx1);
+  return { seg, i1, i2, p1: at(i1), p2: at(i2) };
+}
+
 function drawKline(canvas, data, ind, startIdx, endIdx, showMA, markers) {
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -2738,6 +2850,13 @@ function drawKline(canvas, data, ind, startIdx, endIdx, showMA, markers) {
       if (l.price < minP) minP = l.price;
     });
   }
+  // 线段（颈线 / 平台线）只取可见区间内的两端价格
+  const visibleSegs = (markers && markers.segments ? markers.segments : [])
+    .map(seg => clipSegment(seg, startIdx, endIdx - 1)).filter(Boolean);
+  visibleSegs.forEach(v => {
+    maxP = Math.max(maxP, v.p1, v.p2);
+    minP = Math.min(minP, v.p1, v.p2);
+  });
   maxP *= 1.02; minP *= 0.98;
   const pRange = maxP - minP || 1;
   const maxV = Math.max(...slice.map(d => d.volume)) || 1;
@@ -2822,6 +2941,25 @@ function drawKline(canvas, data, ind, startIdx, endIdx, showMA, markers) {
         ctx.fillText(line.label + ' ' + line.price.toFixed(2), W - padR + 4, y + 4);
       });
     }
+    // 线段（R67-2）：Python 给出两端锚点 (idx1,price1)→(idx2,price2)，倾斜颈线按原斜率绘制
+    visibleSegs.forEach(v => {
+      const x1 = padL + (v.i1 - startIdx) * cw + cw / 2;
+      const x2 = padL + (v.i2 - startIdx) * cw + cw / 2;
+      const y1 = padT + (maxP - v.p1) / pRange * priceH;
+      const y2 = padT + (maxP - v.p2) / pRange * priceH;
+      ctx.strokeStyle = v.seg.color || '#f39c12';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = v.seg.color || '#f39c12';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(v.seg.label + ' ' + v.p2.toFixed(2), W - padR + 4, y2 + 4);
+    });
     // 关键点（左底、右底、左肩、头部、右肩等）
     if (markers.points) {
       markers.points.forEach(pt => {
@@ -3129,11 +3267,12 @@ function calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDi
 
 function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null, opts = {}) {
   const { name, code, data } = result;
-  const ind = calcIndicators(data);
 
   // 个股 8 形态 100% 来自 Python Canonical Core；离线（CSV）无 doc 时不做任何形态结论。
   const doc = pyPayload && pyPayload.doc ? pyPayload.doc : null;
   const offline = !doc;
+  // 正式指标：在线一律用 core.indicators.series（Python 计算）；离线 CSV 才用前端自算（且不做形态结论）。
+  const ind = offline ? calcIndicators(data) : coreIndicatorsFromDoc(doc);
   const built = offline ? null : buildMatchesFromDoc(doc);
   const matches = built ? built.matches : Object.fromEntries(PY_BULL_IDS.map(id => [id, pyEmptyMatch()]));
   const bearMatches = built ? built.bearMatches : Object.fromEntries(PY_BEAR_IDS.map(id => [id, pyEmptyMatch()]));
@@ -3150,17 +3289,18 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
   const pct = (change / prev.close * 100).toFixed(2);
   const cls = change >= 0 ? 'up' : 'down';
 
-  // 排序一律按“最新”（关键点 lastKey 由近到远），不再按分数高低，避免旧形态冒充当前信号。
-  const sorted = Object.entries(matches).sort((a, b) => b[1].__lastKey - a[1].__lastKey);
-  const bearSorted = Object.entries(bearMatches).sort((a, b) => b[1].__lastKey - a[1].__lastKey);
-  const bullLatestId = sorted[0][0], bearLatestId = bearSorted[0][0];
-  const bullLatest = matches[bullLatestId];
-  const bearLatest = bearMatches[bearLatestId];
-  const bullActive = !!(bullLatest && bullLatest.__active);
-  const bearActive = !!(bearLatest && bearLatest.__active);
+  // 多 / 空两栏的当前结构、是否确认、主导形态全部取 Python signals.dominant（R67-1），前端不排序、不判定。
+  const bullStruct = offline ? null : pickStructure(doc, 'bull', matches, bearMatches);
+  const bearStruct = offline ? null : pickStructure(doc, 'bear', matches, bearMatches);
+  const bullLatestId = bullStruct ? bullStruct.id : PY_BULL_IDS[0];
+  const bearLatestId = bearStruct ? bearStruct.id : PY_BEAR_IDS[0];
+  const bullLatest = bullStruct ? bullStruct.m : pyEmptyMatch();
+  const bearLatest = bearStruct ? bearStruct.m : pyEmptyMatch();
+  const bullConfirmed = !offline && doc.signals.dominant.bull !== null;
+  const bearConfirmed = !offline && doc.signals.dominant.bear !== null;
 
-  // 主导信号：活跃形态（突破/回踩）优先、取最新；无活跃形态时取最近结构，但明确标注“未确认（观望）”。
-  const dominant = offline ? null : pickDominant(matches, bearMatches);
+  // 主导形态：Python dominant.overall（已确认优先；无已确认时为最近结构，confirmed=false → “未确认（观望）”）。
+  const dominant = offline ? null : pickDominant(doc, matches, bearMatches);
   let best, bestDetail, bestScore, bestInterp, bestType, bestConfirmed = false;
   if (dominant) {
     bestType = dominant.type;
@@ -3172,10 +3312,16 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     bestType = 'bull'; best = PATTERNS[0]; bestDetail = pyEmptyMatch(); bestScore = 0;
   }
 
-  // 以下均为技术指标（基于 Python 返回的同一份 K线，JS 只做展示层计算），不参与形态结论。
+  // 以下为参考分析（基于 core 指标序列与同一份 K 线的展示层解读），不参与、也不改变形态 / 确认结论。
   const macdDiv = detectMACDDivergence(data, ind);
   const volDiv = detectVolumeDivergence(data, ind);
-  const neckConfirm = calcNecklineConfirm(data, bestDetail, bestType === 'bear');
+  // 颈线 / 平台确认：只展示 Python 信号层的判定与证据（R67-1），不再用 JS 自算“颈线确认度”。
+  const pyConfirm = (!offline && bestDetail.__py) ? {
+    confirmed: bestDetail.__confirmed === true,
+    reasons: bestDetail.__reasons || [],
+    evidence: bestDetail.__py.evidence || {},
+    category: bestDetail.__category,
+  } : null;
   const marketMissing = !marketEnv;
 
   // 当前阶段 / 预判 / 操作（Python 7 阶段口径）
@@ -3213,8 +3359,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     relativeStrength.detail = '大盘数据暂不可用，无法计算相对强度（个股20日涨跌可独立显示）';
   }
 
-  // 回测信号判定：只看回测日是否存在“已确认（活跃）”的多/空形态，不含环境适配/胜率加成
-  const btSignal = bullActive ? 'buy' : (bearActive ? 'sell' : 'none');
+  // 回测信号判定：只看回测日 Python 是否给出已确认的多 / 空主导形态，不含环境适配 / 胜率加成
+  const btSignal = bullConfirmed ? 'buy' : (bearConfirmed ? 'sell' : 'none');
 
   // ===== 点位解读（形成原因+判断理由） =====
   const interpretations = {
@@ -3294,7 +3440,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
         <span style="font-size:15px;font-weight:700;color:#f39c12;">📅 回测模式 · ${backtestInfo.date}</span>
         ${(() => {
-          // 仅以回测日 Python Core 是否存在“已确认（活跃）”形态判定，不使用环境适配/胜率加成
+          // 仅以回测日 Python Core 的已确认主导形态判定，不使用环境适配/胜率加成
           const isBuySignal = btSignal === 'buy';
           const isSellSignal = btSignal === 'sell';
           const actualUp = parseFloat(backtestInfo.returnPct) > 0;
@@ -3329,9 +3475,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       </div>
       <div style="margin-top:8px;font-size:11px;color:#8899aa;">灰色区域为回测日之后的实际走势，用于验证当时的形态判断是否准确</div>
       <div style="margin-top:8px;padding:8px 10px;background:rgba(0,0,0,0.2);border-radius:6px;border-left:3px solid ${fakeSignalRisk.color};">
-        <span style="font-size:12px;font-weight:600;color:${fakeSignalRisk.color};">当时假信号风险：${fakeSignalRisk.riskScore}分（${fakeSignalRisk.level}）</span>
+        <span style="font-size:12px;font-weight:600;color:${fakeSignalRisk.color};">当时假信号风险（参考）：${fakeSignalRisk.riskScore}分（${fakeSignalRisk.level}）</span>
         <span style="font-size:11px;color:#8899aa;margin-left:8px;">${fakeSignalRisk.risks.length > 0 ? fakeSignalRisk.risks.map(r => r.label).join('、') : '无明显风险'}</span>
-        ${fakeSignalRisk.riskScore >= 50 ? '<span style="font-size:11px;color:#e74c3c;margin-left:8px;">→ 系统当时已预警假信号！</span>' : ''}
+        ${fakeSignalRisk.riskScore >= 50 ? '<span style="font-size:11px;color:#e74c3c;margin-left:8px;">→ 参考指标当时提示假信号风险</span>' : ''}
       </div>
     </div>
     ` : ''}
@@ -3425,8 +3571,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
         ].map(s => {
           const m = s.latest, pname = (s.arr.find(x => x.id === s.id) || {}).name || s.id;
           const failed = m.__stage === 'failed_break';
-          const tag = m.__active ? ('已确认 · ' + m.stage) : (failed ? ('已失效 · ' + m.stage) : (m.stage || '未形成'));
-          const tagColor = m.__active ? s.color : (failed ? '#f39c12' : '#8899aa');
+          const tag = m.__confirmed ? ('已确认 · ' + m.stage) : (failed ? ('已失效 · ' + m.stage) : (m.stage || '未形成'));
+          const tagColor = m.__confirmed ? s.color : (failed ? '#f39c12' : '#8899aa');
           return `<div style="background:${s.bg};border:1px solid ${s.bd};border-radius:8px;padding:12px;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
               <span style="font-size:13px;font-weight:700;color:${s.color};">${s.icon}</span>
@@ -3435,16 +3581,16 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
             <div style="font-size:13px;color:#aabbcc;margin-bottom:4px;">最近形态：<b style="color:#f0f0f0;">${pname}</b>${m.__lastDate ? ` <span style="color:#556677;font-size:11px;">${m.__lastDate.slice(0,10)}</span>` : ''}</div>
             <div style="display:flex;align-items:baseline;gap:6px;margin:6px 0;">
               <span style="font-size:11px;color:#8899aa;">信号强度</span>
-              <span style="font-size:24px;font-weight:900;color:${m.__active ? s.color : (failed ? '#f39c12' : '#556677')};">${m.score}</span><span style="font-size:11px;color:#556677;">/100</span>
+              <span style="font-size:24px;font-weight:900;color:${m.__confirmed ? s.color : (failed ? '#f39c12' : '#556677')};">${m.score}</span><span style="font-size:11px;color:#556677;">/100</span>
             </div>
             <div style="font-size:11px;color:#aabbcc;line-height:1.5;">${m.outlook || '未检测到该形态'}</div>
           </div>`;
         }).join('')}
       </div>
       <div style="margin-top:10px;padding:10px;background:#0a0e14;border-radius:6px;font-size:12px;color:#aabbcc;line-height:1.6;">
-        ${bullActive ? '<b style="color:#e74c3c;">存在已确认的多头信号</b>，形态处于突破/回踩阶段，可结合下方操作策略与风控点位。'
-          : bearActive ? '<b style="color:#2ecc71;">存在已确认的空头（卖出）信号</b>，应控制风险、止盈止损。'
-          : '<b style="color:#f39c12;">当前无已确认的多/空信号（观望）</b>：最近形态仍在构建、突破前夜或已突破失败，不构成顺势买卖依据。'}
+        ${bullConfirmed ? '<b style="color:#e74c3c;">存在已确认的多头信号</b>（Python 判定：突破/回踩阶段 + 未回到颈线内侧 + 量能确认），可结合下方操作策略与风控点位。'
+          : bearConfirmed ? '<b style="color:#2ecc71;">存在已确认的空头（卖出）信号</b>（Python 判定），应控制风险、止盈止损。'
+          : '<b style="color:#f39c12;">当前无已确认的多/空信号（观望）</b>：最近形态仍在构建、突破前夜、突破失败或量能 / 位置未确认，不构成顺势买卖依据。'}
         <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1a2332;font-size:10px;color:#556677;">信号强度（0–100）为算法对该形态结构完整度的打分，<b>不是历史胜率</b>；本页面不展示任何未经回测校准的成功率，大盘环境仅参考、不计入个股结论。</div>
       </div>`}
     </div>
@@ -3468,7 +3614,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     <!-- 假信号风险评估 -->
     <div style="background:linear-gradient(135deg,#0f1419,#1a1a0f);border:2px solid ${fakeSignalRisk.color};border-radius:10px;padding:14px;margin-bottom:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:14px;font-weight:700;color:#f0f0f0;">🎯 假信号风险评估</span>
+        <span style="font-size:14px;font-weight:700;color:#f0f0f0;">🎯 假信号风险评估 <span style="font-size:11px;font-weight:400;color:#8899aa;">（参考 · 前端估算，含大盘参考数据；不参与、不改变 Python 形态与确认结论）</span></span>
         <div style="display:flex;gap:16px;align-items:center;">
           <div style="text-align:center;">
             <div style="font-size:11px;color:#8899aa;">风险指数</div>
@@ -3580,17 +3726,18 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
         ${volDiv.detail ? `<div style="font-size:11px;color:#8899aa;margin-top:8px;line-height:1.5;">${volDiv.detail}</div>` : ''}
       </div>
       <div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
-        <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">颈线确认度</div>
-        ${neckConfirm.score > 0 ? `
+        <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">确认判定（Python Core）</div>
+        ${pyConfirm ? `
           <div style="margin-bottom:6px;">
-            <span style="color:${neckConfirm.confirmed?'#e74c3c':'#f39c12'};font-size:12px;">${neckConfirm.confirmed?'已确认':'确认中'}</span>
-            <span style="float:right;color:${neckConfirm.confirmed?'#e74c3c':'#f39c12'};font-weight:700;">${neckConfirm.score}%</span>
+            <span style="color:${pyConfirm.confirmed?'#e74c3c':'#f39c12'};font-size:12px;font-weight:700;">${pyConfirm.confirmed?'已确认':'未确认'}</span>
           </div>
-          <div style="height:4px;background:#1a2332;border-radius:2px;"><div style="height:100%;width:${neckConfirm.score}%;background:${neckConfirm.confirmed?'#e74c3c':'#f39c12'};border-radius:2px;"></div></div>
-          <div style="font-size:11px;color:#8899aa;margin-top:8px;line-height:1.5;">
-            站稳${neckConfirm.daysAbove}天 | 放量${neckConfirm.volumeRatio.toFixed(1)}倍${neckConfirm.pullbackTest?' | 回抽确认':''}
+          <div style="font-size:11px;color:#8899aa;line-height:1.6;">
+            ${pyConfirm.confirmed ? '突破/回踩阶段、未回到颈线内侧、量能确认，条件全部满足。'
+              : pyConfirm.reasons.map(r => '· ' + r.text).join('<br>')}
           </div>
-        ` : '<div style="font-size:12px;color:#556677;">暂无颈线信号</div>'}
+          ${pyConfirm.evidence.days_back_inside != null || pyConfirm.evidence.volume_confirmed != null ? `
+          <div style="font-size:10px;color:#556677;margin-top:6px;">证据：${pyConfirm.evidence.volume_confirmed != null ? '量能确认=' + (pyConfirm.evidence.volume_confirmed ? '是' : '否') : ''}${pyConfirm.evidence.days_back_inside != null ? ' | 回到颈线内侧 ' + pyConfirm.evidence.days_back_inside + ' 日' : ''}${pyConfirm.evidence.breakout_date ? ' | 突破日 ' + pyConfirm.evidence.breakout_date : ''}</div>` : ''}
+        ` : '<div style="font-size:12px;color:#556677;">暂无形态信号</div>'}
       </div>
     </div>
 
@@ -3725,7 +3872,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
          ${PATTERNS.map(p => {
            const d = matches[p.id];
            const score = d.score;
-           const active = d.__active;
+           const active = d.__confirmed;
            const failed = d.__stage === 'failed_break';
            const color = active ? '#e74c3c' : failed ? '#f39c12' : (score >= 40 ? '#f39c12' : '#556677');
            return `<div class="match-item">
@@ -3740,7 +3887,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
          ${BEAR_PATTERNS.map(p => {
            const d = bearMatches[p.id];
            const score = d.score;
-           const active = d.__active;
+           const active = d.__confirmed;
            const failed = d.__stage === 'failed_break';
            const color = active ? '#2ecc71' : failed ? '#f39c12' : (score >= 40 ? '#f39c12' : '#556677');
            return `<div class="match-item">
@@ -3749,7 +3896,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
              <span class="pct" style="color:${color}" title="信号强度，非胜率">${score}</span>
            </div>`;
          }).join('')}
-        ${bearActive ? `<div style="margin-top:10px;padding:8px 12px;background:rgba(46,204,113,0.1);border:1px solid #2ecc71;border-radius:6px;font-size:13px;color:#2ecc71;line-height:1.5;">⚠ 存在已确认的见顶信号（${(BEAR_PATTERNS.find(p=>p.id===bearLatestId)||{}).name} · ${bearLatest.stage}），建议警惕下跌风险、及时止盈</div>` : ''}
+        ${bearConfirmed ? `<div style="margin-top:10px;padding:8px 12px;background:rgba(46,204,113,0.1);border:1px solid #2ecc71;border-radius:6px;font-size:13px;color:#2ecc71;line-height:1.5;">⚠ 存在已确认的见顶信号（${(BEAR_PATTERNS.find(p=>p.id===doc.signals.dominant.bear)||{}).name} · ${bearMatches[doc.signals.dominant.bear].stage}），建议警惕下跌风险、及时止盈</div>` : ''}
       </div>
       <div class="analysis-card">
         <h3>量价分析</h3>
@@ -3872,8 +4019,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
               ${PATTERNS.filter(p => p.id !== best.id || bestType==='bear').map(p => {
                 const d = matches[p.id];
                 return `<div style="padding:4px 0;border-bottom:1px solid #2a3441;">
-                  <span style="color:#f0f0f0">${p.name}<br><span style="font-size:10px;color:${d.__active?'#e74c3c':'#8899aa'}">${d.stage}</span></span>
-                  <span style="float:right;color:${d.__active?'#e74c3c':'#556677'}" title="信号强度，非胜率">${d.score}</span>
+                  <span style="color:#f0f0f0">${p.name}<br><span style="font-size:10px;color:${d.__confirmed?'#e74c3c':'#8899aa'}">${d.stage}</span></span>
+                  <span style="float:right;color:${d.__confirmed?'#e74c3c':'#556677'}" title="信号强度，非胜率">${d.score}</span>
                 </div>`;
               }).join('')}
             </div>
@@ -3884,8 +4031,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
               ${BEAR_PATTERNS.filter(p => p.id !== best.id || bestType==='bull').map(p => {
                 const d = bearMatches[p.id];
                 return `<div style="padding:4px 0;border-bottom:1px solid #2a3441;">
-                  <span style="color:#f0f0f0">${p.name}<br><span style="font-size:10px;color:${d.__active?'#2ecc71':'#8899aa'}">${d.stage}</span></span>
-                  <span style="float:right;color:${d.__active?'#2ecc71':'#556677'}" title="信号强度，非胜率">${d.score}</span>
+                  <span style="color:#f0f0f0">${p.name}<br><span style="font-size:10px;color:${d.__confirmed?'#2ecc71':'#8899aa'}">${d.stage}</span></span>
+                  <span style="float:right;color:${d.__confirmed?'#2ecc71':'#556677'}" title="信号强度，非胜率">${d.score}</span>
                 </div>`;
               }).join('')}
             </div>
@@ -3900,58 +4047,74 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
 
   // 绘制图表：只标注“当前主导形态”（Python Core，index 与 doc.bars 同源），未确认形态用灰色；MACD背离为技术补充。
   setTimeout(() => {
-    const mergedMarkers = { points: [], lines: [] };
-    if (!offline && bestDetail && bestDetail.markers) {
-      const baseColor = bestConfirmed ? (bestType === 'bear' ? '#2ecc71' : '#e74c3c') : '#8899aa';
-      bestDetail.markers.points.forEach(p => mergedMarkers.points.push({ ...p, color: p.color || baseColor }));
-      // 颈线/目标/止损水平线：颈线橙、目标蓝、止损橙红
-      bestDetail.markers.lines.forEach(l => mergedMarkers.lines.push({ ...l, color: l.color || '#f39c12' }));
-    }
-    // MACD背离点标注（技术指标，基于同一份 K 线）
-    if (macdDiv.topPoints && macdDiv.topPoints.length >= 2) {
-      macdDiv.topPoints.forEach((p, i) => mergedMarkers.points.push({ idx: p.idx, price: p.price, label: i===0?'背离高点1':'背离高点2', color: '#9b59b6' }));
-    }
-    if (macdDiv.bottomPoints && macdDiv.bottomPoints.length >= 2) {
-      macdDiv.bottomPoints.forEach((p, i) => mergedMarkers.points.push({ idx: p.idx, price: p.price, label: i===0?'背离低点1':'背离低点2', color: '#e67e22' }));
-    }
+    const mergedMarkers = buildChartMarkers(offline, bestDetail, bestConfirmed, bestType, macdDiv);
     drawKline(document.getElementById('chartFull'), data, ind, 0, n, true, mergedMarkers);
     drawKline(document.getElementById('chart60'), data, ind, Math.max(0, n-60), n, true, mergedMarkers);
   }, 50);
+}
+
+// 图表标注：主导形态的关键点 + Python 线段（颈线 / 平台线，可倾斜）+ 目标 / 止损水平线；MACD 背离点为技术补充。
+function buildChartMarkers(offline, bestDetail, bestConfirmed, bestType, macdDiv) {
+  const mergedMarkers = { points: [], lines: [], segments: [] };
+  if (!offline && bestDetail && bestDetail.markers) {
+    const baseColor = bestConfirmed ? (bestType === 'bear' ? '#2ecc71' : '#e74c3c') : '#8899aa';
+    bestDetail.markers.points.forEach(p => mergedMarkers.points.push({ ...p, color: p.color || baseColor }));
+    (bestDetail.markers.segments || []).forEach(sg => mergedMarkers.segments.push({ ...sg }));
+    // 目标 / 止损水平线：目标蓝、止损橙红
+    bestDetail.markers.lines.forEach(l => mergedMarkers.lines.push({ ...l, color: l.color || '#f39c12' }));
+  }
+  if (macdDiv && macdDiv.topPoints && macdDiv.topPoints.length >= 2) {
+    macdDiv.topPoints.forEach((p, i) => mergedMarkers.points.push({ idx: p.idx, price: p.price, label: i===0?'背离高点1':'背离高点2', color: '#9b59b6' }));
+  }
+  if (macdDiv && macdDiv.bottomPoints && macdDiv.bottomPoints.length >= 2) {
+    macdDiv.bottomPoints.forEach((p, i) => mergedMarkers.points.push({ idx: p.idx, price: p.price, label: i===0?'背离低点1':'背离低点2', color: '#e67e22' }));
+  }
+  return mergedMarkers;
 }
 
 // ============ 自选股池管理（localStorage持久化） ============
 const WATCHLIST_KEY = 'kline_watchlist_v1';
 let watchlistResults = {}; // code -> result 对象，缓存分析结果
 
-// 归一化：/api/analyze 返回完整 doc（含 summary.patterns_latest），/api/scan 返回 batch item（含 patterns）。
-// 统一成 {code,name,price,pct,bull_top,bear_top,engine}；top 只取已确认（active）形态，信号强度非胜率。
-function _pickTopFromLatest(latest, ids) {
-  let best = null;
-  for (const id of ids) {
-    const p = latest && latest[id];
-    if (p && PY_ACTIVE_STAGES.has(p.stage) && (best === null || (p.score || 0) > best.score)) {
-      best = { pid: id, name: p.pattern_name || p.name || id, stage: p.stage, score: p.score || 0 };
-    }
-  }
-  return best;
+// 归一化：/api/analyze 返回完整 doc（含 summary），/api/scan、/api/watchlist/analyze 返回 BFF batch item。
+// 统一成 {code,name,price,pct,bull_top,bear_top,engine}；bull_top / bear_top 只透传 Python 给出的已确认主导形态
+// （summary.dominant.bull / bear），前端不按阶段或分数另行择优（R67-1）。信号强度非胜率。
+function _topFromSummary(summary, side) {
+  const pid = summary.dominant[side];
+  if (pid === null) return null;
+  const p = summary.patterns_latest[pid];
+  pyAssert(p && p.confirmed === true && p.direction === side, `summary.dominant.${side} 不是已确认形态`);
+  return { pid, name: p.pattern_name || pid, stage: p.stage, score: p.score, confirmed: true };
+}
+function _checkTop(top, side) {
+  if (top === null || top === undefined) return null;
+  pyAssert(top.confirmed === true && typeof top.pid === 'string' && _isNum(top.score), `${side}_top 不是 Python 已确认形态`);
+  return { pid: top.pid, name: top.name || top.pid, stage: top.stage, score: top.score, confirmed: true };
 }
 function normalizeBatchItem(x) {
   if (!x) return null;
-  const isDoc = !!x.summary;
-  const latest = isDoc ? (x.summary.patterns_latest || {}) : (x.patterns || {});
-  const close = isDoc ? (x.summary.close ?? null) : (x.price ?? null);
-  const cp = isDoc ? (x.summary.change_pct ?? 0) : (x.pct_num ?? 0);
-  return {
-    code: String(x.code || ''),
-    name: x.name || String(x.code || ''),
-    price: close ?? 0,
-    pct: (typeof cp === 'number' ? cp.toFixed(2) : '0.00'),
-    bull_top: _pickTopFromLatest(latest, PY_BULL_IDS),
-    bear_top: _pickTopFromLatest(latest, PY_BEAR_IDS),
-    engine: 'real_core',
-    as_of: x.as_of || '',
-    unavailable: false,
-  };
+  try {
+    const isDoc = !!x.summary;
+    const ver = isDoc ? x.summary.signal_rule_version : x.signal_rule_version;
+    pyAssert(ver === PY_SIGNAL_RULE_VERSION, `信号规则版本 ${ver} 不受支持`);
+    if (isDoc) pyAssert(x.summary.dominant && x.summary.patterns_latest, 'summary 缺少 dominant / patterns_latest');
+    const close = isDoc ? (x.summary.close ?? null) : (x.price ?? null);
+    const cp = isDoc ? (x.summary.change_pct ?? 0) : (x.pct_num ?? 0);
+    return {
+      code: String(x.code || ''),
+      name: x.name || String(x.code || ''),
+      price: close ?? 0,
+      pct: (typeof cp === 'number' ? cp.toFixed(2) : '0.00'),
+      bull_top: isDoc ? _topFromSummary(x.summary, 'bull') : _checkTop(x.bull_top, 'bull'),
+      bear_top: isDoc ? _topFromSummary(x.summary, 'bear') : _checkTop(x.bear_top, 'bear'),
+      engine: 'real_core',
+      as_of: x.as_of || '',
+      unavailable: false,
+    };
+  } catch (e) {
+    console.error('[normalizeBatchItem] 数据合同不符，按不可用处理：', e.message);
+    return { ...unavailableWatchItem(String(x.code || '')), error: e.message };
+  }
 }
 function unavailableWatchItem(code) {
   return { code, name: code, price: 0, pct: '0.00', bull_top: null, bear_top: null, engine: 'unavailable', as_of: '', unavailable: true };
@@ -5304,12 +5467,14 @@ async function startMarketScan() {
     }
     const json = await resp.json();
     const items = json.items || [];
-    const failed = json.failed || [];
+    const failed = (json.failed || []).slice();
 
-    // 归一化后端 batch item（Python Core；已确认 bull_top/bear_top，信号强度非胜率）
+    // 归一化后端 batch item（Python Core；已确认 bull_top/bear_top，信号强度非胜率）。合同不符的计入失败，不展示。
     for (const it of items) {
       const item = normalizeBatchItem(it);
-      if (item) scanResults.push(item);
+      if (!item) continue;
+      if (item.unavailable) { failed.push({ code: item.code, reason: item.error || '数据合同不符' }); continue; }
+      scanResults.push(item);
     }
 
     renderScanResults();

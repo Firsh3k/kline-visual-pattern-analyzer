@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit, BadRequestException } from '@nestjs/c
 import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 
 interface PythonBinary {
   path: string;
@@ -13,11 +14,6 @@ interface CallOptions {
   adjustment?: 'qfq' | 'none';
 }
 
-/** 8 种形态的多空分组（与 core.analysis.PATTERN_ORDER 一致）。 */
-const BULL_IDS = ['w_bottom', 'hs_bottom', 'platform_break', 'ma_bull'];
-const BEAR_IDS = ['m_top', 'hs_top', 'platform_break_down', 'ma_bear'];
-/** 可交易/已确认方向的阶段；forming/pre_break/failed_break 不作为活跃信号。 */
-const ACTIVE_STAGES = new Set(['breakout_day', 'post_break', 'retest']);
 const CODE_RE = /^\d{6}$/;
 const MAX_SCAN_CODES = 200;
 
@@ -134,13 +130,14 @@ export class StockAnalysisService implements OnModuleInit {
 
       const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
       const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
-      if (opts.asOf) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.asOf)) {
-          reject(new Error(`asOf 必须为 YYYY-MM-DD：${opts.asOf}`));
-          return;
-        }
-        args.push('--as-of', opts.asOf);
+      let asOf: string | undefined;
+      try {
+        asOf = assertAsOf(opts.asOf);
+      } catch (err) {
+        reject(err);
+        return;
       }
+      if (asOf) args.push('--as-of', asOf);
       const py = spawn(this.pythonBinary.path, args, {
         cwd: process.cwd(),
         timeout: 30000,
@@ -208,7 +205,14 @@ export class StockAnalysisService implements OnModuleInit {
       }
       const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
       const args = [scriptPath, '--mode', 'market'];
-      if (asOf) args.push('--as-of', asOf);
+      let checked: string | undefined;
+      try {
+        checked = assertAsOf(asOf);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      if (checked) args.push('--as-of', checked);
       const py = spawn(this.pythonBinary.path, args, { cwd: process.cwd(), timeout: 30000 });
       let stdout = '';
       let stderr = '';
@@ -251,60 +255,9 @@ export class StockAnalysisService implements OnModuleInit {
     return { success: true, code, watchlist: [...this.watchlist] };
   }
 
-  /**
-   * 扫描列表项：字段全部来自 Python core 的 summary.patterns_latest（每种形态已是【最近一次】实例）。
-   * 不再有综合“推荐度/关注分”；bull_top / bear_top 为各方向最新形态里信号最强的一个，
-   * 且仅统计已确认/可交易阶段（active），failed_break / forming 不充当信号。
-   */
+  /** 扫描列表项：确认 / 主导全部透传 Python 信号层（见 stock-analysis.pure.ts，R67-1）。 */
   private buildBatchItem(doc: Record<string, any>): Record<string, unknown> {
-    const summary = doc.summary ?? {};
-    const latest = (summary.patterns_latest ?? {}) as Record<string, any>;
-
-    const patterns: Record<string, unknown> = {};
-    for (const [pid, p] of Object.entries(latest)) {
-      patterns[pid] = {
-        pid,
-        name: p.pattern_name,
-        direction: p.direction,
-        category: p.category,
-        stage: p.stage,
-        score: p.score,
-        confidence: p.confidence,
-        active: ACTIVE_STAGES.has(p.stage),
-        last_key_date: p.last_key_date,
-        bars_since: p.bars_since,
-      };
-    }
-
-    const topOf = (ids: string[]) => {
-      let best: any = null;
-      for (const id of ids) {
-        const p = patterns[id] as any;
-        if (p && p.active && (best === null || p.score > best.score)) {
-          best = { pid: id, name: p.name, stage: p.stage, score: p.score, last_key_date: p.last_key_date };
-        }
-      }
-      return best;
-    };
-
-    const pct = typeof summary.change_pct === 'number' ? summary.change_pct.toFixed(2) : '0.00';
-    return {
-      code: String(doc.code ?? summary.code ?? ''),
-      name: String(doc.name ?? summary.name ?? ''),
-      as_of: String(doc.as_of ?? summary.as_of ?? ''),
-      price: summary.close ?? null,
-      pct,
-      pct_num: summary.change_pct ?? 0,
-      patterns,
-      bull_top: topOf(BULL_IDS),
-      bear_top: topOf(BEAR_IDS),
-      engine: 'real_core',
-      adjustment: (doc.input as any)?.adjustment ?? 'qfq',
-      stale: (doc.calendar as any)?.stale ?? summary.stale ?? false,
-      session_state: doc.session_state ?? summary.session_state ?? null,
-      data_hash: summary.data_hash ?? null,
-      result_sha256: summary.result_sha256 ?? null,
-    };
+    return buildBatchItem(doc);
   }
 
   private async analyzeOne(code: string): Promise<Record<string, unknown>> {
@@ -375,12 +328,12 @@ export class StockAnalysisService implements OnModuleInit {
   }
 
   getSectors(): { items: Array<Record<string, unknown>>; run_mode: string; note: string } {
-    // 不再返回写死的假板块成分；动态板块（THS）在 V5 独立模块，BFF 不伪造。
-    return { items: [], run_mode: 'local', note: '板块成分请使用 V5 动态板块扫描，BFF 不提供静态写死成分' };
+    // 不返回写死的假板块成分；板块成分扫描在阶段 2 以后台任务方式提供，BFF 不伪造。
+    return { items: [], run_mode: 'local', note: '板块成分扫描暂未开放（阶段 2 后台任务），BFF 不提供写死成分' };
   }
 
   async scanSector(code: string): Promise<never> {
-    throw new BadRequestException('该端点已停用：板块扫描请使用 V5 动态板块模块，BFF 不提供写死成分股');
+    throw new BadRequestException('板块扫描暂未开放（阶段 2 后台任务），BFF 不提供写死成分股');
   }
 
   getSyncConfig(): Record<string, unknown> {

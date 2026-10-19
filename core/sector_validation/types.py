@@ -25,6 +25,7 @@ class MembershipStatus(Enum):
 class ReconciliationMethod(Enum):
     """对账方法"""
     THS_IFIND = "ths_ifind"         # 同花顺 iFinD 概念板块成分股接口
+    THS_WEB = "ths_web"             # 同花顺网页行情板块成分接口（自动获取）
     MANUAL = "manual"               # 人工维护（无自动对账源）
     NOT_RECONCILED = "not_reconciled"  # 未对账
 

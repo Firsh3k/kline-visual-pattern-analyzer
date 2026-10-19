@@ -150,3 +150,50 @@ def test_snapshot_future_as_of_date_fails_closed(tmp_path):
     )
     with pytest.raises(AuthoritativeSnapshotError):
         load_authoritative_snapshot(str(path))
+
+
+def test_snapshot_dated_beijing_today_accepted_while_utc_is_yesterday(tmp_path, monkeypatch):
+    """北京时间 0–8 点（UTC 仍是前一天）时，当天日期的快照不是“未来日期”。"""
+    from datetime import datetime, timezone
+    from core.sector_validation import pipeline
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 14, 17, 0, tzinfo=timezone.utc).astimezone(tz)   # 北京 10-15 01:00
+
+    monkeypatch.setattr(pipeline, "datetime", FixedDateTime)
+    path = tmp_path / "beijing_today.json"
+    snap = {"schema_version": "1.0", "source": "ths_web", "as_of_date": "2026-10-15",
+            "sectors": {"创新药": {"codes": ["600276"]}}}
+    path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+    assert load_authoritative_snapshot(str(path))["as_of_date"] == "2026-10-15"
+    snap["as_of_date"] = "2026-10-16"
+    path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(AuthoritativeSnapshotError):
+        load_authoritative_snapshot(str(path))
+
+
+def test_run_validation_as_of_makes_freshness_deterministic(tmp_path):
+    """CI gate determinism: freshness is evaluated at an explicit as_of date when given,
+    and at today's date (production default) when not."""
+    from datetime import date, datetime, timedelta, timezone
+
+    sectors = load_sectors_from_js(SECTOR_FILE)
+    snapshot = load_authoritative_snapshot(FIXTURE)
+    provenance_dir = str(tmp_path / "provenance")
+    reports, _ = reconcile_snapshot_to_reports(
+        snapshot, sectors, sector_filter="创新药", sector_codes={"创新药": "886015"},
+        provenance_dir=provenance_dir, evidence_dir=str(tmp_path / "evidence"),
+    )
+    as_of = snapshot.as_of_date if hasattr(snapshot, "as_of_date") else json.load(open(FIXTURE))["as_of_date"]
+    later = (date.fromisoformat(as_of) + timedelta(days=12)).isoformat()
+
+    def freshness(**kw):
+        return run_validation(sectors, sector_filter="创新药", authoritative_reports=reports,
+                              provenance_dir=provenance_dir, **kw)["freshness"]["创新药"]
+
+    assert freshness(as_of=as_of) == FreshnessLevel.FRESH.value
+    assert freshness(as_of=later) == FreshnessLevel.AGING.value
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert freshness() == check_freshness("创新药", current_date=today, provenance_dir=provenance_dir).value

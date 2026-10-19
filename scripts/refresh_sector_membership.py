@@ -72,8 +72,8 @@ def run_validation(
 ) -> Dict:
     """生成最终报告；已有权威 report 时禁止再降级重建为 UNVERIFIED。
 
-    as_of: 计算新鲜度所用的“当前日期”（YYYY-MM-DD），默认取今天（UTC）。
-           受控快照的 CI gate 传入快照日期，使结果不随运行日期漂移。
+    as_of: 显式评估日期（YYYY-MM-DD）。提供时 freshness/stale 确定性地按该日期计算（CI/回测用）；
+           不提供时生产默认使用当前 UTC 日期。
     """
     if sector_filter:
         if sector_filter not in sectors:
@@ -95,13 +95,15 @@ def run_validation(
         )
 
     summary = get_validation_summary(reports)
-    today = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # 评估日期：显式 as_of 时确定性地按该日期计算；否则生产默认 today（UTC）。
+    current_date = as_of if as_of else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    validated_at = f"{as_of}T00:00:00+00:00" if as_of else datetime.now(timezone.utc).isoformat()
     freshness_info = {
-        name: check_freshness(name, current_date=today, provenance_dir=provenance_dir).value
+        name: check_freshness(name, current_date=current_date, provenance_dir=provenance_dir).value
         for name in sectors
     }
     stale_sectors = get_stale_sectors(
-        current_date=today,
+        current_date=current_date,
         provenance_dir=provenance_dir,
     )
     return {
@@ -109,7 +111,8 @@ def run_validation(
         "summary": summary,
         "freshness": freshness_info,
         "stale_sectors": stale_sectors,
-        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "validated_at": validated_at,
+        "as_of": as_of,
     }
 
 

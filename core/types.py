@@ -161,6 +161,12 @@ class PatternResult:
     target_price: Optional[float] = None     # 目标价格（如有）
     stop_loss: Optional[float] = None        # 止损价格（如有）
     notes: str = ""                     # 备注
+    # FIR-32 D1：形态类别 —— "price_pattern"（价格形态：W底/M头/头肩/平台）
+    #            或 "trend_state"（趋势状态：均线多头/空头）。UI/API 据此分开标注。
+    category: str = "price_pattern"
+    # FIR-32 D3：机器可读的判定证据（键由各 detector 定义并在其 docstring 中列出），
+    #            供下游自动筛选使用，避免依赖 notes 自由文本。默认空。
+    evidence: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -176,7 +182,14 @@ class PatternResult:
             'target_price': self.target_price,
             'stop_loss': self.stop_loss,
             'notes': self.notes,
+            'category': self.category,
+            'evidence': dict(self.evidence),
         }
+
+
+# FIR-32 D1：PatternResult.category 的取值
+PATTERN_CATEGORY_PRICE = "price_pattern"
+PATTERN_CATEGORY_TREND = "trend_state"
 
 
 @dataclass

@@ -1,8 +1,11 @@
-import { Injectable, Logger, OnModuleInit, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
+
+dotenv.config();
 
 interface PythonBinary {
   path: string;
@@ -141,6 +144,10 @@ export class StockAnalysisService implements OnModuleInit {
       const py = spawn(this.pythonBinary.path, args, {
         cwd: process.cwd(),
         timeout: 30000,
+        env: {
+          ...process.env,
+          ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined,
+        },
       });
       // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
 
@@ -213,7 +220,14 @@ export class StockAnalysisService implements OnModuleInit {
         return;
       }
       if (checked) args.push('--as-of', checked);
-      const py = spawn(this.pythonBinary.path, args, { cwd: process.cwd(), timeout: 30000 });
+      const py = spawn(this.pythonBinary.path, args, {
+        cwd: process.cwd(),
+        timeout: 30000,
+        env: {
+          ...process.env,
+          ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined,
+        },
+      });
       let stdout = '';
       let stderr = '';
       py.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });

@@ -49,7 +49,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 
 1. `/api/health` → 200，`core_analyzer=real_core`
 2. `/api/analyze/603068` → 200，`engine.analyzer=real_core`
-3. 603068：底部最佳 = W底（w_bottom=85，hs_bottom=0）；顶部最佳 = 头肩顶（hs_top=100）
+3. 603068：页面 8 种形态与返回文档 `summary.patterns_latest`（每种形态最新实例）逐项一致；行情每天变化，不写死具体分数
 4. 不存在任何静默降级路径（后端 fail-closed + 前端红色错误面板）
 5. 页面正常加载（非"页面待开发"、非 404）
 

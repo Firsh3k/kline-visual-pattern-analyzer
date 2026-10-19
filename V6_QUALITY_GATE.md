@@ -28,8 +28,8 @@
 **引擎与个股主诊**
 - [ ] `/api/health` → 200，`core_analyzer=real_core`、`fail_closed`
 - [ ] `/api/analyze/603068` → 200，`engine.analyzer=real_core`
-- [ ] 603068 底部最佳 = W底（w_bottom=85，hs_bottom=0）
-- [ ] 603068 顶部最佳 = 头肩顶（hs_top=100），attention=42 偏空
+- [ ] 603068 页面显示的 8 种形态 = 返回文档 `summary.patterns_latest` 的最新实例（阶段/分数/日期逐项一致），无综合推荐度
+- [ ] `/api/analyze/603068?asOf=<一个月前的交易日>` → `as_of` 等于该日、`bars` 为 250 根
 - [ ] 页面正常加载（非"页面待开发"、非 404）
 
 **批量/旁路链路（同样必须走 Python Core，不得本地JS）**

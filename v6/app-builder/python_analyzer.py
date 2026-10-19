@@ -53,13 +53,20 @@ def _fail(message: str, **extra):
     sys.exit(1)
 
 
-def _fetch_series(symbol: str, adjustment: str):
+def _fetch_start(as_of: str | None) -> str:
+    """取数起点：从【分析截止日】往前推 FETCH_CALENDAR_DAYS，保证回测时截止日前也有满 250 根。
+    （若从今天往前推，回测日期越早，截止日前的 K 线越少，窗口会悄悄缩到 250 根以下。）"""
+    anchor = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.now(_import_cn_tz()).replace(tzinfo=None)
+    return (anchor - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
+
+
+def _fetch_series(symbol: str, adjustment: str, as_of: str | None = None):
     """用 core 的 TencentDataProvider 拉日线；qfq 严格只接受 qfqday，失败换等价子域后仍失败即报错。"""
     from core import AdjustmentType, FrequencyType
     import core.market_data.tencent_provider as tp
 
     adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
-    start = (datetime.now(_import_cn_tz()) - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
+    start = _fetch_start(as_of)
 
     template = tp._TENCENT_URL
     last_err = None
@@ -138,7 +145,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
     InvalidInputError = A.InvalidInputError
     symbol = A.exchange_symbol(code)
     try:
-        series = _fetch_series(symbol, adjustment)
+        series = _fetch_series(symbol, adjustment, as_of)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"行情获取失败（fail-closed，未降级）：{exc}") from exc
 
@@ -170,7 +177,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 
 def analyze_market(as_of: str | None = None) -> dict:
     from core import analysis as A
-    series = _fetch_series("sh000001", "none")
+    series = _fetch_series("sh000001", "none", as_of)
     last_close = float(series.bars[-1].close)
     if not (500 < last_close < 20000):
         raise RuntimeError(f"上证指数收盘价 {last_close} 量级不合理，疑似取到个股，拒绝使用")

@@ -26,6 +26,9 @@ export class StockAnalysisController {
       core_analyzer: coreStatus.analyzer,
       core_source: coreStatus.source,
       core_install_error: coreStatus.installError,
+      core_sha256: coreStatus.coreSha256,
+      analyzer_sha256: coreStatus.analyzerSha256,
+      engine_commit: coreStatus.engineCommit,
       watchlistCount: this.service.getWatchlist().count,
       timestamp: new Date().toISOString(),
     };

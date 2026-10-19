@@ -1,0 +1,1273 @@
+{
+ "market": {
+  "sh000001_latest": {
+   "aboveMa20": false,
+   "aboveMa60": false,
+   "advice": "大盘弱势，个股普跌，建议空仓或轻仓，不要抄底",
+   "as_of": "2026-10-13",
+   "bar_count": 250,
+   "breakdown": [
+    {
+     "label": "基准分",
+     "value": "50"
+    },
+    {
+     "label": "均线空头",
+     "value": "-25"
+    },
+    {
+     "label": "价格<MA20",
+     "value": "-8"
+    },
+    {
+     "label": "价格<MA60",
+     "value": "-8"
+    },
+    {
+     "label": "MA20向下",
+     "value": "-5"
+    },
+    {
+     "label": "MA60向下",
+     "value": "-4"
+    }
+   ],
+   "change120": "-5.61",
+   "change20": "-3.35",
+   "change250": "-1.37",
+   "change5": "-0.77",
+   "change60": "-2.89",
+   "dataLength": 250,
+   "data_hash": "6772787548983878193b0137e5269d1e574e1079b981dceb8c826dc767b99fd5",
+   "impact": -15,
+   "lastDate": "2026-10-13",
+   "ma20": "3879.51",
+   "ma60": "3892.48",
+   "maBear": true,
+   "maBull": false,
+   "monthlyChange3": "-2.89",
+   "monthlyTrend": "月线空头",
+   "price": "3800.86",
+   "resonance": "周月线空头共振",
+   "resonanceLevel": -2,
+   "score": 0,
+   "stage": "弱势下降",
+   "trend": "bear",
+   "volatility": "6.0",
+   "weeklyChange4": "-2.84",
+   "weeklyTrend": "周线空头"
+  }
+ },
+ "now": "2026-10-19T12:40:00+08:00",
+ "python": "3.10",
+ "schema_version": "3.1",
+ "stocks": {
+  "002436_asof_20260930": {
+   "as_of": "2026-09-30",
+   "bar_count": 247,
+   "calendar_status": "verified",
+   "data_hash": "9c5e325e5d393710961e127c44b33c9092254f084089a3be1e2d5b9202ad4680",
+   "request_as_of": "2026-09-30",
+   "result_sha256": "8df6ed68ad10215a96565c58a8e5c12e96bb06cf6183e70fb3db15846e90a0ff",
+   "session_state": "close_confirmed",
+   "signals": {
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "w_bottom"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "latest": {
+     "hs_bottom": null,
+     "hs_top": null,
+     "m_top": {
+      "active": false,
+      "bars_since": 22,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 216,
+      "instance_index": 0,
+      "last_key_date": "2026-08-28",
+      "last_key_index": 224,
+      "lines": [
+       {
+        "idx1": 221,
+        "idx2": 246,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 31.81,
+        "price2": 31.81
+       }
+      ],
+      "order": 1,
+      "pattern_id": "m_top",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未跌破 / 回抽"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     },
+     "ma_bear": null,
+     "ma_bull": null,
+     "platform_break": null,
+     "platform_break_down": null,
+     "w_bottom": {
+      "active": true,
+      "bars_since": 18,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 221,
+      "instance_index": 2,
+      "last_key_date": "2026-09-03",
+      "last_key_index": 228,
+      "lines": [
+       {
+        "idx1": 224,
+        "idx2": 246,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 37.8,
+        "price2": 37.8
+       }
+      ],
+      "order": 0,
+      "pattern_id": "w_bottom",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 85,
+      "stage": "post_break"
+     }
+    },
+    "rule_version": "signals-1",
+    "signals_sha256": "1450d4948bcf698d16dfc2fef4ecf275b5edfc09be6488065bff992f82269fd7"
+   },
+   "summary": {
+    "adjustment": "qfq",
+    "as_of": "2026-09-30",
+    "change": -1.26,
+    "change_pct": -2.99,
+    "close": 40.94,
+    "code": "002436",
+    "data_hash": "9c5e325e5d393710961e127c44b33c9092254f084089a3be1e2d5b9202ad4680",
+    "data_source": "frozen_fixture",
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "w_bottom"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "name": "002436",
+    "patterns_latest": {
+     "m_top": {
+      "active": false,
+      "bars_since": 22,
+      "category": "price_pattern",
+      "confidence": "A",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-08-28",
+      "pattern_name": "M头",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未跌破 / 回抽"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     },
+     "w_bottom": {
+      "active": true,
+      "bars_since": 18,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-09-03",
+      "pattern_name": "W底",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 85,
+      "stage": "post_break"
+     }
+    },
+    "result_sha256": "8df6ed68ad10215a96565c58a8e5c12e96bb06cf6183e70fb3db15846e90a0ff",
+    "session_state": "close_confirmed",
+    "signal_rule_version": "signals-1",
+    "stale": true
+   }
+  },
+  "002436_latest": {
+   "as_of": "2026-10-13",
+   "bar_count": 250,
+   "calendar_status": "verified",
+   "data_hash": "88285bc885f77550b287389e13cb98d12b6c38181d443b0647fdeb1415ff7036",
+   "request_as_of": null,
+   "result_sha256": "b5c6023b6fa06b29545287bfc94414ff3146dc4f75ebb8595b504534b6a1f885",
+   "session_state": "close_confirmed",
+   "signals": {
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "w_bottom"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "latest": {
+     "hs_bottom": null,
+     "hs_top": null,
+     "m_top": {
+      "active": false,
+      "bars_since": 26,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 215,
+      "instance_index": 0,
+      "last_key_date": "2026-08-28",
+      "last_key_index": 223,
+      "lines": [
+       {
+        "idx1": 220,
+        "idx2": 249,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 31.81,
+        "price2": 31.81
+       }
+      ],
+      "order": 1,
+      "pattern_id": "m_top",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未跌破 / 回抽"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     },
+     "ma_bear": {
+      "active": false,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 249,
+      "instance_index": 0,
+      "last_key_date": "2026-10-13",
+      "last_key_index": 249,
+      "lines": [],
+      "order": 5,
+      "pattern_id": "ma_bear",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 80,
+      "stage": "pre_break"
+     },
+     "ma_bull": null,
+     "platform_break": null,
+     "platform_break_down": null,
+     "w_bottom": {
+      "active": true,
+      "bars_since": 22,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 220,
+      "instance_index": 2,
+      "last_key_date": "2026-09-03",
+      "last_key_index": 227,
+      "lines": [
+       {
+        "idx1": 223,
+        "idx2": 249,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 37.8,
+        "price2": 37.8
+       }
+      ],
+      "order": 0,
+      "pattern_id": "w_bottom",
+      "reasons": [
+       {
+        "code": "back_inside_neckline",
+        "text": "突破后已连续 2 日收盘回到颈线内侧"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "post_break"
+     }
+    },
+    "rule_version": "signals-1",
+    "signals_sha256": "7a7c333a4c601d6db3868bd994e889fef254b6b3e5ee73163b262f284e01a15e"
+   },
+   "summary": {
+    "adjustment": "qfq",
+    "as_of": "2026-10-13",
+    "change": 0.82,
+    "change_pct": 2.32,
+    "close": 36.19,
+    "code": "002436",
+    "data_hash": "88285bc885f77550b287389e13cb98d12b6c38181d443b0647fdeb1415ff7036",
+    "data_source": "frozen_fixture",
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "w_bottom"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "name": "002436",
+    "patterns_latest": {
+     "m_top": {
+      "active": false,
+      "bars_since": 26,
+      "category": "price_pattern",
+      "confidence": "A",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-08-28",
+      "pattern_name": "M头",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未跌破 / 回抽"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     },
+     "ma_bear": {
+      "active": false,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-10-13",
+      "pattern_name": "均线空头",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 80,
+      "stage": "pre_break"
+     },
+     "w_bottom": {
+      "active": true,
+      "bars_since": 22,
+      "category": "price_pattern",
+      "confidence": "A",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-09-03",
+      "pattern_name": "W底",
+      "reasons": [
+       {
+        "code": "back_inside_neckline",
+        "text": "突破后已连续 2 日收盘回到颈线内侧"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "post_break"
+     }
+    },
+    "result_sha256": "b5c6023b6fa06b29545287bfc94414ff3146dc4f75ebb8595b504534b6a1f885",
+    "session_state": "close_confirmed",
+    "signal_rule_version": "signals-1",
+    "stale": true
+   }
+  },
+  "002594_latest": {
+   "as_of": "2026-09-29",
+   "bar_count": 100,
+   "calendar_status": "verified",
+   "data_hash": "4fad83bea02532788265853e97cbfd500cca67adb0428f6c92c8468a31619142",
+   "request_as_of": null,
+   "result_sha256": "71f4186f180355c857013114f40e5ab8a2354dcc6b2c2e082579ab6aec522414",
+   "session_state": "close_confirmed",
+   "signals": {
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "platform_break"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "platform_break_down"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "platform_break"
+      }
+     }
+    },
+    "latest": {
+     "hs_bottom": {
+      "active": false,
+      "bars_since": 47,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 9,
+      "instance_index": 0,
+      "last_key_date": "2026-07-23",
+      "last_key_index": 52,
+      "lines": [
+       {
+        "idx1": 14,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 99.14,
+        "price2": 92.765
+       }
+      ],
+      "order": 2,
+      "pattern_id": "hs_bottom",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 70,
+      "stage": "forming"
+     },
+     "hs_top": null,
+     "m_top": {
+      "active": true,
+      "bars_since": 23,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 59,
+      "instance_index": 2,
+      "last_key_date": "2026-08-26",
+      "last_key_index": 76,
+      "lines": [
+       {
+        "idx1": 71,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 88.44,
+        "price2": 88.44
+       }
+      ],
+      "order": 1,
+      "pattern_id": "m_top",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 85,
+      "stage": "retest"
+     },
+     "ma_bear": {
+      "active": true,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 99,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [],
+      "order": 5,
+      "pattern_id": "ma_bear",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "ma_bull": null,
+     "platform_break": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 60,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [
+       {
+        "idx1": 60,
+        "idx2": 99,
+        "kind": "platform_edge",
+        "label": "平台上沿",
+        "price1": 94.49,
+        "price2": 94.49
+       }
+      ],
+      "order": 6,
+      "pattern_id": "platform_break",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未越过平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "forming"
+     },
+     "platform_break_down": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 60,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [
+       {
+        "idx1": 60,
+        "idx2": 99,
+        "kind": "platform_edge",
+        "label": "平台下沿",
+        "price1": 82.66,
+        "price2": 82.66
+       }
+      ],
+      "order": 7,
+      "pattern_id": "platform_break_down",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 pre_break，尚未跌破 / 回抽"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未跌破平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "pre_break"
+     },
+     "w_bottom": {
+      "active": false,
+      "bars_since": 36,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 52,
+      "instance_index": 0,
+      "last_key_date": "2026-08-07",
+      "last_key_index": 63,
+      "lines": [
+       {
+        "idx1": 59,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 96.59,
+        "price2": 96.59
+       }
+      ],
+      "order": 0,
+      "pattern_id": "w_bottom",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     }
+    },
+    "rule_version": "signals-1",
+    "signals_sha256": "22bd8eb271180323f27d31e75fb390337527223e96d9cc95e1ac75fdf3792118"
+   },
+   "summary": {
+    "adjustment": "qfq",
+    "as_of": "2026-09-29",
+    "change": -1.33,
+    "change_pct": -1.6,
+    "close": 82.02,
+    "code": "002594",
+    "data_hash": "4fad83bea02532788265853e97cbfd500cca67adb0428f6c92c8468a31619142",
+    "data_source": "frozen_fixture",
+    "dominant": {
+     "bear": null,
+     "bull": null,
+     "overall": {
+      "confirmed": false,
+      "direction": "bull",
+      "pattern_id": "platform_break"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": false,
+       "direction": "bear",
+       "pattern_id": "platform_break_down"
+      },
+      "bull": {
+       "confirmed": false,
+       "direction": "bull",
+       "pattern_id": "platform_break"
+      }
+     }
+    },
+    "name": "002594",
+    "patterns_latest": {
+     "hs_bottom": {
+      "active": false,
+      "bars_since": 47,
+      "category": "price_pattern",
+      "confidence": "A",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-07-23",
+      "pattern_name": "头肩底",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 70,
+      "stage": "forming"
+     },
+     "m_top": {
+      "active": true,
+      "bars_since": 23,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-08-26",
+      "pattern_name": "M头",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 85,
+      "stage": "retest"
+     },
+     "ma_bear": {
+      "active": true,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "均线空头",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "platform_break": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confidence": "B",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "平台突破",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未越过平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "forming"
+     },
+     "platform_break_down": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confidence": "B",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "平台破位",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 pre_break，尚未跌破 / 回抽"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未跌破平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "pre_break"
+     },
+     "w_bottom": {
+      "active": false,
+      "bars_since": 36,
+      "category": "price_pattern",
+      "confidence": "A",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-08-07",
+      "pattern_name": "W底",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "no_breakout",
+        "text": "尚未发生收盘越过颈线判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（5 日均量未超过 20 日均量 ×1.1）"
+       }
+      ],
+      "score": 65,
+      "stage": "forming"
+     }
+    },
+    "result_sha256": "71f4186f180355c857013114f40e5ab8a2354dcc6b2c2e082579ab6aec522414",
+    "session_state": "close_confirmed",
+    "signal_rule_version": "signals-1",
+    "stale": true
+   }
+  },
+  "600519_latest": {
+   "as_of": "2026-09-29",
+   "bar_count": 100,
+   "calendar_status": "verified",
+   "data_hash": "a204007e5c2610ac7fc912d1879d481921b7e8720d08f9fc8fb3c28114c45361",
+   "request_as_of": null,
+   "result_sha256": "dd830ecdf7ae52a9caeaf4fbb4d353549c1aae6a171f1011a0d7e074a568a9dd",
+   "session_state": "close_confirmed",
+   "signals": {
+    "dominant": {
+     "bear": "m_top",
+     "bull": "w_bottom",
+     "overall": {
+      "confirmed": true,
+      "direction": "bear",
+      "pattern_id": "m_top"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": true,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": true,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "latest": {
+     "hs_bottom": {
+      "active": true,
+      "bars_since": 56,
+      "category": "price_pattern",
+      "confirmed": true,
+      "direction": "bull",
+      "first_key_index": 12,
+      "instance_index": 0,
+      "last_key_date": "2026-07-10",
+      "last_key_index": 43,
+      "lines": [
+       {
+        "idx1": 14,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 1300.98,
+        "price2": 985.1496
+       }
+      ],
+      "order": 2,
+      "pattern_id": "hs_bottom",
+      "reasons": [],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "hs_top": null,
+     "m_top": {
+      "active": true,
+      "bars_since": 24,
+      "category": "price_pattern",
+      "confirmed": true,
+      "direction": "bear",
+      "first_key_index": 59,
+      "instance_index": 1,
+      "last_key_date": "2026-08-25",
+      "last_key_index": 75,
+      "lines": [
+       {
+        "idx1": 74,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 1270.33,
+        "price2": 1270.33
+       }
+      ],
+      "order": 1,
+      "pattern_id": "m_top",
+      "reasons": [],
+      "score": 100,
+      "stage": "retest"
+     },
+     "ma_bear": {
+      "active": true,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 99,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [],
+      "order": 5,
+      "pattern_id": "ma_bear",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "ma_bull": null,
+     "platform_break": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bull",
+      "first_key_index": 64,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [
+       {
+        "idx1": 60,
+        "idx2": 99,
+        "kind": "platform_edge",
+        "label": "平台上沿",
+        "price1": 1359.97,
+        "price2": 1359.97
+       }
+      ],
+      "order": 6,
+      "pattern_id": "platform_break",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未越过平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "forming"
+     },
+     "platform_break_down": {
+      "active": true,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confirmed": false,
+      "direction": "bear",
+      "first_key_index": 64,
+      "instance_index": 0,
+      "last_key_date": "2026-09-29",
+      "last_key_index": 99,
+      "lines": [
+       {
+        "idx1": 60,
+        "idx2": 99,
+        "kind": "platform_edge",
+        "label": "平台下沿",
+        "price1": 1250.8,
+        "price2": 1250.8
+       }
+      ],
+      "order": 7,
+      "pattern_id": "platform_break_down",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 85,
+      "stage": "breakout_day"
+     },
+     "w_bottom": {
+      "active": true,
+      "bars_since": 56,
+      "category": "price_pattern",
+      "confirmed": true,
+      "direction": "bull",
+      "first_key_index": 34,
+      "instance_index": 0,
+      "last_key_date": "2026-07-10",
+      "last_key_index": 43,
+      "lines": [
+       {
+        "idx1": 37,
+        "idx2": 99,
+        "kind": "neckline",
+        "label": "颈线",
+        "price1": 1215.52,
+        "price2": 1215.52
+       }
+      ],
+      "order": 0,
+      "pattern_id": "w_bottom",
+      "reasons": [],
+      "score": 100,
+      "stage": "retest"
+     }
+    },
+    "rule_version": "signals-1",
+    "signals_sha256": "0bfd0082682185b65f65dad18e517533fe4aa545ab6b18282d9305951db0396b"
+   },
+   "summary": {
+    "adjustment": "qfq",
+    "as_of": "2026-09-29",
+    "change": -8.3,
+    "change_pct": -0.67,
+    "close": 1235.58,
+    "code": "600519",
+    "data_hash": "a204007e5c2610ac7fc912d1879d481921b7e8720d08f9fc8fb3c28114c45361",
+    "data_source": "frozen_fixture",
+    "dominant": {
+     "bear": "m_top",
+     "bull": "w_bottom",
+     "overall": {
+      "confirmed": true,
+      "direction": "bear",
+      "pattern_id": "m_top"
+     },
+     "structure": {
+      "bear": {
+       "confirmed": true,
+       "direction": "bear",
+       "pattern_id": "m_top"
+      },
+      "bull": {
+       "confirmed": true,
+       "direction": "bull",
+       "pattern_id": "w_bottom"
+      }
+     }
+    },
+    "name": "600519",
+    "patterns_latest": {
+     "hs_bottom": {
+      "active": true,
+      "bars_since": 56,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": true,
+      "direction": "bull",
+      "last_key_date": "2026-07-10",
+      "pattern_name": "头肩底",
+      "reasons": [],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "m_top": {
+      "active": true,
+      "bars_since": 24,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": true,
+      "direction": "bear",
+      "last_key_date": "2026-08-25",
+      "pattern_name": "M头",
+      "reasons": [],
+      "score": 100,
+      "stage": "retest"
+     },
+     "ma_bear": {
+      "active": true,
+      "bars_since": 0,
+      "category": "trend_state",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "均线空头",
+      "reasons": [
+       {
+        "code": "trend_state_only",
+        "text": "均线排列只描述趋势状态，不构成买卖确认"
+       }
+      ],
+      "score": 100,
+      "stage": "post_break"
+     },
+     "platform_break": {
+      "active": false,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confidence": "B",
+      "confirmed": false,
+      "direction": "bull",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "平台突破",
+      "reasons": [
+       {
+        "code": "stage_not_active",
+        "text": "阶段为 forming，尚未突破 / 回踩"
+       },
+       {
+        "code": "not_beyond_line",
+        "text": "当日收盘未越过平台判定线"
+       },
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 60,
+      "stage": "forming"
+     },
+     "platform_break_down": {
+      "active": true,
+      "bars_since": 0,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": false,
+      "direction": "bear",
+      "last_key_date": "2026-09-29",
+      "pattern_name": "平台破位",
+      "reasons": [
+       {
+        "code": "volume_not_confirmed",
+        "text": "量能未确认（当日量未超过 5 日均量 ×1.3）"
+       }
+      ],
+      "score": 85,
+      "stage": "breakout_day"
+     },
+     "w_bottom": {
+      "active": true,
+      "bars_since": 56,
+      "category": "price_pattern",
+      "confidence": "S",
+      "confirmed": true,
+      "direction": "bull",
+      "last_key_date": "2026-07-10",
+      "pattern_name": "W底",
+      "reasons": [],
+      "score": 100,
+      "stage": "retest"
+     }
+    },
+    "result_sha256": "dd830ecdf7ae52a9caeaf4fbb4d353549c1aae6a171f1011a0d7e074a568a9dd",
+    "session_state": "close_confirmed",
+    "signal_rule_version": "signals-1",
+    "stale": true
+   }
+  }
+ }
+}

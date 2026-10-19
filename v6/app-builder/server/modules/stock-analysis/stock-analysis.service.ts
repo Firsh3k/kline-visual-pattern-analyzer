@@ -27,6 +27,8 @@ export class StockAnalysisService implements OnModuleInit {
   private coreInstalled = false;
   private coreAnalyzer = 'unavailable';
   private coreSource = 'none';
+  private coreSha256: string | null = null;
+  private analyzerSha256: string | null = null;
   private coreInstallError: string | null = null;
   private watchlist: string[] = [];
 
@@ -75,10 +77,13 @@ export class StockAnalysisService implements OnModuleInit {
         );
         const data = JSON.parse(output.trim()) as {
           core_installed?: boolean; analyzer?: string; core_version?: string;
+          core_sha256?: string | null; analyzer_sha256?: string | null;
         };
         this.coreInstalled = data.core_installed ?? true;
         this.coreAnalyzer = data.analyzer || 'unknown';
         this.coreSource = data.core_version || 'github_api';
+        this.coreSha256 = data.core_sha256 ?? null;
+        this.analyzerSha256 = data.analyzer_sha256 ?? null;
       } catch (err) {
         this.coreInstalled = true;
         this.coreAnalyzer = 'error';
@@ -102,12 +107,19 @@ export class StockAnalysisService implements OnModuleInit {
     };
   }
 
-  getCoreStatus(): { installed: boolean; analyzer: string; source: string; installError: string | null } {
+  getCoreStatus(): {
+    installed: boolean; analyzer: string; source: string; installError: string | null;
+    coreSha256: string | null; analyzerSha256: string | null; engineCommit: string | null;
+  } {
     return {
       installed: this.coreInstalled,
       analyzer: this.coreAnalyzer,
       source: this.coreSource,
       installError: this.coreInstallError,
+      // 线上版本自证：与 `python3 scripts/v6_fingerprint.py --ref <tag>` 的输出逐项比对
+      coreSha256: this.coreSha256,
+      analyzerSha256: this.analyzerSha256,
+      engineCommit: process.env.ENGINE_COMMIT ?? null,
     };
   }
 

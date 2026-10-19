@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
+import { ScanJobManager, ScanFilter } from './scan-jobs';
 
 dotenv.config();
 
@@ -29,6 +30,10 @@ export class StockAnalysisService implements OnModuleInit {
   private coreSource = 'none';
   private coreInstallError: string | null = null;
   private watchlist: string[] = [];
+  /** FIR-41：扫描后台任务（全局最多 3 个 Python 分析同时运行，单只超时，单次 ≤200 只） */
+  private readonly scanJobs = new ScanJobManager((code) => this.analyzeOne(code), {
+    maxParallel: Number(process.env.SCAN_MAX_PARALLEL ?? 3) || 3,
+  });
 
   onModuleInit(): void {
     this.pythonBinary = this.detectPythonBinary();
@@ -272,6 +277,21 @@ export class StockAnalysisService implements OnModuleInit {
   /** 扫描列表项：确认 / 主导全部透传 Python 信号层（见 stock-analysis.pure.ts，R67-1）。 */
   private buildBatchItem(doc: Record<string, any>): Record<string, unknown> {
     return buildBatchItem(doc);
+  }
+
+  createScanJob(codes: unknown, filter: ScanFilter): { job_id: string; total: number } {
+    if (!this.pythonBinary) {
+      throw new Error('无可用的Python分析后端');
+    }
+    return this.scanJobs.create(codes, filter);
+  }
+
+  getScanJob(id: string): Record<string, unknown> | null {
+    return this.scanJobs.get(id);
+  }
+
+  cancelScanJob(id: string): boolean {
+    return this.scanJobs.cancel(id);
   }
 
   private async analyzeOne(code: string): Promise<Record<string, unknown>> {

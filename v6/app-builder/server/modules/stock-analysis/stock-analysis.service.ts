@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, BadRequestException } from '@nestjs/common';
 import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -7,6 +7,19 @@ interface PythonBinary {
   path: string;
   version: string;
 }
+
+interface CallOptions {
+  asOf?: string;
+  adjustment?: 'qfq' | 'none';
+}
+
+/** 8 种形态的多空分组（与 core.analysis.PATTERN_ORDER 一致）。 */
+const BULL_IDS = ['w_bottom', 'hs_bottom', 'platform_break', 'ma_bull'];
+const BEAR_IDS = ['m_top', 'hs_top', 'platform_break_down', 'ma_bear'];
+/** 可交易/已确认方向的阶段；forming/pre_break/failed_break 不作为活跃信号。 */
+const ACTIVE_STAGES = new Set(['breakout_day', 'post_break', 'retest']);
+const CODE_RE = /^\d{6}$/;
+const MAX_SCAN_CODES = 200;
 
 @Injectable()
 export class StockAnalysisService implements OnModuleInit {
@@ -61,10 +74,12 @@ export class StockAnalysisService implements OnModuleInit {
           `${this.pythonBinary.path} ${scriptPath} --mode health`,
           { encoding: 'utf8', timeout: 5000, cwd: process.cwd() }
         );
-        const data = JSON.parse(output.trim()) as { core_installed?: boolean; analyzer?: string };
+        const data = JSON.parse(output.trim()) as {
+          core_installed?: boolean; analyzer?: string; core_version?: string;
+        };
         this.coreInstalled = data.core_installed ?? true;
         this.coreAnalyzer = data.analyzer || 'unknown';
-        this.coreSource = 'github_api';
+        this.coreSource = data.core_version || 'github_api';
       } catch (err) {
         this.coreInstalled = true;
         this.coreAnalyzer = 'error';
@@ -102,7 +117,15 @@ export class StockAnalysisService implements OnModuleInit {
     return 'unavailable';
   }
 
-  callPythonLocal(code: string, days = 250): Promise<Record<string, unknown>> {
+  private validateCode(code: string): void {
+    if (!CODE_RE.test(code)) {
+      throw new BadRequestException(`股票代码必须为 6 位数字：${JSON.stringify(code)}`);
+    }
+  }
+
+  /** 调用 Python Canonical Core 执行器。严格 6 位代码、spawn 参数数组（无 shell 注入）、fail-closed。 */
+  callPythonLocal(code: string, opts: CallOptions = {}): Promise<Record<string, unknown>> {
+    this.validateCode(code);
     return new Promise((resolve, reject) => {
       if (!this.pythonBinary) {
         reject(new Error('本地Python环境不可用'));
@@ -110,11 +133,19 @@ export class StockAnalysisService implements OnModuleInit {
       }
 
       const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-      const py = spawn(this.pythonBinary.path, [scriptPath, code, '--days', String(days)], {
+      const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
+      if (opts.asOf) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.asOf)) {
+          reject(new Error(`asOf 必须为 YYYY-MM-DD：${opts.asOf}`));
+          return;
+        }
+        args.push('--as-of', opts.asOf);
+      }
+      const py = spawn(this.pythonBinary.path, args, {
         cwd: process.cwd(),
         timeout: 30000,
       });
-      // 注意：生产路径不传 --allow-skeleton，Python 侧 fail-closed
+      // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
 
       let stdout = '';
       let stderr = '';
@@ -151,51 +182,51 @@ export class StockAnalysisService implements OnModuleInit {
     });
   }
 
-  normalizePatterns(patternsRaw: unknown): Array<{ name: string; direction: string; score: number; detected: boolean }> {
-    if (!patternsRaw || typeof patternsRaw !== 'object') return [];
-    const obj = patternsRaw as Record<string, unknown>;
-    const result: Array<{ name: string; direction: string; score: number; detected: boolean }> = [];
-    for (const key of Object.keys(obj)) {
-      const v = obj[key] as Record<string, unknown> | undefined;
-      if (v && typeof v === 'object' && v.detected === true) {
-        result.push({
-          name: String(v.name ?? key),
-          direction: String(v.direction ?? 'none'),
-          score: typeof v.score === 'number' ? v.score : 0,
-          detected: true,
-        });
-      }
-    }
-    return result;
-  }
-
-  async analyzeStock(code: string): Promise<Record<string, unknown>> {
+  async analyzeStock(code: string, asOf?: string): Promise<Record<string, unknown>> {
+    this.validateCode(code);
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const data = await this.callPythonLocal(code);
+    const data = await this.callPythonLocal(code, { asOf });
     return { ...data, run_mode: 'local' };
   }
 
-  getMarketEnv(): Record<string, unknown> {
-    return {
-      index: '000001.SH',
-      name: '上证指数',
-      price: 3150.0,
-      change_percent: 0.52,
-      score: 58,
-      stage: '震荡整理',
-      stage_desc: '当前市场处于震荡整理阶段，多空力量相对均衡，建议等待方向明确后再操作。',
-      ma_status: {
-        MA5: { value: 3145.2, above: true },
-        MA10: { value: 3138.5, above: true },
-        MA20: { value: 3152.8, above: false },
-        MA60: { value: 3180.3, above: false },
-        MA120: { value: 3210.0, above: false },
-        MA250: { value: 3250.5, above: false },
-      },
-      run_mode: 'local',
-    };
+  /** 真实大盘环境（腾讯上证指数，不复权），与前端本地 JS 计算并存、仅作参考。 */
+  async getMarketEnv(): Promise<Record<string, unknown>> {
+    if (!this.pythonBinary) {
+      throw new Error('无可用的Python分析后端');
+    }
+    const doc = await this.callPythonMarket();
+    return { ...(doc.market_env as Record<string, unknown>), run_mode: 'local', provenance: doc.provenance };
+  }
+
+  private callPythonMarket(asOf?: string): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      if (!this.pythonBinary) {
+        reject(new Error('本地Python环境不可用'));
+        return;
+      }
+      const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
+      const args = [scriptPath, '--mode', 'market'];
+      if (asOf) args.push('--as-of', asOf);
+      const py = spawn(this.pythonBinary.path, args, { cwd: process.cwd(), timeout: 30000 });
+      let stdout = '';
+      let stderr = '';
+      py.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
+      py.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+      py.on('close', (exit: number) => {
+        if (exit !== 0) {
+          reject(new Error(stderr.trim() || `大盘分析退出码 ${exit}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout.trim()));
+        } catch (err) {
+          reject(new Error('大盘输出解析失败: ' + (err instanceof Error ? err.message : String(err))));
+        }
+      });
+      py.on('error', reject);
+    });
   }
 
   getWatchlist(): { items: string[]; count: number } {
@@ -203,6 +234,7 @@ export class StockAnalysisService implements OnModuleInit {
   }
 
   addToWatchlist(code: string): { success: boolean; code: string; watchlist: string[] } {
+    this.validateCode(code);
     if (this.watchlist.includes(code)) {
       throw Object.assign(new Error('已在自选股列表中'), { statusCode: 409, code });
     }
@@ -219,50 +251,64 @@ export class StockAnalysisService implements OnModuleInit {
     return { success: true, code, watchlist: [...this.watchlist] };
   }
 
-  private buildBatchItem(raw: Record<string, unknown>): Record<string, unknown> {
-    const attention = raw.attention as Record<string, unknown> | undefined;
-    const patternsRaw = raw.patterns as Record<string, unknown> | undefined;
-    const klines = raw.klines as Array<Record<string, unknown>> | undefined;
+  /**
+   * 扫描列表项：字段全部来自 Python core 的 summary.patterns_latest（每种形态已是【最近一次】实例）。
+   * 不再有综合“推荐度/关注分”；bull_top / bear_top 为各方向最新形态里信号最强的一个，
+   * 且仅统计已确认/可交易阶段（active），failed_break / forming 不充当信号。
+   */
+  private buildBatchItem(doc: Record<string, any>): Record<string, unknown> {
+    const summary = doc.summary ?? {};
+    const latest = (summary.patterns_latest ?? {}) as Record<string, any>;
 
-    let pct = '0.00';
-    if (klines && klines.length >= 2) {
-      const lastClose = Number(klines[klines.length - 1].close);
-      const prevClose = Number(klines[klines.length - 2].close);
-      if (prevClose > 0) {
-        pct = (((lastClose - prevClose) / prevClose) * 100).toFixed(2);
-      }
+    const patterns: Record<string, unknown> = {};
+    for (const [pid, p] of Object.entries(latest)) {
+      patterns[pid] = {
+        pid,
+        name: p.pattern_name,
+        direction: p.direction,
+        category: p.category,
+        stage: p.stage,
+        score: p.score,
+        confidence: p.confidence,
+        active: ACTIVE_STAGES.has(p.stage),
+        last_key_date: p.last_key_date,
+        bars_since: p.bars_since,
+      };
     }
 
-    const patternsOut: Record<string, unknown> = {};
-    if (patternsRaw && typeof patternsRaw === 'object') {
-      for (const key of ['w_bottom', 'hs_bottom', 'm_top', 'hs_top']) {
-        const p = patternsRaw[key] as Record<string, unknown> | undefined;
-        if (p) {
-          const details = p.details as Record<string, unknown> | undefined;
-          patternsOut[key] = {
-            detected: Boolean(p.detected),
-            score: typeof p.score === 'number' ? p.score : 0,
-            name: String((details && details.pattern_name) ?? p.name ?? key),
-            stage: String(p.stage ?? 'none'),
-            direction: String(p.direction ?? 'none'),
-          };
+    const topOf = (ids: string[]) => {
+      let best: any = null;
+      for (const id of ids) {
+        const p = patterns[id] as any;
+        if (p && p.active && (best === null || p.score > best.score)) {
+          best = { pid: id, name: p.name, stage: p.stage, score: p.score, last_key_date: p.last_key_date };
         }
       }
-    }
-
-    return {
-      code: String(raw.code ?? ''),
-      name: String(raw.name ?? ''),
-      engine: 'real_core',
-      price: raw.latest_close ?? null,
-      pct,
-      score: attention?.score ?? null,
-      level: attention?.level ?? 'unknown',
-      advice: attention?.advice ?? '',
-      bullScore: attention?.bull_score ?? 0,
-      bearScore: attention?.bear_score ?? 0,
-      patterns: patternsOut,
+      return best;
     };
+
+    const pct = typeof summary.change_pct === 'number' ? summary.change_pct.toFixed(2) : '0.00';
+    return {
+      code: String(doc.code ?? summary.code ?? ''),
+      name: String(doc.name ?? summary.name ?? ''),
+      as_of: String(doc.as_of ?? summary.as_of ?? ''),
+      price: summary.close ?? null,
+      pct,
+      pct_num: summary.change_pct ?? 0,
+      patterns,
+      bull_top: topOf(BULL_IDS),
+      bear_top: topOf(BEAR_IDS),
+      engine: 'real_core',
+      adjustment: (doc.input as any)?.adjustment ?? 'qfq',
+      stale: (doc.calendar as any)?.stale ?? summary.stale ?? false,
+      session_state: doc.session_state ?? summary.session_state ?? null,
+      data_hash: summary.data_hash ?? null,
+      result_sha256: summary.result_sha256 ?? null,
+    };
+  }
+
+  private async analyzeOne(code: string): Promise<Record<string, unknown>> {
+    return this.buildBatchItem((await this.callPythonLocal(code)) as Record<string, any>);
   }
 
   async analyzeWatchlist(): Promise<{
@@ -278,20 +324,7 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const items: Array<Record<string, unknown>> = [];
-    const failed: Array<{ code: string; reason: string }> = [];
-    for (const code of this.watchlist) {
-      try {
-        const raw = await this.callPythonLocal(code);
-        items.push(this.buildBatchItem(raw));
-      } catch (err) {
-        failed.push({
-          code,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    items.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
+    const { items, failed } = await this.runCodes(this.watchlist, 0, false);
     return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
@@ -305,101 +338,63 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const items: Array<Record<string, unknown>> = [];
-    const failed: Array<{ code: string; reason: string }> = [];
-    for (const code of codes) {
-      try {
-        const raw = await this.callPythonLocal(code);
-        const item = this.buildBatchItem(raw);
-        const score = Number(item.score ?? 0);
-        if (score < minScore) continue;
-        if (onlyBull) {
-          const patterns = item.patterns as Record<string, { detected: boolean; direction: string }>;
-          const hasBull = Object.values(patterns).some(p => p.detected && p.direction === 'bull');
-          if (!hasBull) continue;
-        }
-        items.push(item);
-      } catch (err) {
-        failed.push({
-          code,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
+    const clean = [...new Set((codes ?? []).map((c) => String(c).trim()))];
+    if (clean.some((c) => !CODE_RE.test(c))) {
+      throw new BadRequestException('扫描列表包含非法代码（必须为 6 位数字）');
     }
-    items.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
+    if (clean.length > MAX_SCAN_CODES) {
+      throw new BadRequestException(`单次扫描最多 ${MAX_SCAN_CODES} 只（当前 ${clean.length}）`);
+    }
+    const { items, failed } = await this.runCodes(clean, minScore, onlyBull);
     return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
-  getSectors(): { items: Array<{ code: string; name: string; desc: string }>; run_mode: string } {
-    return {
-      items: [
-        { code: 'AI', name: '人工智能', desc: 'AI大模型、算力、应用' },
-        { code: 'NEW_ENERGY', name: '新能源', desc: '锂电、光伏、储能' },
-        { code: 'SEMICONDUCTOR', name: '半导体', desc: '芯片、晶圆、封装' },
-        { code: 'PHARMA', name: '医药生物', desc: '创新药、CXO、医疗器械' },
-        { code: 'CONSUMPTION', name: '消费白酒', desc: '白酒、食品、零售' },
-        { code: 'FINANCE', name: '大金融', desc: '银行、证券、保险' },
-        { code: 'REAL_ESTATE', name: '房地产', desc: '地产、建材、家居' },
-        { code: 'MILITARY', name: '军工航天', desc: '军工、航天、北斗' },
-      ],
-      run_mode: 'local',
-    };
+  /** 串行逐只跑 Python core（有限并发在后续阶段实现）。返回经过滤/排序的列表与失败明细。 */
+  private async runCodes(
+    codes: string[], minScore: number, onlyBull: boolean
+  ): Promise<{
+    items: Array<Record<string, unknown>>;
+    failed: Array<{ code: string; reason: string }>;
+  }> {
+    const all: Array<Record<string, unknown>> = [];
+    const failed: Array<{ code: string; reason: string }> = [];
+    for (const code of codes) {
+      try {
+        const item = await this.analyzeOne(code);
+        const bull = (item.bull_top as any) ?? null;
+        if (onlyBull && bull === null) continue;
+        if (minScore > 0 && (bull === null || bull.score < minScore)) continue;
+        all.push(item);
+      } catch (err) {
+        failed.push({ code, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    const scoreOf = (it: Record<string, unknown>) => ((it.bull_top as any)?.score ?? -1);
+    all.sort((a, b) => scoreOf(b) - scoreOf(a));
+    return { items: all, failed };
   }
 
-  async scanSector(code: string): Promise<{
-    items: Array<Record<string, unknown>>;
-    count: number;
-    sector: string;
-    run_mode: string;
-  }> {
-    if (!this.pythonBinary) {
-      throw new Error('无可用的Python分析后端');
-    }
-    const sampleCodes: Record<string, string[]> = {
-      AI: ['300750', '002415', '600570', '300033', '002230'],
-      NEW_ENERGY: ['300750', '002594', '600438', '002129', '300274'],
-      SEMICONDUCTOR: ['603501', '002371', '688981', '300661', '688126'],
-      PHARMA: ['600276', '300760', '002252', '603259', '002007'],
-      CONSUMPTION: ['600519', '000858', '600887', '000333', '002415'],
-      FINANCE: ['601398', '600036', '601318', '600030', '601628'],
-      REAL_ESTATE: ['000002', '600048', '001979', '601668', '000725'],
-      MILITARY: ['600760', '002025', '600893', '600118', '002179'],
-    };
-    const stockCodes = sampleCodes[code] || ['600519', '000001', '300750'];
+  getSectors(): { items: Array<Record<string, unknown>>; run_mode: string; note: string } {
+    // 不再返回写死的假板块成分；动态板块（THS）在 V5 独立模块，BFF 不伪造。
+    return { items: [], run_mode: 'local', note: '板块成分请使用 V5 动态板块扫描，BFF 不提供静态写死成分' };
+  }
 
-    const results: Array<Record<string, unknown>> = [];
-    for (const sc of stockCodes) {
-      const item = await this.callPythonLocal(sc) as {
-        code: string; name: string; score: number;
-        patterns?: Array<{ name: string }>;
-      };
-      const normalized = this.normalizePatterns(item.patterns);
-      results.push({
-        code: item.code,
-        name: item.name,
-        score: item.score,
-        patterns: normalized.slice(0, 2).map((p) => p.name),
-      });
-    }
-    results.sort((a, b) => (b.score as number) - (a.score as number));
-    return { items: results, count: results.length, sector: code, run_mode: 'local' };
+  async scanSector(code: string): Promise<never> {
+    throw new BadRequestException('该端点已停用：板块扫描请使用 V5 动态板块模块，BFF 不提供写死成分股');
   }
 
   getSyncConfig(): Record<string, unknown> {
     return {
-      repo: 'github.com/user/kline-config',
-      config_file: 'watchlist.json',
-      branch: 'main',
-      last_sync: '从未同步',
-      status: 'local_only',
+      mode: 'browser_github',
+      detail: '自选股在浏览器本地维护并通过 GitHub Contents API 多端同步，BFF 不保存 token',
       run_mode: 'local',
     };
   }
 
   syncPull(): { error: string; detail: string; run_mode: string } {
     return {
-      error: '本地模式下不支持GitHub同步',
-      detail: '请配置 PYTHON_SERVICE_URL 启用远程同步功能',
+      error: '自选股同步由浏览器端 GitHub Contents API 完成',
+      detail: 'BFF 不持有 GitHub token，避免第三方脚本读取凭据',
       run_mode: 'local',
     };
   }

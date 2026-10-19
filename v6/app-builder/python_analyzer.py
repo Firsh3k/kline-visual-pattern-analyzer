@@ -1,309 +1,239 @@
 #!/usr/bin/env python3
 """
-python_analyzer.py - K线形态分析本地执行器（App Builder 部署版）
+python_analyzer.py - K线形态分析本地执行器（App Builder 部署版 · V6 阶段1）
 
-架构：NestJS BFF 通过 child_process 调用本脚本，形态识别 100% 走 Python Canonical Core
-（SwingPivotEngine + W/M/H&S 检测器 + 新浪数据源）。
+唯一算法 Source of Truth：Python Canonical Core（core.analysis.analyze）。
+形态识别、关键点、颈线 / 目标 / 止损、阶段、评分、量价全部由 core 计算；
+本脚本只负责：取行情（腾讯前复权）→ 调 core.analysis → 输出 core 原生文档。
 
-⚠️ fail-closed 原则（v6/app-builder 硬约束）：
-    真实 core 不可用或分析失败时，本脚本必须【非零退出 + 输出错误】，
-    绝不允许静默返回随机/骨架算法的假形态。
-    骨架算法仅可在显式 `--allow-skeleton`（本地开发/测试）时使用，生产路径禁止。
+口径（与 main 一致）：
+    - 个股一律前复权 qfq，固定 250 根窗口；qfq 只走腾讯，失败即报错，绝不静默回退不复权；
+    - 每种形态取【最近一次】实例（按关键点最大 index），旧形态不会冒充当前信号（core.analysis.pattern_summary）；
+    - 8 种形态（W底 / 头肩底 / 平台突破 / 均线多头；M头 / 头肩顶 / 平台破位 / 均线空头）全部由 core 输出；
+    - 支持 --as-of 回测：core 只使用截至该日的 K 线，不看未来；
+    - 不输出任何综合“推荐度/关注分”，也不输出无来源的历史成功率（每个形态的 score 仅为算法信号强度）。
+
+⚠️ fail-closed：行情不可用 / 复权方式不一致 / core 校验失败，一律非零退出 + stderr 错误，
+   绝不返回骨架、随机或静默降级结果。
 
 用法:
-    python3 python_analyzer.py <stock_code> [--days N]
+    python3 python_analyzer.py <6位代码> [--as-of YYYY-MM-DD] [--adjustment qfq|none]
+    python3 python_analyzer.py --mode market          # 大盘环境（上证指数，腾讯不复权）
     python3 python_analyzer.py --mode health
-    python3 python_analyzer.py <code> --allow-skeleton   # 仅本地开发，生产禁用
 
-输出 (stdout, JSON)，失败时错误写入 stderr 并退出码 1。
+输出 (stdout, JSON)：core.analysis 的完整文档 + summary（扫描列表用）。失败写 stderr 并退出码 1。
 """
 import argparse
 import json
+import re
 import sys
-import datetime
+import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
 
-
+# 部署时 python_analyzer.py 与 core/ 同目录（app_builder 的 process.cwd()）。
 PROJECT_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(PROJECT_ROOT))
-_server_core = PROJECT_ROOT / "server" / "core"
-if _server_core.is_dir():
-    sys.path.insert(0, str(PROJECT_ROOT / "server"))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+CODE_RE = re.compile(r"^\d{6}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+FETCH_CALENDAR_DAYS = 420          # 约覆盖 250 个交易日，core 固定截取最后 250 根
+HTTP_TIMEOUT = 10
+# 同一腾讯 K 线 API 的等价子域：web.* 为标准入口，裸 ifzq 在部分出口 IP 被 WAF 拦截时作为传输层兜底。
+_TENCENT_KLINE_HOSTS = ["web.ifzq.gtimg.cn", "ifzq.gtimg.cn"]
+_TENCENT_QUOTE_HOSTS = ["qt.gtimg.cn", "ifzq.gtimg.cn"]
 
 
-def _try_import_real_core():
-    try:
-        from core.swing_pivot import SwingPivotEngine
-        from core.market_data.sina_provider import SinaDataProvider
-        from core.registry import registry
-        return SwingPivotEngine, SinaDataProvider, registry
-    except Exception:
-        return None, None, None
+def _fail(message: str, **extra):
+    """统一 fail-closed 错误输出（stderr JSON + 退出码 1）。"""
+    payload = {"error": message, "fail_closed": True}
+    payload.update(extra)
+    print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
+    sys.exit(1)
 
 
-def _pattern_result_to_dict(pr) -> dict:
-    return {
-        "pattern_id": pr.pattern_id,
-        "pattern_name": pr.pattern_name,
-        "direction": pr.direction.value,
-        "stage": pr.stage.value,
-        "score": pr.score,
-        "confidence": pr.confidence.value if pr.confidence else None,
-        "neckline_price": pr.neckline_price,
-        "breakout_price": pr.breakout_price,
-        "target_price": pr.target_price,
-        "stop_loss": pr.stop_loss,
-        "key_points": [
-            {"name": kp.name, "date": kp.date, "price": kp.price,
-             "index": kp.index, "description": kp.description}
-            for kp in pr.key_points
-        ],
-        "notes": pr.notes,
-    }
+def _fetch_series(symbol: str, adjustment: str):
+    """用 core 的 TencentDataProvider 拉日线；qfq 严格只接受 qfqday，失败换等价子域后仍失败即报错。"""
+    from core import AdjustmentType, FrequencyType
+    import core.market_data.tencent_provider as tp
+
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+    start = (datetime.now(_import_cn_tz()) - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
+
+    template = tp._TENCENT_URL
+    last_err = None
+    for host in _TENCENT_KLINE_HOSTS:
+        tp._TENCENT_URL = template.replace("web.ifzq.gtimg.cn", host)
+        try:
+            series = tp.TencentDataProvider().fetch_klines(
+                symbol, start_date=start, frequency=FrequencyType.DAILY, adjustment=adj)
+            if not series.bars:
+                raise RuntimeError(f"{symbol} 行情返回为空")
+            if series.adjustment != adj:
+                raise RuntimeError(f"复权方式不一致：请求 {adj.value}，返回 {series.adjustment.value}，拒绝混用")
+            return series
+        except Exception as exc:  # noqa: BLE001 - 记录后尝试下一 host，全部失败再 fail-closed
+            last_err = exc
+        finally:
+            tp._TENCENT_URL = template
+    raise RuntimeError(f"腾讯行情源不可用（{symbol} {adjustment}）：{last_err}")
 
 
-def _analyze_with_real_core(code: str, days: int) -> dict:
-    pivot_cls, provider_cls, registry_obj = _try_import_real_core()
-    if not (pivot_cls and provider_cls and registry_obj):
-        raise ImportError("真实 core 模块接口不完整（SwingPivotEngine/SinaDataProvider/registry）")
-
-    provider = provider_cls()
-    stock_data = provider.get_stock_data(code, days=days)
-    klines = stock_data.klines
-    if not klines:
-        raise ValueError("未能获取K线数据（数据源返回空）")
-
-    engine = pivot_cls(left_bars=5, right_bars=5)
-    all_pivots = engine.detect(klines)
-    confirmed_pivots = [p for p in all_pivots if p.confirmed]
-
-    all_results = {}
-    for pid in registry_obj.get_pattern_ids():
-        detector = registry_obj.get_pattern(pid)
-        matches = detector.detect(klines, confirmed_pivots)
-        if matches:
-            best = max(matches, key=lambda m: m.score)
-            all_results[pid] = _pattern_result_to_dict(best)
-        else:
-            all_results[pid] = None
-
-    patterns = {
-        "w_bottom": _normalize_pattern_output(all_results.get("w_bottom")),
-        "m_top": _normalize_pattern_output(all_results.get("m_top")),
-        "hs_bottom": _normalize_pattern_output(all_results.get("hs_bottom")),
-        "hs_top": _normalize_pattern_output(all_results.get("hs_top")),
-    }
-
-    attention = _calculate_attention(patterns, klines[-1].close)
-
-    return {
-        "code": stock_data.code,
-        "name": stock_data.name or stock_data.code,
-        "data_length": len(klines),
-        "latest_date": klines[-1].date,
-        "latest_close": float(klines[-1].close),
-        "klines": [_kline_to_dict(k) for k in klines],
-        "patterns": patterns,
-        "attention": attention,
-        "engine": {
-            "analyzer": "real_core",
-            "data_source": "sina",
-            "pivot_count": len(confirmed_pivots),
-            "pattern_count": sum(1 for p in patterns.values() if p.get("detected")),
-        },
-    }
+def _import_cn_tz():
+    from core.analysis import CN_TZ
+    return CN_TZ
 
 
-def _kline_to_dict(k) -> dict:
-    return {
-        "date": k.date,
-        "open": float(k.open), "high": float(k.high),
-        "low": float(k.low), "close": float(k.close),
-        "volume": float(k.volume),
-        "amount": float(k.amount) if k.amount is not None else None,
-    }
+def _now_cn():
+    return datetime.now(_import_cn_tz())
 
 
-def _normalize_pattern_output(raw: dict | None) -> dict:
-    if not raw or raw.get("score", 0) <= 0:
-        return {"detected": False, "score": 0, "stage": "none", "direction": "none", "details": {}}
-    details = {k: v for k, v in raw.items()
-               if k not in ("detected", "score", "stage", "direction", "pattern_id")}
-    return {
-        "detected": True,
-        "score": raw["score"],
-        "stage": raw.get("stage", "unknown"),
-        "direction": raw.get("direction", "unknown"),
-        "details": details,
-    }
-
-
-# ===================== 骨架算法（仅本地开发，禁止进入生产结果） =====================
-
-def _generate_mock_klines(code: str, days: int) -> list:
-    import random
-    random.seed(hash(code) & 0xFFFFFFFF)
-    base_price = 50 + random.random() * 150
-    klines = []
-    price = base_price
-    start_date = datetime.date.today() - datetime.timedelta(days=days)
-    for i in range(days):
-        date = start_date + datetime.timedelta(days=i)
-        if date.weekday() >= 5:
+def _fetch_name(code: str, symbol: str) -> str:
+    """从腾讯实时行情接口取中文名（GBK，字段用 ~ 分隔，[1] 为名称）；失败回退代码，不阻断分析。"""
+    for host in _TENCENT_QUOTE_HOSTS:
+        try:
+            url = f"https://{host}/q={symbol}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            raw = urllib.request.urlopen(req, timeout=HTTP_TIMEOUT).read().decode("gbk", "ignore")
+            m = re.search(r'="([^"]+)"', raw)
+            if m:
+                fields = m.group(1).split("~")
+                if len(fields) > 1 and fields[1].strip():
+                    return fields[1].strip()
+        except Exception:  # noqa: BLE001
             continue
-        change = random.gauss(0, 0.02)
-        open_price = price
-        close_price = price * (1 + change)
-        high_price = max(open_price, close_price) * (1 + abs(random.gauss(0, 0.01)))
-        low_price = min(open_price, close_price) * (1 - abs(random.gauss(0, 0.01)))
-        volume = random.randint(1000000, 5000000)
-        klines.append({
-            "date": date.strftime("%Y-%m-%d"),
-            "open": round(open_price, 2), "high": round(high_price, 2),
-            "low": round(low_price, 2), "close": round(close_price, 2),
-            "volume": volume,
-        })
-        price = close_price
-    return klines
+    return code
 
 
-def _skeleton_find_pivots(klines: list, left: int = 5, right: int = 5) -> list:
-    n = len(klines)
-    if n < left + right + 1: return []
-    pivots = []
-    for i in range(left, n - right):
-        ch = float(klines[i]["high"])
-        cl = float(klines[i]["low"])
-        window = klines[i - left:i] + klines[i + 1:i + right + 1]
-        highs = [float(k["high"]) for k in window]
-        lows = [float(k["low"]) for k in window]
-        if ch >= max(highs):
-            pivots.append({"index": i, "price": ch, "type": "high", "date": klines[i]["date"]})
-        if cl <= min(lows):
-            pivots.append({"index": i, "price": cl, "type": "low", "date": klines[i]["date"]})
-    return pivots
+def _series_to_bars(series) -> list:
+    return [{"day": b.date, "open": float(b.open), "high": float(b.high),
+             "low": float(b.low), "close": float(b.close), "volume": float(b.volume)}
+            for b in series.bars]
 
 
-def _skeleton_detect_patterns(pivots: list) -> dict:
-    base = {"detected": False, "score": 0, "stage": "none", "direction": "none", "details": {}}
-    patterns = {"w_bottom": dict(base), "m_top": dict(base),
-                "hs_bottom": dict(base), "hs_top": dict(base)}
-    if len(pivots) < 4: return patterns
-    highs = [p for p in pivots if p["type"] == "high"]
-    lows = [p for p in pivots if p["type"] == "low"]
-    if len(lows) >= 2:
-        first, second = lows[0], lows[-1]
-        diff_ratio = abs(first["price"] - second["price"]) / max(first["price"], 0.01)
-        if diff_ratio < 0.03 and len(highs) >= 1:
-            patterns["w_bottom"] = {"detected": True, "score": 75, "stage": "forming",
-                "direction": "bull", "details": {"neckline_price": round(highs[0]["price"], 2)}}
-    if len(highs) >= 2:
-        first, second = highs[0], highs[-1]
-        diff_ratio = abs(first["price"] - second["price"]) / max(first["price"], 0.01)
-        if diff_ratio < 0.03 and len(lows) >= 1:
-            patterns["m_top"] = {"detected": True, "score": 75, "stage": "forming",
-                "direction": "bear", "details": {"neckline_price": round(lows[0]["price"], 2)}}
-    return patterns
-
-
-def _analyze_with_skeleton(code: str, days: int) -> dict:
-    """⚠️ 仅本地开发。返回结果显式标记 analyzer=fallback_skeleton，生产路径不得使用。"""
-    klines = _generate_mock_klines(code, days)
-    pivots = _skeleton_find_pivots(klines)
-    patterns = _skeleton_detect_patterns(pivots)
-    last_close = float(klines[-1]["close"])
-    attention = _calculate_attention(patterns, last_close)
+def _provenance(series, adjustment: str) -> dict:
+    last = series.bars[-1]
+    raw_hash = last.provenance.raw_payload_hash if getattr(last, "provenance", None) else None
+    qr = None
+    if getattr(series, "quality_report", None) is not None:
+        try:
+            qr = series.quality_report.to_dict()
+        except Exception:  # noqa: BLE001
+            qr = None
     return {
-        "code": code, "name": f"[骨架测试]{code}",
-        "data_length": len(klines), "latest_date": klines[-1]["date"],
-        "latest_close": last_close, "klines": klines,
-        "patterns": patterns, "attention": attention,
-        "engine": {"analyzer": "fallback_skeleton", "data_source": "mock",
-                   "pivot_count": len(pivots),
-                   "pattern_count": sum(1 for p in patterns.values() if p.get("detected"))},
+        "source": getattr(series.source, "value", "tencent"),
+        "mode": "live",
+        "adjustment": getattr(series.adjustment, "value", adjustment),
+        "fetched_at": getattr(series, "fetched_at", None),
+        "raw_payload_sha256": raw_hash,
+        "quality_report": qr,
     }
 
 
-def _calculate_attention(patterns: dict, last_close: float) -> dict:
-    bull_ids = ["w_bottom", "hs_bottom"]
-    bear_ids = ["m_top", "hs_top"]
-    bull_total = sum(patterns.get(pid, {}).get("score", 0) for pid in bull_ids
-                     if patterns.get(pid, {}).get("detected"))
-    bear_total = sum(patterns.get(pid, {}).get("score", 0) for pid in bear_ids
-                     if patterns.get(pid, {}).get("detected"))
-    net = 50 + (bull_total * 0.1) - (bear_total * 0.1)
-    score = int(max(0, min(100, round(net))))
-    if score >= 80:
-        level, advice = "strong_bull", "强烈看涨，可考虑积极建仓或加仓"
-    elif score >= 65:
-        level, advice = "bull", "偏多，可关注回调买入机会"
-    elif score >= 45:
-        level, advice = "neutral", "多空平衡，建议观望或轻仓试探"
-    elif score >= 25:
-        level, advice = "bear", "偏空，谨慎操作，注意控制仓位"
-    else:
-        level, advice = "strong_bear", "强烈看空，建议减仓或规避风险"
-    return {"score": score, "level": level, "advice": advice,
-            "bull_score": bull_total, "bear_score": bear_total}
+def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") -> dict:
+    from core import analysis as A
+    from core.interfaces import DataProviderError, MarketDataError
 
-
-def analyze_stock(code: str, days: int = 250, allow_skeleton: bool = False) -> dict:
-    """
-    生产入口：优先真实 core。
-    - allow_skeleton=False（默认/生产）：core 失败直接抛错（fail-closed），由 NestJS 转成明确错误，
-      前端走红色错误面板，绝不静默降级。
-    - allow_skeleton=True（仅本地开发）：允许回退骨架，结果带 fallback_skeleton 标记。
-    """
+    InvalidInputError = A.InvalidInputError
+    symbol = A.exchange_symbol(code)
     try:
-        return _analyze_with_real_core(code, days)
-    except Exception as e:
-        if allow_skeleton:
-            print(f"[python_analyzer] 真实core不可用({e})，--allow-skeleton 下使用骨架（禁止用于生产）",
-                  file=sys.stderr)
-            return _analyze_with_skeleton(code, days)
-        # fail-closed：包装错误向上抛，绝不返回假数据
-        raise RuntimeError(f"Python Canonical Core 分析失败（fail-closed，未降级）：{e}") from e
+        series = _fetch_series(symbol, adjustment)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"行情获取失败（fail-closed，未降级）：{exc}") from exc
+
+    bars = _series_to_bars(series)
+    name = _fetch_name(code, symbol)
+    prov = _provenance(series, adjustment)
+    try:
+        doc = A.analyze(code, bars, adjustment=adjustment, provenance=prov,
+                        as_of=as_of, name=name)
+    except InvalidInputError as exc:
+        raise RuntimeError(f"行情数据未通过 core 严格校验：{exc}") from exc
+    except (DataProviderError, MarketDataError) as exc:
+        raise RuntimeError(f"行情数据错误：{exc}") from exc
+
+    # 扫描列表 / 自选股摘要：每种形态最近一次，与个股页同源。
+    doc["summary"] = A.pattern_summary(doc)
+    # 兼容字段：引擎标记（NestJS 生产路径校验）、旧前端 K 线格式。
+    doc["engine"]["analyzer"] = "real_core"
+    doc["engine"]["data_source"] = prov["source"]
+    doc["data_length"] = len(doc["bars"])
+    doc["latest_date"] = doc["as_of"]
+    doc["latest_close"] = doc["bars"][-1][4]
+    doc["klines"] = [
+        {"date": b[0], "open": b[1], "high": b[2], "low": b[3], "close": b[4], "volume": b[5]}
+        for b in doc["bars"]
+    ]
+    return doc
+
+
+def analyze_market(as_of: str | None = None) -> dict:
+    from core import analysis as A
+    series = _fetch_series("sh000001", "none")
+    last_close = float(series.bars[-1].close)
+    if not (500 < last_close < 20000):
+        raise RuntimeError(f"上证指数收盘价 {last_close} 量级不合理，疑似取到个股，拒绝使用")
+    bars = _series_to_bars(series)
+    env = A.analyze_market(bars, as_of=as_of)
+    if env is None:
+        raise RuntimeError("大盘环境分析为空（数据不足）")
+    return {"market_env": env, "provenance": _provenance(series, "none"),
+            "calendar": A.calendar_info("sh000001", env["as_of"], _now_cn())}
 
 
 def health_check() -> dict:
-    pivot_cls, provider_cls, registry_obj = _try_import_real_core()
-    has_real = all([pivot_cls, provider_cls, registry_obj])
+    try:
+        from core import analysis as A  # noqa: F401
+        core_ok = True
+        version = A.CORE_VERSION
+    except Exception as exc:  # noqa: BLE001
+        core_ok, version = False, str(exc)
     return {
-        "status": "ok" if has_real else "degraded",
+        "status": "ok" if core_ok else "degraded",
         "python_version": sys.version.split()[0],
-        "core_installed": has_real,
-        "core_pivot_engine": pivot_cls is not None,
-        "core_data_provider": provider_cls is not None,
-        "core_pattern_detector": registry_obj is not None,
-        "analyzer": "real_core" if has_real else "fallback_skeleton",
+        "core_installed": core_ok,
+        "core_version": version,
+        "analyzer": "real_core" if core_ok else "unavailable",
+        "adjustment": "qfq",
+        "window": 250,
         "fail_closed": True,
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="K线形态分析 - 本地 Python 执行器")
-    parser.add_argument("code", nargs="?", help="股票代码")
-    parser.add_argument("--days", type=int, default=250, help="分析K线天数")
-    parser.add_argument("--mode", default="analyze", choices=["analyze", "health"])
-    parser.add_argument("--allow-skeleton", action="store_true",
-                        help="仅本地开发：允许core失败时回退骨架（生产禁止）")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="K线形态分析 - 本地 Python Canonical Core 执行器")
+    parser.add_argument("code", nargs="?", help="6位股票代码")
+    parser.add_argument("--as-of", dest="as_of", default=None, help="回测截止日 YYYY-MM-DD（不含未来）")
+    parser.add_argument("--adjustment", default="qfq", choices=["qfq", "none"], help="复权方式，默认 qfq")
+    parser.add_argument("--mode", default="analyze", choices=["analyze", "health", "market"])
     args = parser.parse_args()
 
     if args.mode == "health":
         print(json.dumps(health_check(), ensure_ascii=False))
         return 0
 
+    if args.as_of is not None and not DATE_RE.match(args.as_of):
+        _fail(f"--as-of 必须为 YYYY-MM-DD：{args.as_of!r}")
+
+    if args.mode == "market":
+        try:
+            print(json.dumps(analyze_market(args.as_of), ensure_ascii=False))
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            _fail(str(exc))
+
     if not args.code:
-        print(json.dumps({"error": "缺少股票代码参数"}, ensure_ascii=False), file=sys.stderr)
-        return 1
+        _fail("缺少股票代码参数")
+    if not CODE_RE.match(args.code):
+        _fail(f"股票代码必须为 6 位数字：{args.code!r}")
 
     try:
-        result = analyze_stock(args.code, args.days, allow_skeleton=args.allow_skeleton)
+        result = analyze_stock(args.code, as_of=args.as_of, adjustment=args.adjustment)
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    except Exception as e:
-        print(json.dumps({"code": args.code, "error": str(e), "fail_closed": True},
-                         ensure_ascii=False), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        _fail(str(exc), code=args.code)
         return 1
 
 

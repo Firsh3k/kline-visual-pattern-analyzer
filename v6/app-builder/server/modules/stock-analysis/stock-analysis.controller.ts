@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Body, Param,
+  Controller, Get, Post, Delete, Body, Param, Query,
   BadRequestException, ConflictException, NotFoundException,
 } from '@nestjs/common';
 import { StockAnalysisService } from './stock-analysis.service';
@@ -31,12 +31,15 @@ export class StockAnalysisController {
   }
 
   @Get('analyze/:code')
-  async analyze(@Param('code') code: string) {
-    if (!code || code.length < 6) {
-      throw new BadRequestException('股票代码无效');
+  async analyze(@Param('code') code: string, @Query('asOf') asOf?: string) {
+    if (!code || !/^\d{6}$/.test(code)) {
+      throw new BadRequestException('股票代码必须为 6 位数字');
+    }
+    if (asOf && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+      throw new BadRequestException('asOf 必须为 YYYY-MM-DD');
     }
     try {
-      return await this.service.analyzeStock(code);
+      return await this.service.analyzeStock(code, asOf);
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error ? error.message : '分析失败'
@@ -45,7 +48,7 @@ export class StockAnalysisController {
   }
 
   @Get('market-env')
-  marketEnv() {
+  async marketEnv() {
     return this.service.getMarketEnv();
   }
 

@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .provenance_manager import (
@@ -39,6 +39,8 @@ from .validator import validate_sector
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_EVIDENCE_DIR = os.path.join(_PROJECT_ROOT, "sector_data", "reconciliation_evidence")
 SNAPSHOT_SCHEMA_VERSION = "1.0"
+# A 股快照日期是北京时间的交易日；判断“未来日期”也按北京时间，否则 UTC 服务器在北京时间 0–8 点会误判当天快照为未来。
+_CN_TZ = timezone(timedelta(hours=8))
 
 
 class AuthoritativeSnapshotError(ValueError):
@@ -56,7 +58,7 @@ def _validate_date(value: str, field_name: str) -> str:
         raise AuthoritativeSnapshotError(
             f"{field_name} must be YYYY-MM-DD, got {value!r}"
         ) from exc
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(_CN_TZ).date()
     if parsed > today:
         raise AuthoritativeSnapshotError(
             f"{field_name} cannot be in the future: {value} > {today.isoformat()}"

@@ -1,7 +1,11 @@
 """
 TencentDataProvider — 腾讯财经数据源
 
-API: https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},{freq},,,{datalen},{adjustment}
+API: https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get?param={symbol},{freq},,,{datalen},{adjustment}
+
+说明：历史路径 `appstock/app/fqkline/get` 在部分出口 IP 段被腾讯 WAF 按路径稳定拦截（501,
+stgw st=03）；等价的 `appstock/app/newfqkline/get` 返回结构、键（qfqday/hfqday/day）、行序
+完全一致且不被该策略拦截，故统一使用 newfqkline。两个等价子域由调用方轮询兜底。
 
 支持复权: qfq=前复权, hfq=后复权, 空=不复权
 返回 JSON，数据在 data[symbol]['qfq'] 或 data[symbol]['day'] 中
@@ -25,8 +29,10 @@ from .validation import assess_series_quality, normalize_bars
 from .aggregation import aggregate_daily_bars
 
 
+# 注：使用 newfqkline/get 而非旧 fqkline/get —— 后者在部分出口 IP 被腾讯 WAF 按路径 501 拦截；
+# 两者请求/响应结构完全一致（键 qfqday/hfqday/day、行序相同）。host 由调用方做等价子域轮询。
 _TENCENT_URL = (
-    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    "https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get"
     "?param={symbol},{freq},,,{datalen},{adjustment}"
 )
 

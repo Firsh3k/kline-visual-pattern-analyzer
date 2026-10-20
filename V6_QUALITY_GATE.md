@@ -1,6 +1,6 @@
 # V6 质量闸门（Quality Gate）— 自动检查与发布信号
 
-> 分支：`v6/web-recovery-stable`（V6 所有更新只在此分支，完善后再合并 main，不直接动生产）
+> 分支：`v6/web-recovery-stable`（V6 主线；第一阶段发布标签 `v6-web-1.0.0`）
 > 目标：代码提交和部署后都自动检查，给负责人明确的 ✅/❌ 信号，无需人工逐项核对。
 
 ## 第一层：代码提交 — CI 黄金形态测试（全自动，合并前硬闸门）
@@ -21,51 +21,46 @@
 - 真实数据源连通性单独跑一个 `continue-on-error` 的 non-blocking 步骤，仅作信息参考，不阻断合并。
 - 黄金测试（`test_golden_patterns.py`）为纯合成数据、无网络、无时间依赖，是算法漂移的最终硬闸门。
 
-## 第二层：部署后 — 生产路径验收（部署后自动执行，给信号）
+### 冻结历史快照（FIR-40 问题 11）
+- 用例：`tests/v5/test_v6_frozen_snapshot.py`，期望值在 `tests/v6/snapshots/stage1_frozen.json`。
+- 用仓库内冻结的真实行情（002436 最新 / 002436 asOf=2026-09-30 / 002594 / 600519 / 上证指数），
+  固定“当前时间”，逐字段比对 data_hash、阶段、分数、确认、主导形态、线段、summary 与大盘环境。
+- 行情每天变也不影响这个基准；不再写死任何股票“当天”的结果。
+- 有意的算法变更：经 QA 同意后用 Python 3.10 运行 `python3.10 tests/v6/frozen_snapshot.py --write`，PR 中说明差异。
+- `core.result_sha256` 依赖 Python 小版本（3.12 起 `sum()` 改为补偿求和），快照按线上 Python 3.10 生成；
+  其它版本只跳过这一项。
 
-每次 App Builder 部署/修改后，由助手在沙箱内走**真实生产请求**（非 mock），逐项核对：
+### 实际部署页面与 BFF（CI 的 JS job）
+- `tests/v6/test_v4_adapter_r67.js`：加载实际部署的 V4 页面脚本，验证确认 / 主导只来自 Python、斜颈线绘制、坏数据报错。
+- `tests/v6/test_v4_no_local_engine.js`：本地 JS 形态引擎 / 推荐度 / 降级入口不得重新出现。
+- `tests/v6/test_bff_pure.js`：asOf 校验与扫描列表透传 Python 确认。
 
-**引擎与个股主诊**
-- [ ] `/api/health` → 200，`core_analyzer=real_core`、`fail_closed`
-- [ ] `/api/analyze/603068` → 200，`engine.analyzer=real_core`
-- [ ] 603068 页面显示的 8 种形态 = 返回文档 `summary.patterns_latest` 的最新实例（阶段/分数/日期逐项一致），无综合推荐度
-- [ ] `/api/analyze/603068?asOf=<一个月前的交易日>` → `as_of` 等于该日、`bars` 为 250 根
-- [ ] 页面正常加载（非"页面待开发"、非 404）
+## 第二层：部署后 — 线上验收
 
-**批量/旁路链路（同样必须走 Python Core，不得本地JS）**
-- [ ] 添加单只自选股 → 走 `GET /api/analyze/:code`，状态栏显示"Python Core · 关注分 · 等级 · 形态"，不显示本地"买入X%/卖出Y%"
-- [ ] 批量分析（自选股）→ 走 `POST /api/scan`（前端传 localStorage codes），真实返回非0只，每行标 Python Core
-- [ ] 市场扫描 → 走 `POST /api/scan`，每行 Python Core，形态分与个股页一致
-- [ ] 无效码（如 999999）计入 `failed`，状态栏"成功X失败Y"可展开，不崩溃、不静默跳过
+流程：PR → QA → 合并 → 合并提交 CI 绿 → 记录回退点 → 部署 → 线上冒烟 → 回写 FIR。不先上线后审核。
 
-**静默降级清零（残缺数据必须显式警告，不得伪造）**
-- [ ] 大盘数据失败：推荐度 ⚠️ 标注缺维度、假信号面板标红、可信度显示 `--`（非 0%）
-- [ ] 形态来源：核心4形态标"Python Core"，其余标"本地指标"，徽章"Python Core·核心形态"
-- [ ] Python attention 缺失：标注"Python关注指数缺失，使用本地估算"
-- [ ] 技术指标数据不足（RSI/KDJ/BOLL 预热期）：显示 `--`/虚线，不填 50/收盘价
-- [ ] 个股名拉取失败：名称旁标注"（名称获取失败）"
-- [ ] 后端 core 失败：非零退出，不返回骨架假数据（`calculateStockResult` 等本地形态批量函数零调用）
+**版本自证（替代人工逐个文件算哈希）**
+- [ ] 本地运行 `python3 scripts/v6_fingerprint.py --ref <本次部署的标签或提交>`
+- [ ] 线上 `/api/health` 的 `core_sha256`、`analyzer_sha256` 与上一步输出完全一致；`core_analyzer=real_core`
+
+**个股冒烟**
+- [ ] 任选一只股票：`/api/analyze/<code>` → 200，`engine.analyzer=real_core`，250 根前复权，有 `signals`，无推荐度
+- [ ] 页面 8 种形态的阶段 / 分数 /“已确认·未确认”标签、主导形态与返回文档 `signals` 一致（行情每天变，不写死数值）
+- [ ] 回测：`asOf=<一个月前的交易日>` → `as_of` 等于该日或之前最近的交易日，250 根
+- [ ] 未来日期：`asOf=2099-01-01` → 400，“晚于今天”
+- [ ] 有头肩形态的股票：颈线按斜率绘制
+
+**列表链路**
+- [ ] 自选股批量分析 / 市场扫描：每行的“买入 / 卖出信号”只来自 Python 已确认的主导形态；无效代码计入失败清单
 
 全部通过才给 **✅ PRODUCTION GATE PASS**；任一失败给 **❌ FAIL** 并列出阻断项。
 
-> 说明：App Builder 应用所有请求需豆包登录态，外部独立浏览器/curl 无法免登录黑盒探测，
-> 因此部署验收在沙箱内走真实 HTTP（basePath + CSRF + credentials）完成。
-> 如需独立真实浏览器基线，需负责人在自动化浏览器扫码登录一次（可选）。
+> App Builder 应用所有请求需豆包登录态，外部 curl 访问会被 302 跳到登录页；线上验收需登录后进行。
 
 ## fail-closed 原则（三层一致）
 
 | 层 | 失败行为 |
 |----|----------|
-| `python_analyzer.py` | core 失败 → 非零退出 + 错误，绝不返回随机/骨架假数据（骨架仅 `--allow-skeleton` 本地开发） |
-| NestJS `stock-analysis.service.ts` | Python 非零退出 → reject；并拒绝 `engine.analyzer != real_core` 的返回 |
-| 前端 V4 HTML | API 失败 → 红色错误面板，不渲染形态；用户主动点"JS降级"才走本地 JS |
-
-## 603068 基准（禁止漂移）
-
-| 指标 | 正确值 |
-|------|------|
-| W底 | 85 S级，已突破，颈线 41.41，目标 47.81 |
-| 头肩底 | 0，detected=false（绝不可显示） |
-| M头 | 65 A级，形成中 |
-| 头肩顶 | 100 S级，回踩颈线，颈线 43.57 |
-| attention | 42，偏空 |
+| `python_analyzer.py` | core 失败 / asOf 非法 → 非零退出 + 错误，绝不返回骨架或降级结果 |
+| NestJS `stock-analysis.service.ts` | Python 非零退出 → reject；拒绝 `engine.analyzer != real_core`；扫描列表缺信号层的股票计入失败 |
+| 前端 V4 HTML | API 失败或数据合同不符（未知阶段 / 方向、缺分数、缺 signals）→ 红色错误面板，不渲染形态；页面没有本地 JS 形态引擎 |

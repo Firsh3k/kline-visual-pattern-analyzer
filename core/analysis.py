@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -222,6 +223,21 @@ def _roundtrip(obj: Any) -> Any:
     return json.loads(json.dumps(obj, ensure_ascii=False, allow_nan=False))
 
 
+@functools.lru_cache(maxsize=1)
+def core_content_sha256() -> str:
+    """
+    线上版本自证：core 包内全部 .py 文件内容的 sha256（按相对路径排序，路径与内容一起参与哈希）。
+    与 git / 部署平台无关，同一份代码在任何地方算出的值都相同；
+    scripts/v6_fingerprint.py 可按任意 git 版本算出期望值做对比。
+    """
+    root = Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for f in sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts):
+        rel = f.relative_to(root).as_posix()
+        h.update(rel.encode() + b"\0" + hashlib.sha256(f.read_bytes()).hexdigest().encode() + b"\n")
+    return h.hexdigest()
+
+
 def engine_commit() -> str:
     for k in ("ENGINE_COMMIT", "GITHUB_SHA"):
         if os.environ.get(k):
@@ -316,6 +332,7 @@ def analyze(code: str, raw_bars: Iterable[Mapping[str, Any]], *, adjustment: str
             "provenance": _roundtrip(dict(provenance)),
         },
         "engine": {"core_version": CORE_VERSION, "engine_commit": engine_commit(),
+                   "core_sha256": core_content_sha256(),
                    "pattern_order": PATTERN_ORDER, "window": window},
         "bars": bar_rows,
         "core": {**result, "result_sha256": sha256_json(result)},

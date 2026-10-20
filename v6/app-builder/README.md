@@ -53,7 +53,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 
 每次部署/修改后，必须走真实生产路径（非 mock），全部 PASS 才放行：
 
-1. `/api/health` → 200，`core_analyzer=real_core`
+1. `/api/health` → 200，`core_analyzer=real_core`；`core_sha256` / `analyzer_sha256` 与 `python3 scripts/v6_fingerprint.py --ref <部署的标签>` 输出一致（线上版本自证）
 2. `/api/analyze/603068` → 200，`engine.analyzer=real_core`
 3. 603068：页面 8 种形态、已确认 / 未确认标签、主导形态与返回文档 `signals`（及 `summary`）逐项一致；行情每天变化，不写死具体分数
 4. 不存在任何静默降级路径（后端 fail-closed + 前端红色错误面板）

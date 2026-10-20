@@ -192,14 +192,24 @@ def analyze_market(as_of: str | None = None) -> dict:
             "calendar": A.calendar_info("sh000001", env["as_of"], _now_cn())}
 
 
+def analyzer_sha256() -> str:
+    """本执行器文件自身的 sha256（线上版本自证，见 scripts/v6_fingerprint.py）"""
+    import hashlib
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
 def health_check() -> dict:
+    core_sha = None
     try:
         from core import analysis as A  # noqa: F401
         core_ok = True
         version = A.CORE_VERSION
+        core_sha = A.core_content_sha256()
     except Exception as exc:  # noqa: BLE001
         core_ok, version = False, str(exc)
     return {
+        "core_sha256": core_sha,
+        "analyzer_sha256": analyzer_sha256(),
         "status": "ok" if core_ok else "degraded",
         "python_version": sys.version.split()[0],
         "core_installed": core_ok,

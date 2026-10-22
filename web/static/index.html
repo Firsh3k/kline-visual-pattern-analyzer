@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>K线形态分析 v6.0</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#333;font-size:14px;line-height:1.5}
+.header{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.header h1{font-size:16px;font-weight:600}
+.header .ver{font-size:10px;opacity:.7;background:rgba(255,255,255,.15);padding:2px 8px;border-radius:10px}
+.container{max-width:1200px;margin:0 auto;padding:12px}
+.tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:8px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:20px;cursor:pointer;font-size:13px;white-space:nowrap;transition:all .2s}
+.tab.active{background:#1a1a2e;color:#fff;border-color:#1a1a2e}
+.panel{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input{padding:10px 14px;border:1px solid #ddd;border-radius:8px;font-size:14px;flex:1;min-width:120px;background:#fafafa}
+input:focus{outline:none;border-color:#1a1a2e;background:#fff}
+button{padding:10px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;transition:opacity .2s}
+button:active{opacity:.8}
+button.danger{background:#e74c3c}
+button.success{background:#27ae60}
+button.small{padding:6px 12px;font-size:12px}
+#chart{width:100%;height:380px}
+.scores{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.score-item{padding:10px;background:#f8f9fa;border-radius:8px;text-align:center}
+.score-item .lbl{font-size:10px;color:#888;margin-bottom:2px}
+.score-item .val{font-size:18px;font-weight:700}
+.score-item .val.bull{color:#e74c3c}.score-item .val.bear{color:#27ae60}.score-item .val.mid{color:#f39c12}
+.advice{padding:10px 12px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-radius:8px;font-size:13px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.card{padding:12px;border-radius:8px;border:1px solid #e0e0e0;background:#fff}
+.card.bull{border-left:4px solid #e74c3c}
+.card.bear{border-left:4px solid #27ae60}
+.card .nm{font-size:13px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between}
+.card .nm .cnt{font-size:10px;color:#999;font-weight:400}
+.card .sc{font-size:22px;font-weight:700;margin-bottom:2px}
+.card .st{font-size:11px;color:#666;margin-bottom:4px}
+.card .nt{font-size:10px;color:#999;margin-bottom:6px;line-height:1.4}
+.card .kp{font-size:10px}
+.card .kp div{padding:1px 0;display:flex;justify-content:space-between}
+.card .kp .neck{color:#f39c12;font-weight:600}
+.card .kp .tgt{color:#e74c3c}
+.card .kp .stop{color:#27ae60}
+.card .none{color:#bbb;font-size:12px;padding:8px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:10px 8px;text-align:left;border-bottom:1px solid #eee}
+th{background:#f8f9fa;color:#666;font-size:11px;font-weight:600}
+.badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.b-S{background:#fde8e8;color:#e74c3c}.b-A{background:#fef3e2;color:#e67e22}
+.b-B{background:#e8f5e9;color:#27ae60}.b-C{background:#e3f2fd;color:#3498db}.b-D{background:#f5f5f5;color:#999}
+.loading{text-align:center;padding:40px;color:#888}
+.loading::after{content:'';display:inline-block;width:20px;height:20px;border:2px solid #ddd;border-top-color:#1a1a2e;border-radius:50%;animation:spin .8s linear infinite;margin-left:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.env{display:flex;align-items:center;gap:14px;padding:14px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-radius:10px}
+.env .es{font-size:36px;font-weight:700;min-width:60px;text-align:center}
+.env .et{font-size:15px;font-weight:600}
+.env .ea{font-size:12px;opacity:.9;margin-top:2px}
+.env-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+.env-item{padding:8px;background:#f8f9fa;border-radius:6px;text-align:center}
+.env-item .el{font-size:10px;color:#888}
+.env-item .ev{font-size:14px;font-weight:600}
+.env-item .ev.p{color:#e74c3c}.env-item .ev.n{color:#27ae60}
+.hidden{display:none!important}
+.section-title{font-size:14px;font-weight:600;margin-bottom:10px;color:#333}
+@media(max-width:600px){
+  .container{padding:8px}
+  .scores{grid-template-columns:repeat(2,1fr)}
+  .env-grid{grid-template-columns:repeat(3,1fr)}
+  #chart{height:300px}
+  .header h1{font-size:14px}
+  .card .sc{font-size:18px}
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>K线形态分析</h1>
+  <div class="ver">v6.0 · Python Core</div>
+</div>
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" onclick="tab('analyze')">个股分析</div>
+    <div class="tab" onclick="tab('watch')">自选股</div>
+    <div class="tab" onclick="tab('market')">大盘环境</div>
+  </div>
+
+  <div id="t-analyze">
+    <div class="panel">
+      <div class="row">
+        <input id="code" placeholder="股票代码 (如 603068)" value="603068">
+        <button onclick="analyze()">分析</button>
+        <button class="success small" onclick="addWatch()">+自选</button>
+      </div>
+    </div>
+    <div id="ar"></div>
+  </div>
+
+  <div id="t-watch" class="hidden">
+    <div class="panel">
+      <div class="row">
+        <input id="ncode" placeholder="输入股票代码">
+        <button class="small" onclick="addWatchItem()">添加</button>
+        <button class="success small" onclick="analyzeAll()">批量分析</button>
+      </div>
+    </div>
+    <div id="wr"></div>
+  </div>
+
+  <div id="t-market" class="hidden">
+    <div id="mr"><div class="panel"><div class="loading">加载中</div></div></div>
+  </div>
+</div>
+
+<script>
+let chart=null;
+const API='';
+
+function tab(t){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('[id^=t-]').forEach(x=>x.classList.add('hidden'));
+  event.target.classList.add('active');
+  document.getElementById('t-'+t).classList.remove('hidden');
+  if(t==='market')loadMarket();
+  if(t==='watch')loadWatch();
+}
+
+async function api(u,o){
+  const r=await fetch(API+u,o);
+  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail||'请求失败');}
+  return r.json();
+}
+
+async function analyze(){
+  const c=document.getElementById('code').value.trim();
+  if(!c)return alert('请输入代码');
+  document.getElementById('ar').innerHTML='<div class="panel"><div class="loading">Python Core 分析中...</div></div>';
+  try{
+    const d=await api('/api/analyze/'+c);
+    renderA(d);
+  }catch(e){
+    document.getElementById('ar').innerHTML='<div class="panel" style="color:#e74c3c">失败: '+e.message+'</div>';
+  }
+}
+
+function renderA(d){
+  const a=d.attention;
+  const lc='b-'+a.level.charAt(0);
+  let h='<div class="panel"><div class="scores">';
+  h+='<div class="score-item"><div class="lbl">代码</div><div class="val">'+d.code+'</div></div>';
+  h+='<div class="score-item"><div class="lbl">最新价</div><div class="val">'+Number(d.latest_close).toFixed(2)+'</div></div>';
+  h+='<div class="score-item"><div class="lbl">推荐度</div><div class="val '+(a.score>=70?'bull':a.score<=30?'bear':'mid')+'">'+a.score+'</div></div>';
+  h+='<div class="score-item"><div class="lbl">评级</div><div class="val"><span class="badge '+lc+'">'+a.level+'</span></div></div>';
+  h+='</div><div class="advice"><strong>操作建议:</strong> '+a.advice+'</div>';
+  h+='<div style="font-size:11px;color:#999;margin-bottom:8px">数据: '+d.data_length+'根K线 | 引擎: '+d.engine+' | '+d.latest_date+'</div>';
+  h+='<div id="chart"></div></div>';
+  h+='<div class="panel"><div class="section-title">形态识别 (Python Canonical Core)</div><div class="grid">';
+  for(const[k,v]of Object.entries(d.patterns)){
+    const dir=['hs_bottom','w_bottom'].includes(k)?'bull':'bear';
+    const nm={hs_bottom:'头肩底',w_bottom:'W底',hs_top:'头肩顶',m_top:'M头'}[k];
+    if(v.length===0){
+      h+='<div class="card '+dir+'"><div class="nm">'+nm+'</div><div class="none">未检测到</div></div>';
+    }else{
+      const p=v[0];
+      h+='<div class="card '+dir+'"><div class="nm">'+nm+'<span class="cnt">'+v.length+'个</span></div>';
+      h+='<div class="sc" style="color:'+(dir==='bull'?'#e74c3c':'#27ae60')+'">'+p.score+'分</div>';
+      h+='<div class="st">阶段: '+p.stage+'</div><div class="nt">'+p.notes+'</div><div class="kp">';
+      for(const kp of p.key_points||[])h+='<div><span>'+kp.name+'</span><span>'+Number(kp.price).toFixed(2)+'</span></div>';
+      h+='<div><span>颈线</span><span class="neck">'+Number(p.neckline_price).toFixed(2)+'</span></div>';
+      h+='<div><span>目标</span><span class="tgt">'+Number(p.target_price).toFixed(2)+'</span></div>';
+      h+='<div><span>止损</span><span class="stop">'+Number(p.stop_loss).toFixed(2)+'</span></div>';
+      h+='</div></div>';
+    }
+  }
+  h+='</div></div>';
+  document.getElementById('ar').innerHTML=h;
+  setTimeout(()=>drawChart(d),50);
+}
+
+function drawChart(d){
+  const el=document.getElementById('chart');
+  if(!el)return;
+  if(chart)chart.dispose();
+  chart=echarts.init(el);
+  const dates=d.klines.map(k=>k.date||k.day);
+  const ohlc=d.klines.map(k=>[k.open,k.close,k.low,k.high]);
+  const vol=d.klines.map(k=>k.volume||0);
+  const ml=[],mp=[];
+  for(const[k,ps]of Object.entries(d.patterns)){
+    for(const p of (ps||[]).slice(0,2)){
+      ml.push({yAxis:p.neckline_price,name:p.pattern_name+'颈线',lineStyle:{color:'#f39c12',type:'dashed',width:1},label:{show:true,formatter:p.pattern_name+' '+Number(p.neckline_price).toFixed(2),fontSize:10}});
+      for(const kp of p.key_points||[]){
+        const idx=dates.indexOf(kp.date);
+        if(idx>=0)mp.push({name:kp.name,coord:[kp.date,kp.price],value:kp.name,itemStyle:{color:kp.name==='头'?'#e74c3c':'#3498db'},label:{show:true,formatter:kp.name,fontSize:9,position:'top'}});
+      }
+    }
+  }
+  chart.setOption({
+    title:{text:d.code+' K线图',left:'center',textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis',axisPointer:{type:'cross'}},
+    legend:{data:['K线','成交量'],top:24,textStyle:{fontSize:11}},
+    grid:[{left:'8%',right:'4%',top:'14%',height:'52%'},{left:'8%',right:'4%',top:'72%',height:'16%'}],
+    xAxis:[{type:'category',data:dates,gridIndex:0,axisLabel:{fontSize:9}},{type:'category',data:dates,gridIndex:1,axisLabel:{show:false}}],
+    yAxis:[{scale:true,gridIndex:0,splitLine:{lineStyle:{type:'dashed'}}},{scale:true,gridIndex:1,splitNumber:2,axisLabel:{fontSize:9}}],
+    dataZoom:[{type:'inside',xAxisIndex:[0,1],start:40,end:100},{show:true,xAxisIndex:[0,1],type:'slider',bottom:2,start:40,end:100,height:18}],
+    series:[
+      {name:'K线',type:'candlestick',data:ohlc,xAxisIndex:0,yAxisIndex:0,itemStyle:{color:'#e74c3c',color0:'#27ae60',borderColor:'#e74c3c',borderColor0:'#27ae60'},markLine:{silent:true,symbol:'none',data:ml},markPoint:{data:mp,symbolSize:30}},
+      {name:'成交量',type:'bar',data:vol,xAxisIndex:1,yAxisIndex:1,itemStyle:{color:p=>ohlc[p.dataIndex][1]>=ohlc[p.dataIndex][0]?'#e74c3c':'#27ae60'}}
+    ]
+  });
+  window.addEventListener('resize',()=>chart&&chart.resize());
+}
+
+async function addWatch(){
+  const c=document.getElementById('code').value.trim();
+  if(!c)return;
+  try{await api('/api/watchlist/'+c,{method:'POST'});alert('已添加到自选股');}catch(e){alert('失败: '+e.message);}
+}
+
+async function loadWatch(){
+  document.getElementById('wr').innerHTML='<div class="panel"><div class="loading">加载中</div></div>';
+  try{
+    const d=await api('/api/watchlist');
+    let h='<div class="panel"><table><thead><tr><th>代码</th><th>名称</th><th>操作</th></tr></thead><tbody>';
+    if(d.stocks.length===0)h+='<tr><td colspan="3" style="text-align:center;color:#999">自选股为空</td></tr>';
+    for(const s of d.stocks){
+      h+='<tr><td>'+s.code+'</td><td>'+(s.name||s.code)+'</td><td><button class="small" onclick="one(\''+s.code+'\')">分析</button> <button class="danger small" onclick="delWatch(\''+s.code+'\')">删除</button></td></tr>';
+    }
+    h+='</tbody></table></div>';
+    document.getElementById('wr').innerHTML=h;
+  }catch(e){document.getElementById('wr').innerHTML='<div class="panel" style="color:#e74c3c">失败: '+e.message+'</div>';}
+}
+
+async function addWatchItem(){
+  const c=document.getElementById('ncode').value.trim();
+  if(!c)return;
+  try{await api('/api/watchlist/'+c,{method:'POST'});document.getElementById('ncode').value='';loadWatch();}catch(e){alert('失败: '+e.message);}
+}
+
+async function delWatch(c){
+  if(!confirm('删除 '+c+'?'))return;
+  try{await api('/api/watchlist/'+c,{method:'DELETE'});loadWatch();}catch(e){alert('失败: '+e.message);}
+}
+
+function one(c){
+  document.getElementById('code').value=c;
+  document.querySelectorAll('.tab')[0].click();
+  analyze();
+}
+
+async function analyzeAll(){
+  document.getElementById('wr').innerHTML='<div class="panel"><div class="loading">批量分析中 (Python Core)...</div></div>';
+  try{
+    const d=await api('/api/watchlist/analyze',{method:'POST'});
+    let h='<div class="panel"><div class="section-title">结果 (共'+d.total+'只，按推荐度排序)</div><table><thead><tr><th>代码</th><th>名称</th><th>最新价</th><th>推荐度</th><th>评级</th><th>最强形态</th><th>操作</th></tr></thead><tbody>';
+    for(const r of d.results){
+      if(r.error){h+='<tr><td>'+r.code+'</td><td>'+r.name+'</td><td colspan="4" style="color:#e74c3c">'+r.error+'</td><td></td></tr>';continue;}
+      const a=r.attention,lc='b-'+a.level.charAt(0),bp=a.best_bull||a.best_bear;
+      h+='<tr><td>'+r.code+'</td><td>'+r.name+'</td><td>'+Number(r.latest_close).toFixed(2)+'</td><td><strong>'+a.score+'</strong></td><td><span class="badge '+lc+'">'+a.level+'</span></td><td>'+(bp?bp.name+'('+bp.score+')':'-')+'</td><td><button class="small" onclick="one(\''+r.code+'\')">详情</button></td></tr>';
+    }
+    h+='</tbody></table></div>';
+    document.getElementById('wr').innerHTML=h;
+  }catch(e){document.getElementById('wr').innerHTML='<div class="panel" style="color:#e74c3c">失败: '+e.message+'</div>';}
+}
+
+async function loadMarket(){
+  document.getElementById('mr').innerHTML='<div class="panel"><div class="loading">分析中</div></div>';
+  try{
+    const e=await api('/api/market-env');
+    let h='<div class="panel"><div class="env"><div class="es">'+e.score+'</div><div><div class="et">'+e.index+' · '+e.stage+'</div><div class="ea">'+e.advice+'</div></div></div>';
+    h+='<div class="env-grid">';
+    h+='<div class="env-item"><div class="el">点位</div><div class="ev">'+e.current_price+'</div></div>';
+    h+='<div class="env-item"><div class="el">MA20</div><div class="ev">'+e.ma20+'</div></div>';
+    h+='<div class="env-item"><div class="el">MA60</div><div class="ev">'+e.ma60+'</div></div>';
+    h+='<div class="env-item"><div class="el">20日涨跌</div><div class="ev '+(e.change20_pct>=0?'p':'n')+'">'+(e.change20_pct>=0?'+':'')+e.change20_pct+'%</div></div>';
+    h+='<div class="env-item"><div class="el">波动率</div><div class="ev">'+e.volatility+'%</div></div>';
+    h+='</div><div style="margin-top:12px;font-size:12px;color:#666"><p>站上MA20: '+(e.above_ma20?'✅':'❌')+' | 站上MA60: '+(e.above_ma60?'✅':'❌')+' | 均线多头: '+(e.ma_bull?'✅':'❌')+'</p></div></div>';
+    document.getElementById('mr').innerHTML=h;
+  }catch(e){document.getElementById('mr').innerHTML='<div class="panel" style="color:#e74c3c">失败: '+e.message+'</div>';}
+}
+
+document.getElementById('code').addEventListener('keypress',e=>{if(e.key==='Enter')analyze();});
+document.getElementById('ncode').addEventListener('keypress',e=>{if(e.key==='Enter')addWatchItem();});
+window.onload=()=>analyze();
+</script>
+</body>
+</html>

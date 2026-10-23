@@ -13,8 +13,8 @@
  * - importLocal（浏览器一次性迁入）：先应用删除记录（只覆盖比它更早的服务器记录），
  *   再加入代码（只加入服务器上完全没有记录的代码，绝不覆盖已有 active / deleted；保持本机原有顺序）。
  *
- * 版本号 rev（QA R73-2）：每次写入都给被改动的行分配一个全局递增的序号（PostgreSQL 用 SEQUENCE，跨实例单调），
- * 行从不物理删除，所以清单的 rev = max(行序号) 单调不减。读取在单条 SQL 内完成（同一快照）。
+ * 版本号 rev（QA R73-2）：整份清单一个版本号，每个有实际改动的写操作 +1。PostgreSQL 用单行版本表加行锁，
+ * 所有写操作串行、版本与数据同一事务提交；读取一条 SQL 同时取版本与数据（同一快照）。详见 PostgresWatchlistStore。
  * 前端只接受 rev 不小于当前值的响应，迟到的旧读取不会覆盖已完成的更新。
  *
  * 就绪状态（QA R73-3）：未配置 / 初始化失败 / 运行中存储出错 → ready=false 并返回 503；
@@ -29,7 +29,13 @@ export interface WatchlistRow {
   added_at: string;          // ISO
   deleted_at: string | null; // ISO
   updated_at: string;        // ISO
-  rev: number;               // 最近一次写入该行时分配的全局序号
+  rev: number;               // 最近一次写入该行时的清单版本
+}
+
+/** 一次一致读取：rows 与 rev 属于同一个已提交状态 */
+export interface WatchlistSnapshot {
+  rows: WatchlistRow[];
+  rev: number;
 }
 
 export interface ImportTombstone {
@@ -40,9 +46,9 @@ export interface ImportTombstone {
 export interface WatchlistStore {
   readonly kind: string;
   init(): Promise<void>;
-  rows(): Promise<WatchlistRow[]>;
-  /** 返回 true = 新加入（之前不在清单里） */
-  add(code: string, now: Date): Promise<boolean>;
+  snapshot(): Promise<WatchlistSnapshot>;
+  /** 返回 true = 新加入（之前不在清单里）；limit>0 时在同一事务内检查上限 */
+  add(code: string, now: Date, limit?: number): Promise<boolean>;
   remove(code: string, now: Date): Promise<void>;
   clear(now: Date): Promise<number>;
   importLocal(codes: string[], tombstones: ImportTombstone[], now: Date): Promise<{ added: number; deleted: number }>;
@@ -79,62 +85,78 @@ function errMsg(err: unknown): string {
 export class MemoryWatchlistStore implements WatchlistStore {
   readonly kind: string = 'memory';
   private readonly data = new Map<string, WatchlistRow>();
-  private seq = 0;
+  private rev = 0;   // 清单版本（单线程，每个写操作天然串行）
 
   async init(): Promise<void> {}
 
-  async rows(): Promise<WatchlistRow[]> {
-    return [...this.data.values()].map((r) => ({ ...r }));
+  async snapshot(): Promise<WatchlistSnapshot> {
+    return { rows: [...this.data.values()].map((r) => ({ ...r })), rev: this.rev };
   }
 
-  private put(row: Omit<WatchlistRow, 'rev'>): void {
-    this.data.set(row.code, { ...row, rev: ++this.seq });
+  /** 一个写操作 = 一个新版本；没有改动则版本不变 */
+  private write<T>(fn: (put: (row: Omit<WatchlistRow, 'rev'>) => void) => T): T {
+    const next = this.rev + 1;
+    let changed = 0;
+    const out = fn((row) => { this.data.set(row.code, { ...row, rev: next }); changed++; });
+    if (changed > 0) this.rev = next;
+    return out;
   }
 
-  async add(code: string, now: Date): Promise<boolean> {
-    const r = this.data.get(code);
-    if (r && r.state === 'active') return false;
-    this.put({ code, state: 'active', added_at: iso(now), deleted_at: null, updated_at: iso(now) });
-    return true;
+  async add(code: string, now: Date, limit = 0): Promise<boolean> {
+    return this.write((put) => {
+      const r = this.data.get(code);
+      if (r && r.state === 'active') return false;
+      if (limit > 0 && [...this.data.values()].filter((x) => x.state === 'active').length >= limit) {
+        throw new WatchlistInputError(`自选股最多 ${limit} 只`);
+      }
+      put({ code, state: 'active', added_at: iso(now), deleted_at: null, updated_at: iso(now) });
+      return true;
+    });
   }
 
   async remove(code: string, now: Date): Promise<void> {
-    const r = this.data.get(code);
-    this.put({ code, state: 'deleted', added_at: r ? r.added_at : iso(now), deleted_at: iso(now), updated_at: iso(now) });
+    this.write((put) => {
+      const r = this.data.get(code);
+      put({ code, state: 'deleted', added_at: r ? r.added_at : iso(now), deleted_at: iso(now), updated_at: iso(now) });
+    });
   }
 
   async clear(now: Date): Promise<number> {
-    let n = 0;
-    for (const r of [...this.data.values()]) {
-      if (r.state === 'active') {
-        this.put({ ...r, state: 'deleted', deleted_at: iso(now), updated_at: iso(now) });
-        n++;
+    return this.write((put) => {
+      let n = 0;
+      for (const r of [...this.data.values()]) {
+        if (r.state === 'active') {
+          put({ ...r, state: 'deleted', deleted_at: iso(now), updated_at: iso(now) });
+          n++;
+        }
       }
-    }
-    return n;
+      return n;
+    });
   }
 
   async importLocal(codes: string[], tombstones: ImportTombstone[], now: Date): Promise<{ added: number; deleted: number }> {
-    let added = 0, deleted = 0;
-    for (const t of tombstones) {
-      const r = this.data.get(t.code);
-      const at = iso(t.deletedAt);
-      if (!r) {
-        this.put({ code: t.code, state: 'deleted', added_at: at, deleted_at: at, updated_at: at });
-        deleted++;
-      } else if (r.updated_at < at) {
-        this.put({ ...r, state: 'deleted', deleted_at: at, updated_at: at });
-        deleted++;
+    return this.write((put) => {
+      let added = 0, deleted = 0;
+      for (const t of tombstones) {
+        const r = this.data.get(t.code);
+        const at = iso(t.deletedAt);
+        if (!r) {
+          put({ code: t.code, state: 'deleted', added_at: at, deleted_at: at, updated_at: at });
+          deleted++;
+        } else if (r.updated_at < at) {
+          put({ ...r, state: 'deleted', deleted_at: at, updated_at: at });
+          deleted++;
+        }
       }
-    }
-    codes.forEach((code, i) => {
-      if (!this.data.has(code)) {
-        const at = new Date(now.getTime() + i);   // 每只相差 1ms，保持本机原有顺序
-        this.put({ code, state: 'active', added_at: iso(at), deleted_at: null, updated_at: iso(at) });
-        added++;
-      }
+      codes.forEach((code, i) => {
+        if (!this.data.has(code)) {
+          const at = new Date(now.getTime() + i);   // 每只相差 1ms，保持本机原有顺序
+          put({ code, state: 'active', added_at: iso(at), deleted_at: null, updated_at: iso(at) });
+          added++;
+        }
+      });
+      return { added, deleted };
     });
-    return { added, deleted };
   }
 }
 
@@ -144,14 +166,28 @@ export const PG_TABLE = 'kline_watchlist';
 
 type Sql = any; // postgres-js 实例（运行时加载，避免在无驱动的环境编译失败）
 
+export interface PostgresWatchlistOptions {
+  /** 仅测试用：每个写事务提交前调用（此时已持有版本行锁），用于构造并发提交顺序 */
+  beforeCommit?: (op: string) => Promise<void>;
+}
+
+/**
+ * 版本控制（QA R73-2 第二轮）：
+ * - 版本表 `<table>_meta` 只有一行（id=1, rev）。所有写操作（add/remove/clear/import）都在事务里先
+ *   `SELECT … FOR UPDATE` 锁住这一行，再以 rev+1 写数据并更新版本行，同一事务提交。
+ *   → 跨连接、跨实例的写入按“拿锁顺序 = 提交顺序”串行；版本号与数据一起提交，不会出现
+ *     “不同的已提交状态共用同一 rev”或“rev 大的状态先于 rev 小的状态可见”。
+ * - 读取用一条 SQL 同时取版本行和全部数据行（同一快照），所以返回的 rev 与 items 一定对应同一个已提交状态。
+ * - 没有实际改动的写操作（重复 add、clear 空清单、迁入无新内容）不更新版本行，rev 不变。
+ */
 export class PostgresWatchlistStore implements WatchlistStore {
   readonly kind = 'postgres';
   private sql: Sql;
-  private readonly seq: string;
+  private readonly metaTable: string;
 
-  constructor(urlOrSql: string | Sql, private readonly table = PG_TABLE) {
+  constructor(urlOrSql: string | Sql, private readonly table = PG_TABLE, private readonly opts: PostgresWatchlistOptions = {}) {
     if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`非法表名：${table}`);
-    this.seq = `${table}_rev_seq`;
+    this.metaTable = `${table}_meta`;
     if (typeof urlOrSql === 'string') {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const postgres = require('postgres');
@@ -165,70 +201,109 @@ export class PostgresWatchlistStore implements WatchlistStore {
     return q(this.table);
   }
 
-  /** nextval 片段（序列名作为参数传入并转换为 regclass，不拼接 SQL） */
-  private next(q: Sql = this.sql) {
-    return q`nextval(${this.seq}::regclass)`;
+  private m(q: Sql = this.sql) {
+    return q(this.metaTable);
   }
 
   async init(): Promise<void> {
-    await this.sql`CREATE SEQUENCE IF NOT EXISTS ${this.sql(this.seq)}`;
-    await this.sql`
-      CREATE TABLE IF NOT EXISTS ${this.t()} (
-        code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$'),
-        state       text NOT NULL CHECK (state IN ('active', 'deleted')),
-        added_at    timestamptz NOT NULL,
-        deleted_at  timestamptz,
-        updated_at  timestamptz NOT NULL,
-        rev         bigint NOT NULL
-      )`;
+    // 多实例同时启动时用事务级 advisory lock 串行建表，避免 CREATE TABLE IF NOT EXISTS 的并发冲突
+    await this.sql.begin(async (tx: Sql) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${this.table}))`;
+      await tx`
+        CREATE TABLE IF NOT EXISTS ${this.t(tx)} (
+          code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$'),
+          state       text NOT NULL CHECK (state IN ('active', 'deleted')),
+          added_at    timestamptz NOT NULL,
+          deleted_at  timestamptz,
+          updated_at  timestamptz NOT NULL,
+          rev         bigint NOT NULL
+        )`;
+      await tx`
+        CREATE TABLE IF NOT EXISTS ${this.m(tx)} (
+          id   int PRIMARY KEY CHECK (id = 1),
+          rev  bigint NOT NULL
+        )`;
+      await tx`
+        INSERT INTO ${this.m(tx)} (id, rev)
+        SELECT 1, COALESCE(MAX(rev), 0) FROM ${this.t(tx)}
+        ON CONFLICT (id) DO NOTHING`;
+    });
   }
 
-  async rows(): Promise<WatchlistRow[]> {
-    // 单条 SQL：同一快照
-    const rs = await this.sql`SELECT code, state, added_at, deleted_at, updated_at, rev FROM ${this.t()}`;
-    return rs.map((r: any) => ({
+  async snapshot(): Promise<WatchlistSnapshot> {
+    // 单条 SQL：版本行与数据行来自同一快照
+    const rs = await this.sql`
+      SELECT m.rev AS meta_rev, w.code, w.state, w.added_at, w.deleted_at, w.updated_at, w.rev
+      FROM ${this.m()} m LEFT JOIN ${this.t()} w ON true
+      WHERE m.id = 1`;
+    if (!rs.length) throw new Error('自选股版本记录缺失（未初始化）');
+    const rows: WatchlistRow[] = rs.filter((r: any) => r.code !== null).map((r: any) => ({
       code: r.code, state: r.state,
       added_at: iso(r.added_at), deleted_at: r.deleted_at ? iso(r.deleted_at) : null, updated_at: iso(r.updated_at),
       rev: Number(r.rev),
     }));
+    return { rows, rev: Number(rs[0].meta_rev) };
   }
 
-  async add(code: string, now: Date): Promise<boolean> {
-    // 已 active 的不改动（WHERE 不满足 → 无返回行、不消耗序号）
-    const rs = await this.sql`
-      INSERT INTO ${this.t()} (code, state, added_at, deleted_at, updated_at, rev)
-      VALUES (${code}, 'active', ${now}, NULL, ${now}, ${this.next()})
-      ON CONFLICT (code) DO UPDATE
-        SET state = 'active', added_at = EXCLUDED.added_at, deleted_at = NULL,
-            updated_at = EXCLUDED.updated_at, rev = EXCLUDED.rev
-        WHERE ${this.t()}.state <> 'active'
-      RETURNING code`;
-    return rs.length > 0;
+  /** 写事务：锁版本行 → 以 rev+1 写数据 → 有改动才推进版本 → 提交 */
+  private write<T>(op: string, fn: (tx: Sql, rev: number) => Promise<{ out: T; changed: number }>): Promise<T> {
+    return this.sql.begin(async (tx: Sql) => {
+      const [meta] = await tx`SELECT rev FROM ${this.m(tx)} WHERE id = 1 FOR UPDATE`;
+      if (!meta) throw new Error('自选股版本记录缺失（未初始化）');
+      const rev = Number(meta.rev) + 1;
+      const { out, changed } = await fn(tx, rev);
+      if (changed > 0) await tx`UPDATE ${this.m(tx)} SET rev = ${rev} WHERE id = 1`;
+      if (this.opts.beforeCommit) await this.opts.beforeCommit(op);
+      return out;
+    });
+  }
+
+  async add(code: string, now: Date, limit = 0): Promise<boolean> {
+    return this.write('add', async (tx, rev) => {
+      const [cur] = await tx`SELECT state FROM ${this.t(tx)} WHERE code = ${code}`;
+      if (cur && cur.state === 'active') return { out: false, changed: 0 };
+      if (limit > 0) {
+        const [{ n }] = await tx`SELECT count(*)::int AS n FROM ${this.t(tx)} WHERE state = 'active'`;
+        if (n >= limit) throw new WatchlistInputError(`自选股最多 ${limit} 只`);
+      }
+      await tx`
+        INSERT INTO ${this.t(tx)} (code, state, added_at, deleted_at, updated_at, rev)
+        VALUES (${code}, 'active', ${now}, NULL, ${now}, ${rev})
+        ON CONFLICT (code) DO UPDATE
+          SET state = 'active', added_at = EXCLUDED.added_at, deleted_at = NULL,
+              updated_at = EXCLUDED.updated_at, rev = EXCLUDED.rev`;
+      return { out: true, changed: 1 };
+    });
   }
 
   async remove(code: string, now: Date): Promise<void> {
-    await this.sql`
-      INSERT INTO ${this.t()} (code, state, added_at, deleted_at, updated_at, rev)
-      VALUES (${code}, 'deleted', ${now}, ${now}, ${now}, ${this.next()})
-      ON CONFLICT (code) DO UPDATE
-        SET state = 'deleted', deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at, rev = EXCLUDED.rev`;
+    await this.write('remove', async (tx, rev) => {
+      await tx`
+        INSERT INTO ${this.t(tx)} (code, state, added_at, deleted_at, updated_at, rev)
+        VALUES (${code}, 'deleted', ${now}, ${now}, ${now}, ${rev})
+        ON CONFLICT (code) DO UPDATE
+          SET state = 'deleted', deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at, rev = EXCLUDED.rev`;
+      return { out: undefined, changed: 1 };
+    });
   }
 
   async clear(now: Date): Promise<number> {
-    const rs = await this.sql`
-      UPDATE ${this.t()} SET state = 'deleted', deleted_at = ${now}, updated_at = ${now}, rev = ${this.next()}
-      WHERE state = 'active' RETURNING code`;
-    return rs.length;
+    return this.write('clear', async (tx, rev) => {
+      const rs = await tx`
+        UPDATE ${this.t(tx)} SET state = 'deleted', deleted_at = ${now}, updated_at = ${now}, rev = ${rev}
+        WHERE state = 'active' RETURNING code`;
+      return { out: rs.length, changed: rs.length };
+    });
   }
 
   async importLocal(codes: string[], tombstones: ImportTombstone[], now: Date): Promise<{ added: number; deleted: number }> {
-    return this.sql.begin(async (tx: Sql) => {
+    return this.write('import', async (tx, rev) => {
       let added = 0, deleted = 0;
       for (const t of tombstones) {
         const at = new Date(t.deletedAt);
         const rs = await tx`
           INSERT INTO ${this.t(tx)} (code, state, added_at, deleted_at, updated_at, rev)
-          VALUES (${t.code}, 'deleted', ${at}, ${at}, ${at}, ${this.next(tx)})
+          VALUES (${t.code}, 'deleted', ${at}, ${at}, ${at}, ${rev})
           ON CONFLICT (code) DO UPDATE
             SET state = 'deleted', deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at, rev = EXCLUDED.rev
             WHERE ${this.t(tx)}.updated_at < EXCLUDED.updated_at
@@ -239,12 +314,12 @@ export class PostgresWatchlistStore implements WatchlistStore {
         const at = new Date(now.getTime() + i);   // 每只相差 1ms，保持本机原有顺序
         const rs = await tx`
           INSERT INTO ${this.t(tx)} (code, state, added_at, deleted_at, updated_at, rev)
-          VALUES (${code}, 'active', ${at}, NULL, ${at}, ${this.next(tx)})
+          VALUES (${code}, 'active', ${at}, NULL, ${at}, ${rev})
           ON CONFLICT (code) DO NOTHING
           RETURNING code`;
         added += rs.length;
       }
-      return { added, deleted };
+      return { out: { added, deleted }, changed: added + deleted };
     });
   }
 
@@ -263,7 +338,7 @@ export class UnavailableWatchlistStore implements WatchlistStore {
   }
   /** 未配置时初始化即失败 → ready=false（QA R73-3） */
   async init(): Promise<void> { return this.fail(); }
-  async rows(): Promise<WatchlistRow[]> { return this.fail(); }
+  async snapshot(): Promise<WatchlistSnapshot> { return this.fail(); }
   async add(): Promise<boolean> { return this.fail(); }
   async remove(): Promise<void> { return this.fail(); }
   async clear(): Promise<number> { return this.fail(); }
@@ -359,13 +434,12 @@ export class Watchlist {
   }
 
   private async buildView(): Promise<WatchlistView> {
-    const rows = await this.store.rows();
+    const { rows, rev } = await this.store.snapshot();
     const active = rows.filter((r) => r.state === 'active')
       .sort((a, b) => (a.added_at < b.added_at ? -1 : a.added_at > b.added_at ? 1 : a.code < b.code ? -1 : 1));
     const tomb = rows.filter((r) => r.state === 'deleted')
       .sort((a, b) => (a.code < b.code ? -1 : 1))
       .map((r) => ({ code: r.code, deleted_at: r.deleted_at as string }));
-    const rev = rows.reduce((m, r) => Math.max(m, r.rev), 0);
     return { items: active.map((r) => r.code), tombstones: tomb, count: active.length, rev, storage: this.store.kind };
   }
 
@@ -380,11 +454,7 @@ export class Watchlist {
   async add(code: unknown): Promise<WatchlistView & { added: boolean }> {
     const c = assertCode(code);
     return this.run(async () => {
-      const current = await this.buildView();
-      if (!current.items.includes(c) && current.count >= MAX_WATCHLIST) {
-        throw new WatchlistInputError(`自选股最多 ${MAX_WATCHLIST} 只`);
-      }
-      const added = await this.store.add(c, this.now());
+      const added = await this.store.add(c, this.now(), MAX_WATCHLIST);
       return { ...(await this.buildView()), added };
     });
   }

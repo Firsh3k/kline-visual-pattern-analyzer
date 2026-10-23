@@ -153,6 +153,18 @@ async function suite(label, makeStore) {
     assert.strictEqual(typeof revs[1], 'number');
   });
 
+  await test('上限在写入内检查：满了 400，版本不变；已在清单里的重复 add 不受上限影响', async () => {
+    const { store } = await fresh();
+    const t = new Date('2026-10-23T08:00:00Z');
+    assert.strictEqual(await store.add('600519', t, 1), true);
+    const before = (await store.snapshot()).rev;
+    await assert.rejects(() => store.add('002436', t, 1), e => e.statusCode === 400 && /最多 1 只/.test(e.message));
+    assert.strictEqual(await store.add('600519', t, 1), false);
+    const after = await store.snapshot();
+    assert.strictEqual(after.rev, before);
+    assert.deepStrictEqual(after.rows.filter(r => r.state === 'active').map(r => r.code), ['600519']);
+  });
+
   await test('多端：两个实例（模拟手机 / 电脑）共用同一存储，看到同一份清单', async () => {
     const store = await makeStore();
     const phone = new W.Watchlist(store, clock('2026-10-23T08:00:00Z'));
@@ -164,6 +176,152 @@ async function suite(label, makeStore) {
     assert.deepStrictEqual((await pc.view()).items, ['002436']);
     // 电脑上的旧浏览器数据迁入时带着 600519，也不会复活
     assert.deepStrictEqual((await pc.importLocal({ codes: ['600519'] })).items, ['002436']);
+  });
+}
+
+/** 外部可控的屏障：wait() 挂起直到 open() */
+function barrier() {
+  let open;
+  const p = new Promise(r => { open = r; });
+  return { wait: () => p, open: () => open() };
+}
+function settled(p) {
+  let done = false;
+  p.then(() => { done = true; }, () => { done = true; });
+  return () => done;
+}
+async function waitFor(cond, what, ms = 5000) {
+  const t0 = Date.now();
+  while (!(await cond())) {
+    if (Date.now() - t0 > ms) throw new Error('等待超时：' + what);
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+
+/**
+ * QA R73-2 第二轮：两个真实 PG 连接 + 受控提交屏障，复现 QA 给出的顺序：
+ *   0) 清单 [600000]
+ *   1) 连接 A：迁入 600000 的删除记录，停在提交前
+ *   2) 连接 B：add 600001（旧实现：拿到更大的序号并先提交；新实现：等 A 的版本行锁）
+ *   3) 第三个连接读取快照 S1
+ *   4) 放行 A 提交 → 读取 S2；放行 B 提交 → 读取 S3
+ * 要求：不同的已提交状态 rev 不同、按提交顺序递增；页面先收到新快照、再收到迟到的旧快照时不回退；之后的新快照照常接受。
+ */
+async function pgConcurrency(url, sql, newTable) {
+  const postgres = require('postgres');
+  const { loadPage } = require('./v4_page_harness');
+  const vm = require('vm');
+
+  await test('QA R73-2：两个真实连接并发写（A 迁入删除记录未提交，B 加入）→ 写入按提交顺序串行，版本与数据一一对应', async () => {
+    const table = newTable('cc');
+    const connA = postgres(url, { max: 1, onnotice: () => {} });
+    const connB = postgres(url, { max: 1, onnotice: () => {} });
+    const holdA = barrier(), holdB = barrier();
+    const events = [];
+    let armed = false;
+    const hook = (name, hold) => async (op) => {
+      if (!armed) return;
+      events.push(`${name}:${op}:ready-to-commit`);
+      await hold.wait();
+    };
+    try {
+      const base = new W.PostgresWatchlistStore(sql, table);
+      const reader = new W.Watchlist(base, clock('2026-10-23T08:00:00Z'));
+      await reader.init();
+      const s0 = await reader.add('600000');                       // 08:00:01
+      const A = new W.Watchlist(new W.PostgresWatchlistStore(connA, table, { beforeCommit: hook('A', holdA) }), clock('2026-10-23T09:00:00Z'));
+      const B = new W.Watchlist(new W.PostgresWatchlistStore(connB, table, { beforeCommit: hook('B', holdB) }), clock('2026-10-23T09:30:00Z'));
+      await A.init(); await B.init();
+      armed = true;
+
+      const pA = A.importLocal({ tombstones: [{ code: '600000', deletedAt: '2026-10-23T08:30:00Z' }] });
+      await waitFor(async () => events.includes('A:import:ready-to-commit'), 'A 停在提交前');
+      const pB = B.add('600001');
+      const bDone = settled(pB);
+      // B 必须在等锁（而不是已经写完）：数据库里能看到一个处于 Lock 等待的会话
+      await waitFor(async () => {
+        const [{ n }] = await sql`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE ${'%' + table + '_meta%FOR UPDATE%'}`;
+        return n >= 1;
+      }, 'B 等待版本行锁');
+      assert.strictEqual(bDone(), false, 'A 未提交时 B 不应完成');
+      assert.ok(!events.some(e => e.startsWith('B:')), 'A 未提交时 B 不应进入写入');
+
+      const s1 = await reader.view();                              // A 未提交、B 在等
+      holdA.open();
+      await pA;
+      await waitFor(async () => events.includes('B:add:ready-to-commit'), 'B 拿到锁并停在提交前');
+      const s2 = await reader.view();                              // 只有 A 已提交
+      holdB.open();
+      await pB;
+      const s3 = await reader.view();                              // A、B 都已提交
+
+      assert.deepStrictEqual(events, ['A:import:ready-to-commit', 'B:add:ready-to-commit'], '提交顺序应为 A → B');
+      const states = [s0, s1, s2, s3].map(v => ({ items: v.items, rev: v.rev }));
+      assert.deepStrictEqual(states, [
+        { items: ['600000'], rev: 1 },
+        { items: ['600000'], rev: 1 },          // 未提交的写入不可见，版本也不变
+        { items: [], rev: 2 },                  // A 的删除记录
+        { items: ['600001'], rev: 3 },          // B 在 A 之后
+      ]);
+      assert.deepStrictEqual(s3.tombstones.map(t => t.code), ['600000']);
+
+      // 页面规则（真实页面代码）：先收到新快照，再收到迟到的旧快照 → 不回退；之后更新的快照照常接受
+      const page = loadPage({ exports: ['_applyWatchlistView'] });
+      const apply = page.x._applyWatchlistView;
+      const shown = () => JSON.parse(JSON.stringify(vm.runInContext('({codes: watchlistState.codes, rev: watchlistState.rev})', page.sandbox)));
+      apply(s3);
+      apply(s1);                                // 迟到的旧读取（QA 场景里的 {[600000,600001]} 在新实现下根本不会出现）
+      apply(s2);
+      assert.deepStrictEqual(shown(), { codes: ['600001'], rev: 3 });
+      armed = false;
+      const s4 = await B.add('600002');
+      apply(s4);
+      assert.deepStrictEqual(shown(), { codes: ['600001', '600002'], rev: 4 });
+    } finally {
+      holdA.open(); holdB.open();
+      await connA.end(); await connB.end();
+    }
+  });
+
+  await test('QA R73-2：三个连接随机并发写 + 并发读取 → 同一 rev 的快照内容完全相同，最终 rev = 有改动的写入次数', async () => {
+    const table = newTable('stress');
+    const conns = [0, 1, 2].map(() => postgres(url, { max: 1, onnotice: () => {} }));
+    try {
+      const wls = conns.map((c, i) => new W.Watchlist(new W.PostgresWatchlistStore(c, table), clock(`2026-10-23T0${i + 1}:00:00Z`)));
+      for (const w of wls) await w.init();
+      const reader = new W.Watchlist(new W.PostgresWatchlistStore(sql, table));
+      const pool = ['600000', '600001', '600002', '600003', '600004', '600005'];
+      let seed = 42;
+      const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+      const snaps = [];
+      let stop = false;
+      const readLoop = (async () => { while (!stop) snaps.push(await reader.view()); })();
+      let changes = 0;
+      await Promise.all(wls.map(async (w) => {
+        for (let k = 0; k < 25; k++) {
+          const code = pool[rnd(pool.length)];
+          const op = rnd(10);
+          if (op < 6) { if ((await w.add(code)).added) changes++; }
+          else if (op < 9) { await w.remove(code); changes++; }
+          else { if ((await w.clear()).cleared > 0) changes++; }
+        }
+      }));
+      stop = true;
+      await readLoop;
+      const fin = await reader.view();
+      snaps.push(fin);
+      assert.strictEqual(fin.rev, changes, `最终 rev=${fin.rev}，有改动的写入=${changes}`);
+      const byRev = new Map();
+      for (const v of snaps) {
+        const key = JSON.stringify([v.items, v.tombstones.map(t => t.code)]);
+        if (byRev.has(v.rev)) assert.strictEqual(byRev.get(v.rev), key, `rev=${v.rev} 对应了两种不同内容`);
+        else byRev.set(v.rev, key);
+      }
+      assert.ok(snaps.length > 5, '并发读取次数太少');
+    } finally {
+      for (const c of conns) await c.end();
+    }
   });
 }
 
@@ -199,7 +357,7 @@ async function suite(label, makeStore) {
     let down = false;
     const inner = new W.MemoryWatchlistStore();
     const guard = (fn) => async (...a) => { if (down) throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:5432'), { code: 'ECONNREFUSED' }); return fn.apply(inner, a); };
-    const store = { kind: 'postgres', init: guard(inner.init), rows: guard(inner.rows), add: guard(inner.add),
+    const store = { kind: 'postgres', init: guard(inner.init), snapshot: guard(inner.snapshot), add: guard(inner.add),
       remove: guard(inner.remove), clear: guard(inner.clear), importLocal: guard(inner.importLocal) };
     const wl = new W.Watchlist(store);
     await wl.init();
@@ -236,8 +394,9 @@ async function suite(label, makeStore) {
         await s.init(); await s.init();
         await assert.rejects(() => s.add('abc', new Date()), /check constraint/);
       });
+      await pgConcurrency(url, sql, (suffix) => { const t = `kline_watchlist_t${process.pid}_${suffix}`; tables.push(t); return t; });
     } finally {
-      for (const t of tables) await sql`DROP TABLE IF EXISTS ${sql(t)}`;
+      for (const t of tables) await sql`DROP TABLE IF EXISTS ${sql(t)}, ${sql(t + '_meta')}`;
       await sql.end();
     }
   } else {

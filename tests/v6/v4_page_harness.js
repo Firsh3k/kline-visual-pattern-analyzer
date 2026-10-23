@@ -63,7 +63,7 @@ function loadPage(opts = {}) {
     body: fakeElement('body'), head: fakeElement('head'), documentElement: fakeElement('html'),
     readyState: 'loading',
   };
-  const storage = {};
+  const storage = Object.assign({}, opts.localStorage || {});   // 可预置本机旧数据（迁入测试）
   const localStorage = {
     getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); },
     removeItem: k => { delete storage[k]; }, clear: () => { for (const k in storage) delete storage[k]; },
@@ -91,7 +91,7 @@ function loadPage(opts = {}) {
   const exportNames = opts.exports || [];
   const tail = '\n;globalThis.__exports = {' + exportNames.map(n => `${n}: typeof ${n} !== 'undefined' ? ${n} : undefined`).join(',') + '};';
   vm.runInContext(scripts.join('\n;\n') + tail, sandbox, { filename: 'v4/index.html' });
-  return { sandbox, x: sandbox.__exports, elements, timeouts, recordingCanvas };
+  return { sandbox, x: sandbox.__exports, elements, timeouts, recordingCanvas, storage };
 }
 
 module.exports = { loadPage, recordingCanvas, PAGE, ROOT };

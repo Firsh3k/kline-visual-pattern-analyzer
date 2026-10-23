@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
+import { Watchlist, WatchlistView, createWatchlistStore } from './watchlist-store';
 
 dotenv.config();
 
@@ -30,9 +31,15 @@ export class StockAnalysisService implements OnModuleInit {
   private coreSha256: string | null = null;
   private analyzerSha256: string | null = null;
   private coreInstallError: string | null = null;
-  private watchlist: string[] = [];
+  /** FIR-41：自选股存 PostgreSQL（全站共用一份），不再保存在 BFF 内存或浏览器本地 */
+  private readonly watchlist = new Watchlist(createWatchlistStore(process.env));
 
   onModuleInit(): void {
+    this.watchlist.init().then(() => {
+      const st = this.watchlist.status();
+      if (st.ready) this.logger.log(`自选股存储就绪（${st.kind}）`);
+      else this.logger.error(`自选股存储不可用（${st.kind}）：${st.error}`);
+    });
     this.pythonBinary = this.detectPythonBinary();
     if (this.pythonBinary) {
       this.setupCoreModule().catch((err: Error) => {
@@ -259,26 +266,28 @@ export class StockAnalysisService implements OnModuleInit {
     });
   }
 
-  getWatchlist(): { items: string[]; count: number } {
-    return { items: [...this.watchlist], count: this.watchlist.length };
+  getWatchlistStatus(): { kind: string; ready: boolean; error: string | null } {
+    return this.watchlist.status();
   }
 
-  addToWatchlist(code: string): { success: boolean; code: string; watchlist: string[] } {
-    this.validateCode(code);
-    if (this.watchlist.includes(code)) {
-      throw Object.assign(new Error('已在自选股列表中'), { statusCode: 409, code });
-    }
-    this.watchlist.push(code);
-    return { success: true, code, watchlist: [...this.watchlist] };
+  getWatchlist(): Promise<WatchlistView> {
+    return this.watchlist.view();
   }
 
-  removeFromWatchlist(code: string): { success: boolean; code: string; watchlist: string[] } {
-    const index = this.watchlist.indexOf(code);
-    if (index === -1) {
-      throw Object.assign(new Error('不在自选股列表中'), { statusCode: 404, code });
-    }
-    this.watchlist.splice(index, 1);
-    return { success: true, code, watchlist: [...this.watchlist] };
+  addToWatchlist(code: string): Promise<WatchlistView & { added: boolean }> {
+    return this.watchlist.add(code);
+  }
+
+  removeFromWatchlist(code: string): Promise<WatchlistView> {
+    return this.watchlist.remove(code);
+  }
+
+  clearWatchlist(): Promise<WatchlistView & { cleared: number }> {
+    return this.watchlist.clear();
+  }
+
+  importWatchlist(body: unknown): Promise<WatchlistView & { added: number; deleted: number; skipped: string[] }> {
+    return this.watchlist.importLocal(body);
   }
 
   /** 扫描列表项：确认 / 主导全部透传 Python 信号层（见 stock-analysis.pure.ts，R67-1）。 */
@@ -297,13 +306,14 @@ export class StockAnalysisService implements OnModuleInit {
     failedCount: number;
     run_mode: string;
   }> {
-    if (this.watchlist.length === 0) {
+    const codes = await this.watchlist.codes();
+    if (codes.length === 0) {
       return { items: [], failed: [], count: 0, failedCount: 0, run_mode: 'local' };
     }
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const { items, failed } = await this.runCodes(this.watchlist, 0, false);
+    const { items, failed } = await this.runCodes(codes, 0, false);
     return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
@@ -364,16 +374,17 @@ export class StockAnalysisService implements OnModuleInit {
 
   getSyncConfig(): Record<string, unknown> {
     return {
-      mode: 'browser_github',
-      detail: '自选股在浏览器本地维护并通过 GitHub Contents API 多端同步，BFF 不保存 token',
+      mode: 'server',
+      storage: this.watchlist.status(),
+      detail: '自选股保存在服务端数据库（全站共用一份），手机 / 电脑打开即同步；不再使用 GitHub 令牌',
       run_mode: 'local',
     };
   }
 
   syncPull(): { error: string; detail: string; run_mode: string } {
     return {
-      error: '自选股同步由浏览器端 GitHub Contents API 完成',
-      detail: 'BFF 不持有 GitHub token，避免第三方脚本读取凭据',
+      error: '已停用：自选股直接读写服务端（GET /api/watchlist），无需手动同步',
+      detail: '浏览器与服务端都不再保存 GitHub 令牌',
       run_mode: 'local',
     };
   }

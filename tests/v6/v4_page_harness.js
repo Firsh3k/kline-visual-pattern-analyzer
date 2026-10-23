@@ -51,6 +51,9 @@ function loadPage(opts = {}) {
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   if (!scripts.length) throw new Error('页面没有内联脚本');
   const elements = {};
+  const listeners = {};   // 记录 document / window 事件监听，测试可用 fire('DOMContentLoaded') 真正触发页面入口
+  const on = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+  const fire = (type, ev = {}) => { for (const fn of listeners[type] || []) fn(ev); };
   const document = {
     cookie: '',
     getElementById: id => {
@@ -59,7 +62,7 @@ function loadPage(opts = {}) {
     },
     querySelector: () => fakeElement(), querySelectorAll: () => [],
     createElement: tag => fakeElement(tag), createTextNode: t => ({ t }),
-    addEventListener() {}, removeEventListener() {},
+    addEventListener: on, removeEventListener() {},
     body: fakeElement('body'), head: fakeElement('head'), documentElement: fakeElement('html'),
     readyState: 'loading',
   };
@@ -73,7 +76,7 @@ function loadPage(opts = {}) {
     console: opts.quiet === false ? console : { log() {}, warn() {}, error() {}, info() {} },
     document, localStorage, sessionStorage: localStorage,
     navigator: { userAgent: 'node', clipboard: { writeText: async () => {} } },
-    location: { href: 'https://example.test/v4/', pathname: '/v4/', search: '', hash: '', origin: 'https://example.test', protocol: 'https:', host: 'example.test' },
+    location: { href: 'https://example.test/v4/', pathname: '/v4/', search: opts.search || '', hash: '', origin: 'https://example.test', protocol: 'https:', host: 'example.test' },
     history: { pushState() {}, replaceState() {} },
     alert() {}, confirm: () => false, prompt: () => null,
     // immediateTimers：用宏任务立即执行（不能用微任务，否则轮询循环会饿死测试里的事件）
@@ -82,7 +85,7 @@ function loadPage(opts = {}) {
     setInterval: () => 0, clearInterval() {}, requestAnimationFrame: () => 0,
     fetch: opts.fetch || (async () => { throw new Error('fetch 未桩'); }),
     URL, URLSearchParams, TextEncoder, TextDecoder, Intl, Date, Math, JSON, Promise, Set, Map,
-    devicePixelRatio: 1, addEventListener() {}, removeEventListener() {},
+    devicePixelRatio: 1, addEventListener: on, removeEventListener() {},
     matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
     atob: s => Buffer.from(s, 'base64').toString('binary'), btoa: s => Buffer.from(s, 'binary').toString('base64'),
   };
@@ -93,7 +96,7 @@ function loadPage(opts = {}) {
   const exportNames = opts.exports || [];
   const tail = '\n;globalThis.__exports = {' + exportNames.map(n => `${n}: typeof ${n} !== 'undefined' ? ${n} : undefined`).join(',') + '};';
   vm.runInContext(scripts.join('\n;\n') + tail, sandbox, { filename: 'v4/index.html' });
-  return { sandbox, x: sandbox.__exports, elements, timeouts, recordingCanvas, storage };
+  return { sandbox, x: sandbox.__exports, elements, timeouts, recordingCanvas, storage, fire, listeners };
 }
 
 module.exports = { loadPage, recordingCanvas, PAGE, ROOT };

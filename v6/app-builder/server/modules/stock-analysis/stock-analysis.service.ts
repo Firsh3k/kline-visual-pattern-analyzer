@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
-import { Watchlist, WatchlistView, createWatchlistStore } from './watchlist-store';
+import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { runProcess } from './run-process';
 
@@ -237,8 +237,9 @@ export class StockAnalysisService implements OnModuleInit {
     });
   }
 
-  getWatchlistStatus(): { kind: string; ready: boolean; error: string | null } {
-    return this.watchlist.status();
+  /** 真实读取一次后返回状态（/api/health 用，QA R73-3：反映当前是否真的可用） */
+  checkWatchlist(): Promise<WatchlistStatus> {
+    return this.watchlist.check();
   }
 
   getWatchlist(): Promise<WatchlistView> {

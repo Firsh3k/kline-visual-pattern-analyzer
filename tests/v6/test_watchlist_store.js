@@ -137,13 +137,20 @@ async function suite(label, makeStore) {
     await assert.rejects(() => wl.remove('../x'), e => e.statusCode === 400);
   });
 
-  await test('rev 随每次修改单调变化（前端据此判断是否需要刷新）', async () => {
+  await test('QA R73-2：rev 每次写入严格递增（含迁入“很早时间”的删除记录）；无改动则不变', async () => {
     const { wl } = await fresh();
-    const r0 = (await wl.view()).rev;
-    const r1 = (await wl.add('600519')).rev;
-    const r2 = (await wl.remove('600519')).rev;
-    assert.strictEqual(r0, null);
-    assert.ok(r1 && r2 && r2 > r1, `${r1} → ${r2}`);
+    const revs = [(await wl.view()).rev];
+    revs.push((await wl.add('600519')).rev);
+    revs.push((await wl.add('002436')).rev);
+    const same = (await wl.add('600519')).rev;            // 已在清单：无写入
+    revs.push((await wl.remove('600519')).rev);
+    revs.push((await wl.importLocal({ tombstones: [{ code: '300750', deletedAt: '2020-01-01T00:00:00Z' }] })).rev);
+    revs.push((await wl.clear()).rev);
+    revs.push((await wl.add('600519')).rev);
+    assert.strictEqual(revs[0], 0);
+    assert.strictEqual(same, revs[2], '无改动的写入不应改变 rev');
+    for (let i = 1; i < revs.length; i++) assert.ok(revs[i] > revs[i - 1], `rev 未递增：${revs}`);
+    assert.strictEqual(typeof revs[1], 'number');
   });
 
   await test('多端：两个实例（模拟手机 / 电脑）共用同一存储，看到同一份清单', async () => {
@@ -169,7 +176,10 @@ async function suite(label, makeStore) {
     assert.strictEqual(store.kind, 'unavailable');
     const wl = new W.Watchlist(store);
     await wl.init();
+    assert.strictEqual(wl.status().ready, false, 'QA R73-3：未配置时 ready 必须为 false');
+    assert.ok(/SUDA_DATABASE_URL/.test(wl.status().error));
     await assert.rejects(() => wl.view(), e => e.statusCode === 503 && /SUDA_DATABASE_URL/.test(e.message));
+    assert.strictEqual((await wl.check()).ready, false);
     assert.strictEqual(W.createWatchlistStore({ WATCHLIST_STORE: 'memory' }).kind, 'memory');
   });
   await test('数据库建表失败：status 报错，接口 503，恢复后自动重试', async () => {
@@ -178,11 +188,33 @@ async function suite(label, makeStore) {
     const store = Object.assign(Object.create(inner), { kind: 'memory', init: async () => { if (fail) throw new Error('permission denied for schema public'); } });
     const wl = new W.Watchlist(store);
     await wl.init();
-    assert.deepStrictEqual(wl.status(), { kind: 'memory', ready: false, error: 'permission denied for schema public' });
+    const st = wl.status();
+    assert.deepStrictEqual([st.kind, st.ready, st.error], ['memory', false, 'permission denied for schema public']);
     await assert.rejects(() => wl.view(), e => e.statusCode === 503 && /permission denied/.test(e.message));
     fail = false;
     assert.deepStrictEqual((await wl.view()).items, []);
     assert.strictEqual(wl.status().ready, true);
+  });
+  await test('QA R73-3：运行中断连 → 503 且 ready=false；恢复后自动重新就绪', async () => {
+    let down = false;
+    const inner = new W.MemoryWatchlistStore();
+    const guard = (fn) => async (...a) => { if (down) throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:5432'), { code: 'ECONNREFUSED' }); return fn.apply(inner, a); };
+    const store = { kind: 'postgres', init: guard(inner.init), rows: guard(inner.rows), add: guard(inner.add),
+      remove: guard(inner.remove), clear: guard(inner.clear), importLocal: guard(inner.importLocal) };
+    const wl = new W.Watchlist(store);
+    await wl.init();
+    await wl.add('600519');
+    assert.strictEqual((await wl.check()).ready, true);
+    down = true;
+    await assert.rejects(() => wl.view(), e => e.statusCode === 503 && /ECONNREFUSED/.test(e.message));
+    await assert.rejects(() => wl.add('002436'), e => e.statusCode === 503);
+    let st = await wl.check();
+    assert.deepStrictEqual([st.ready, /ECONNREFUSED/.test(st.error)], [false, true]);
+    await assert.rejects(() => wl.add('abc'), e => e.statusCode === 400, '输入错误仍是 400');
+    down = false;
+    st = await wl.check();
+    assert.deepStrictEqual([st.ready, st.error], [true, null]);
+    assert.deepStrictEqual((await wl.view()).items, ['600519']);
   });
 
   const url = process.env.TEST_DATABASE_URL;

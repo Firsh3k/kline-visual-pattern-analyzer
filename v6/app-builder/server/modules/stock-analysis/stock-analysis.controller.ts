@@ -29,7 +29,7 @@ export class StockAnalysisController {
       core_sha256: coreStatus.coreSha256,
       analyzer_sha256: coreStatus.analyzerSha256,
       engine_commit: coreStatus.engineCommit,
-      watchlist_store: this.service.getWatchlistStatus(),
+      watchlist_store: await this.service.checkWatchlist(),
       timestamp: new Date().toISOString(),
     };
   }

@@ -2878,11 +2878,19 @@ function getWatchlist() {
   return watchlistState.codes.slice();
 }
 
+// QA R73-2：服务端 rev 单调不减（全局序列号）。只接受 rev 不小于当前值的响应，
+// 迟到的旧读取（例如切页刷新与删除同时发生）不会把已完成的更新覆盖回去。
 function _applyWatchlistView(v) {
   if (!v || !Array.isArray(v.items)) throw new Error('服务端返回的自选股数据格式不对');
+  const rev = Number(v.rev);
+  if (!Number.isFinite(rev)) throw new Error('服务端返回的自选股缺少版本号');
+  if (watchlistState.loaded && watchlistState.rev !== null && rev < watchlistState.rev) {
+    console.warn(`[watchlist] 忽略过期响应 rev=${rev}（当前 ${watchlistState.rev}）`);
+    return v;
+  }
+  watchlistState.rev = rev;
   watchlistState.codes = v.items.slice();
   watchlistState.tombstones = Array.isArray(v.tombstones) ? v.tombstones.slice() : [];
-  watchlistState.rev = v.rev ?? null;
   watchlistState.storage = v.storage || null;
   watchlistState.loaded = true;
   watchlistState.error = null;
@@ -3092,7 +3100,6 @@ function showEngineDetail(mode) {
 // 页面加载时加载GitHub设置 + 健康检查 + selftest
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateConfigSummary, 500);
-  setTimeout(loadGithubSettings, 600);
   // 第二道防线：页面加载时健康检查
   setTimeout(checkEngineHealth, 200);
   // 第三道防线：URL参数触发自检

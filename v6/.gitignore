@@ -6,6 +6,10 @@ __pycache__/
 dist/
 build/
 .env
+# 本地环境覆盖（dev-local.js 通过 env pull 写入平台身份凭证，禁止入库）
+# .env.local 与 .env.*.local 均为机器本地文件；.env.example 无敏感值、不受影响
+.env.local
+.env.*.local
 *.log
 watchlist.json
 .DS_Store

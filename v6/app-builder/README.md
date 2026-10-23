@@ -44,6 +44,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | `server/modules/stock-analysis/stock-analysis.controller.ts` | health/analyze/watchlist/scan 等 API |
 | `server/modules/stock-analysis/stock-analysis.service.ts` | child_process 调用 Python（核心） |
 | `server/modules/stock-analysis/watchlist-store.ts` | 自选股服务端存储（FIR-41）：PostgreSQL 表 `kline_watchlist`（连接串 `SUDA_DATABASE_URL`，启动时自动建表），全站共用一份；删除记录防止旧设备迁入时复活；未配置数据库 → 接口 503，不在浏览器兜底。接口：`GET/DELETE /api/watchlist`、`POST/DELETE /api/watchlist/:code`、`POST /api/watchlist/import` |
+| `server/modules/stock-analysis/scan-jobs.ts` | 扫描后台任务（FIR-41）：`POST /api/scan/jobs` 提交、`GET /api/scan/jobs/:id` 查进度、`DELETE` 取消；全局最多 3 个分析并发（环境变量 `SCAN_MAX_PARALLEL`），单只超时，单次 ≤200 只；任务存内存，服务重启即清空 |
 | `server/modules/stock-analysis/v4-page.controller.ts` | 托管 V4 HTML |
 | `client/public/v4/FRONTEND_PATCHES.md` | V4 HTML 上 Python Core 集成 + 三道防线的受控改动 |
 

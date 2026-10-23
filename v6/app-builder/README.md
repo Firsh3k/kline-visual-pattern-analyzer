@@ -60,3 +60,31 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 5. 页面正常加载（非"页面待开发"、非 404）
 
 算法层的防漂移由仓库根 `tests/test_golden_patterns.py`（CI 黄金测试）锁定。
+
+## 平台依赖与构建/运行环境（FIR-41 同步）
+
+本目录的 `package.json` / `package-lock.json` / `nest-cli.json` / `tsconfig*.json` /
+`vite.config.ts` / `scripts/` 是从线上妙搭沙箱 **1:1 导出**的脚手架快照（2026-10-23），
+用于让仓库记录平台真实构建环境；**不代表本目录可在本地或 CI 独立构建**。
+
+| 项 | 版本/命令 |
+|----|-----------|
+| Node | `v22.21.0`（`engines.node >=22.0.0`） |
+| npm | `>=10.0.0`（`engines.npm`） |
+| Python | `3.10.12`（平台自带，`child_process` 调用，无需额外打包） |
+| 依赖锁 | `package-lock.json`，lockfileVersion 3 |
+| 构建 | `npm run build` → `scripts/build.sh`：`nest build`（SWC，server）+ `vite build`（client），产物输出 `dist/` |
+| 生产启动 | `NODE_ENV=production node main.js`（cwd 为 `dist/`，等价 `scripts/run.sh`） |
+| 开发 | `npm run dev` → `scripts/dev.sh` |
+
+说明：
+
+- 依赖中含大量 `@lark-apaas/*` 私有包（由妙搭平台提供，私有 registry），本地 / CI 无法 `npm install`；
+  构建与部署仍以妙搭平台为准。`package.json` 中的 React / Vite / Radix 等前端依赖是平台模板
+  （`fullstack-nestjs-template@2.3.0`）自带；本应用实际渲染的是 `client/public/v4/index.html` 静态页。
+- 仓库仅同步了受我们管控的 `server/`、`client/public/v4/`、`python_analyzer.py`、`core/`；
+  平台模板生成的 `client/src/`、`shared/`、`capabilities/` 等前端源不在仓库内。
+- 沙箱实测运行规格：**2 vCPU / 8 GB**；`_FAAS_MAX_CONCURRENCY=10`、`_FAAS_FUNC_TIMEOUT=3600s`（函数级，非网关）。
+- 平台可用持久存储（FIR-41 A）：托管 PostgreSQL（`@lark-apaas/nestjs-datapaas` + `SUDA_DATABASE_URL`）、
+  Redis over TLS（`MIAODA_CACHE_URL`）、TOS 对象存储（`TOS_BUCKET`），以及持久文件卷 `/home/workspace`
+  （跨部署保留；代码目录 `/home/gem/workspace/code` 在 overlay 临时层，重部署会重置）。

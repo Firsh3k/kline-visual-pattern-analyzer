@@ -74,14 +74,26 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | Python | `3.10.12`（平台自带，`child_process` 调用，无需额外打包） |
 | 依赖锁 | `package-lock.json`，lockfileVersion 3 |
 | 构建 | `npm run build` → `scripts/build.sh`：`nest build`（SWC，server）+ `vite build`（client），产物输出 `dist/` |
-| 生产启动 | `NODE_ENV=production node main.js`（cwd 为 `dist/`，等价 `scripts/run.sh`） |
-| 开发 | `npm run dev` → `scripts/dev.sh` |
+| 生产启动（平台实际） | `NODE_ENV=production node server/main.js`，cwd 为构建产物目录 `dist/`（即 `scripts/build.sh` 第 162 行拷贝到 `dist/run.sh` 的脚本；入口产物是 `dist/server/main.js`，与 `scripts/prune-smart.js` 的 `SERVER_ENTRY` 一致） |
+| 开发 | `npm run dev` → `scripts/dev.sh`；本地连沙箱用 `node scripts/dev-local.js`（会 env pull 到 `.env.local`） |
 
 说明：
 
 - 依赖中含大量 `@lark-apaas/*` 私有包（由妙搭平台提供，私有 registry），本地 / CI 无法 `npm install`；
   构建与部署仍以妙搭平台为准。`package.json` 中的 React / Vite / Radix 等前端依赖是平台模板
   （`fullstack-nestjs-template@2.3.0`）自带；本应用实际渲染的是 `client/public/v4/index.html` 静态页。
+- **生产启动入口以 `scripts/run.sh` 为准，不是 `package.json` 的 `start`。** `package.json` 里的
+  `"start": "NODE_ENV=production node main.js"` 是平台脚手架的 1:1 原样快照：源码根并不存在 `main.js`
+  （`nest build` 的 server 产物在 `dist/server/main.js`），而 `scripts/prune-smart.js` 智能裁剪后生成的
+  `dist/package.json` 只保留 `name/version/private/dependencies/engines`、**不含 `scripts`**。因此该 `start`
+  不能作为本仓库的启动说明，在源码根或本地直接执行会 `MODULE_NOT_FOUND`；平台实际是在构建后于 `dist/`
+  目录执行 `run.sh`（`node server/main.js`）。为保持脚手架快照 1:1，未为本地便利擅改平台 `package.json`/脚本。
+- **平台构建期注入、不在 lock 中的工具**：`fullstack-cli`（`postinstall` 的 `fullstack-cli action-plugin init`、
+  `build.sh` 的 `npx fullstack-cli action-plugin init`、`dev.js` 中调用）与 `@vercel/nft`
+  （`scripts/prune-smart.js` 顶部 `require('@vercel/nft')`）均**不在 `package-lock.json`**，由妙搭平台构建镜像 /
+  CLI 环境提供（`build.sh` 以 `npx fullstack-cli …` 临时解析，`@vercel/nft` 由平台构建环境的 `node_modules` 提供）。
+  本地 / CI 没有这些工具，无法据此快照独立完成完整 `npm run build` 与智能依赖裁剪；本目录是**平台环境快照，不是完整的独立构建配方**。
+  验证方式：以妙搭沙箱内实际构建/发布结果为准。
 - 仓库仅同步了受我们管控的 `server/`、`client/public/v4/`、`python_analyzer.py`、`core/`；
   平台模板生成的 `client/src/`、`shared/`、`capabilities/` 等前端源不在仓库内。
 - 沙箱实测运行规格：**2 vCPU / 8 GB**；`_FAAS_MAX_CONCURRENCY=10`、`_FAAS_FUNC_TIMEOUT=3600s`（函数级，非网关）。

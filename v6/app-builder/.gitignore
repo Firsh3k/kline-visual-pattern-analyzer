@@ -11,5 +11,11 @@ __pycache__/
 # 运行期日志
 *.log
 
+# 本地环境/凭证（scripts/dev-local.js 通过 env pull 把平台身份/凭证写入 .env.local，禁止入库）
+# 精确的 .env 由上层 v6/.gitignore 统一覆盖；这里只补机器本地覆盖文件，
+# .env.example 无敏感值、不受影响
+.env.local
+.env.*.local
+
 # 系统
 .DS_Store

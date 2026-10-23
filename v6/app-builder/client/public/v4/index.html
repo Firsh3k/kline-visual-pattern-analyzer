@@ -4044,7 +4044,8 @@ async function _apiError(resp) {
   return new Error(detail);
 }
 
-// onProgress(view) 每次轮询回调；返回最终任务视图（status: done | cancelled）
+// onProgress(view) 每次轮询回调；返回最终任务视图（status: done | cancelled，且 finished_at 已设置）。
+// 取消后服务端 status 立即变 cancelled，但在途股票仍在分析：必须等 finished_at 才算结束（QA R71-1）。
 async function runScanJob(codes, opts = {}, onProgress = null) {
   const apiBase = _getApiBasePath();
   const resp = await fetch(`${apiBase}/scan/jobs`, {
@@ -4071,7 +4072,7 @@ async function runScanJob(codes, opts = {}, onProgress = null) {
         continue;
       }
       if (onProgress) onProgress(view);
-      if (view.status !== 'running') return view;
+      if (view.status !== 'running' && view.finished_at) return view;
     }
   } finally {
     if (opts.trackCancel && currentScanJobId === job_id) currentScanJobId = null;
@@ -4080,6 +4081,8 @@ async function runScanJob(codes, opts = {}, onProgress = null) {
 
 async function cancelMarketScan() {
   if (!currentScanJobId) return;
+  const btn = document.getElementById('scanCancelBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '正在停止…'; }
   const apiBase = _getApiBasePath();
   try {
     await fetch(`${apiBase}/scan/jobs/${encodeURIComponent(currentScanJobId)}`, { method: 'DELETE', credentials: 'include', headers: _apiHeaders(false) });
@@ -4297,7 +4300,9 @@ async function startMarketScan() {
   try {
     const view = await runScanJob(allCodes, { minScore, onlyBull, trackCancel: true }, v => {
       progressBar.style.width = (v.total ? Math.round(v.done / v.total * 100) : 0) + '%';
-      status.innerHTML = `<span style="color:#f39c12;">Python Core 扫描中：${v.done}/${v.total}${v.failed_count ? `（失败 ${v.failed_count}）` : ''}，已筛出 ${v.matched} 只…</span>`;
+      status.innerHTML = v.status === 'cancelled'
+        ? `<span style="color:#f39c12;">已请求停止：不再启动新股票，正在等待 ${v.running} 只在途分析完成（已完成 ${v.done}/${v.total}）…</span>`
+        : `<span style="color:#f39c12;">Python Core 扫描中：${v.done}/${v.total}${v.failed_count ? `（失败 ${v.failed_count}）` : ''}，已筛出 ${v.matched} 只…</span>`;
     });
     const failed = (view.failed || []).slice();
 
@@ -4323,7 +4328,7 @@ async function startMarketScan() {
     scanResults = [];
     resultsDiv.innerHTML = '';
   } finally {
-    if (cancelBtn) cancelBtn.style.display = 'none';
+    if (cancelBtn) { cancelBtn.style.display = 'none'; cancelBtn.disabled = false; cancelBtn.textContent = '停止扫描'; }
   }
 }
 

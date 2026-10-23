@@ -5,11 +5,17 @@
  * - 全局限制同时运行的分析数（所有任务共用，默认 3 个 Python 进程），单只股票超时，股票代码去重，单次上限。
  * - 每只股票的结果仍由 runner（= Python core + buildBatchItem）给出，与个股页同源；本模块不做任何判断。
  * - 任务状态放内存：服务重启即丢失，查询返回 404，前端提示重新扫描（持久化随自选股后端存储一起做）。
+ *
+ * QA R71-2：超时 → 通过 AbortSignal 让 runner 终止底层 Python 进程；并发名额只在 runner 真正结束（进程确认退出）
+ *   后才释放。runner 若无视中止、一直不结束，名额就一直占着（硬上限优先于吞吐）。
+ * QA R71-1：取消只停止启动新股票；status 立即变 cancelled，在途股票跑完后才设置 finished_at；
+ *   前端以 finished_at 为最终结束标志，取消后继续轮询直到在途结果都回来。
  */
 import { randomUUID } from 'crypto';
 import { InvalidRequestError } from './stock-analysis.pure';
 
-export type ScanRunner = (code: string) => Promise<Record<string, any>>;
+/** signal 中止时 runner 应终止底层分析，并在清理完成后才 settle */
+export type ScanRunner = (code: string, signal: AbortSignal) => Promise<Record<string, any>>;
 
 export interface ScanJobOptions {
   maxParallel?: number;      // 全局同时运行的分析数
@@ -99,6 +105,7 @@ export class ScanJobManager {
     return {
       job_id: j.id,
       status: j.status,
+      finished: j.finishedAt !== null,      // 最终结束标志（取消后要等在途股票跑完）
       total: j.codes.length,
       done: j.done,
       running: j.running,
@@ -165,13 +172,13 @@ export class ScanJobManager {
   }
 
   private async runOne(job: Job, code: string): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ac = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ac.abort(); }, this.opt.perStockTimeoutMs);
     try {
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`分析超时（>${Math.round(this.opt.perStockTimeoutMs / 1000)} 秒）`)),
-          this.opt.perStockTimeoutMs);
-      });
-      const item = await Promise.race([this.runner(code), timeout]);
+      // 等 runner 自己结束（被中止时它会先终止进程再 settle），不在超时时提前放行
+      const item = await this.runner(code, ac.signal);
+      if (timedOut) throw new Error('timeout');
       const bull = item?.bull_top ?? null;
       const { minScore, onlyBull } = job.filter;
       if ((onlyBull && bull === null) || (minScore > 0 && (bull === null || bull.score < minScore))) {
@@ -180,9 +187,12 @@ export class ScanJobManager {
         job.items.push(item);
       }
     } catch (err) {
-      job.failed.push({ code, reason: err instanceof Error ? err.message : String(err) });
+      const reason = timedOut
+        ? `分析超时（>${Math.round(this.opt.perStockTimeoutMs / 1000)} 秒），已终止分析进程`
+        : (err instanceof Error ? err.message : String(err));
+      job.failed.push({ code, reason });
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 

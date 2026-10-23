@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { spawn, execSync } from 'child_process';
+import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
+import { runProcess } from './run-process';
 
 dotenv.config();
 
@@ -16,7 +17,12 @@ interface PythonBinary {
 interface CallOptions {
   asOf?: string;
   adjustment?: 'qfq' | 'none';
+  /** 中止 → 立即 SIGKILL Python 子进程，并在进程确认退出后才 reject（扫描超时用，QA R71-2） */
+  signal?: AbortSignal;
 }
+
+/** 单次 Python 分析的硬超时：到时 SIGKILL，确认退出后返回（原 spawn timeout 只发 SIGTERM，不保证退出） */
+const PY_TIMEOUT_MS = 30000;
 
 const CODE_RE = /^\d{6}$/;
 const MAX_SCAN_CODES = 200;
@@ -31,7 +37,7 @@ export class StockAnalysisService implements OnModuleInit {
   private coreInstallError: string | null = null;
   private watchlist: string[] = [];
   /** FIR-41：扫描后台任务（全局最多 3 个 Python 分析同时运行，单只超时，单次 ≤200 只） */
-  private readonly scanJobs = new ScanJobManager((code) => this.analyzeOne(code), {
+  private readonly scanJobs = new ScanJobManager((code, signal) => this.analyzeOne(code, signal), {
     maxParallel: Number(process.env.SCAN_MAX_PARALLEL ?? 3) || 3,
   });
 
@@ -130,64 +136,39 @@ export class StockAnalysisService implements OnModuleInit {
   /** 调用 Python Canonical Core 执行器。严格 6 位代码、spawn 参数数组（无 shell 注入）、fail-closed。 */
   callPythonLocal(code: string, opts: CallOptions = {}): Promise<Record<string, unknown>> {
     this.validateCode(code);
-    return new Promise((resolve, reject) => {
-      if (!this.pythonBinary) {
-        reject(new Error('本地Python环境不可用'));
-        return;
-      }
-
-      const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-      const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
-      let asOf: string | undefined;
+    if (!this.pythonBinary) {
+      return Promise.reject(new Error('本地Python环境不可用'));
+    }
+    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
+    const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
+    let asOf: string | undefined;
+    try {
+      asOf = assertAsOf(opts.asOf);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (asOf) args.push('--as-of', asOf);
+    // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
+    return runProcess(this.pythonBinary.path, args, {
+      cwd: process.cwd(),
+      timeoutMs: PY_TIMEOUT_MS,
+      signal: opts.signal,
+      env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
+    }).then((r) => {
+      if (r.killed === 'timeout') throw new Error(`Python 分析超时（>${PY_TIMEOUT_MS / 1000} 秒），已终止进程`);
+      if (r.killed === 'aborted') throw new Error('分析已中止，Python 进程已终止');
+      if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `Python脚本退出码 ${r.exitCode}`);
+      let result: any;
       try {
-        asOf = assertAsOf(opts.asOf);
+        result = JSON.parse(r.stdout.trim());
       } catch (err) {
-        reject(err);
-        return;
+        throw new Error('Python输出解析失败: ' + (err instanceof Error ? err.message : String(err)));
       }
-      if (asOf) args.push('--as-of', asOf);
-      const py = spawn(this.pythonBinary.path, args, {
-        cwd: process.cwd(),
-        timeout: 30000,
-        env: {
-          ...process.env,
-          ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined,
-        },
-      });
-      // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
-
-      let stdout = '';
-      let stderr = '';
-
-      py.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-      });
-
-      py.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      py.on('close', (codeExit: number) => {
-        if (codeExit !== 0) {
-          reject(new Error(stderr.trim() || `Python脚本退出码 ${codeExit}`));
-          return;
-        }
-        try {
-          const result = JSON.parse(stdout.trim());
-          const analyzer = result?.engine?.analyzer;
-          if (analyzer && analyzer !== 'real_core') {
-            reject(new Error(`引擎非 real_core（${analyzer}），生产路径拒绝降级结果`));
-            return;
-          }
-          resolve(result);
-        } catch (err) {
-          reject(new Error('Python输出解析失败: ' + (err instanceof Error ? err.message : String(err))));
-        }
-      });
-
-      py.on('error', (err: Error) => {
-        reject(err);
-      });
+      const analyzer = result?.engine?.analyzer;
+      if (analyzer && analyzer !== 'real_core') {
+        throw new Error(`引擎非 real_core（${analyzer}），生产路径拒绝降级结果`);
+      }
+      return result as Record<string, unknown>;
     });
   }
 
@@ -210,45 +191,30 @@ export class StockAnalysisService implements OnModuleInit {
   }
 
   private callPythonMarket(asOf?: string): Promise<Record<string, unknown>> {
-    return new Promise((resolve, reject) => {
-      if (!this.pythonBinary) {
-        reject(new Error('本地Python环境不可用'));
-        return;
-      }
-      const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-      const args = [scriptPath, '--mode', 'market'];
-      let checked: string | undefined;
+    if (!this.pythonBinary) {
+      return Promise.reject(new Error('本地Python环境不可用'));
+    }
+    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
+    const args = [scriptPath, '--mode', 'market'];
+    let checked: string | undefined;
+    try {
+      checked = assertAsOf(asOf);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (checked) args.push('--as-of', checked);
+    return runProcess(this.pythonBinary.path, args, {
+      cwd: process.cwd(),
+      timeoutMs: PY_TIMEOUT_MS,
+      env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
+    }).then((r) => {
+      if (r.killed) throw new Error(`大盘分析超时（>${PY_TIMEOUT_MS / 1000} 秒），已终止进程`);
+      if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `大盘分析退出码 ${r.exitCode}`);
       try {
-        checked = assertAsOf(asOf);
+        return JSON.parse(r.stdout.trim());
       } catch (err) {
-        reject(err);
-        return;
+        throw new Error('大盘输出解析失败: ' + (err instanceof Error ? err.message : String(err)));
       }
-      if (checked) args.push('--as-of', checked);
-      const py = spawn(this.pythonBinary.path, args, {
-        cwd: process.cwd(),
-        timeout: 30000,
-        env: {
-          ...process.env,
-          ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined,
-        },
-      });
-      let stdout = '';
-      let stderr = '';
-      py.stdout.on('data', (c: Buffer) => { stdout += c.toString(); });
-      py.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-      py.on('close', (exit: number) => {
-        if (exit !== 0) {
-          reject(new Error(stderr.trim() || `大盘分析退出码 ${exit}`));
-          return;
-        }
-        try {
-          resolve(JSON.parse(stdout.trim()));
-        } catch (err) {
-          reject(new Error('大盘输出解析失败: ' + (err instanceof Error ? err.message : String(err))));
-        }
-      });
-      py.on('error', reject);
     });
   }
 
@@ -294,8 +260,8 @@ export class StockAnalysisService implements OnModuleInit {
     return this.scanJobs.cancel(id);
   }
 
-  private async analyzeOne(code: string): Promise<Record<string, unknown>> {
-    return this.buildBatchItem((await this.callPythonLocal(code)) as Record<string, any>);
+  private async analyzeOne(code: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return this.buildBatchItem((await this.callPythonLocal(code, { signal })) as Record<string, any>);
   }
 
   async analyzeWatchlist(): Promise<{

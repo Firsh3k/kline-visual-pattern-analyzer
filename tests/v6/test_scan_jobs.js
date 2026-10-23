@@ -29,6 +29,7 @@ function compile(file, requireMap) {
 }
 const pure = compile('stock-analysis.pure.ts', {});
 const { ScanJobManager } = compile('scan-jobs.ts', { './stock-analysis.pure': pure });
+const { runProcess } = compile('run-process.ts', {});
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
@@ -42,13 +43,15 @@ async function until(cond, ms = 3000) {
 }
 const codes = n => Array.from({ length: n }, (_, i) => String(600000 + i));
 
-/** 可控的假 runner：记录并发峰值，按代码决定成功 / 失败 / 挂起 */
+/** 可控的假 runner：记录并发峰值，按代码决定成功 / 失败 / 挂起（挂起的在收到中止后才结束，模拟进程被杀） */
 function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {}) {
   const st = { active: 0, peak: 0, calls: [] };
-  const run = async (code) => {
+  const run = async (code, signal) => {
     st.calls.push(code); st.active++; st.peak = Math.max(st.peak, st.active);
     try {
-      if (hang.has(code)) await new Promise(() => {});
+      if (hang.has(code)) {
+        await new Promise((_, reject) => signal.addEventListener('abort', () => setTimeout(() => reject(new Error('killed')), 5), { once: true }));
+      }
       await tick(); await tick();
       if (fail.has(code)) throw new Error(`Python 退出码 1：${code} 行情获取失败`);
       const s = score(code);
@@ -142,6 +145,67 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     assert.strictEqual(m.get('nope'), null);
   });
 
+  console.log('QA R71-2：超时终止底层分析，确认结束后才释放名额');
+
+  await test('连续超时：真实在跑的 runner 峰值不超过上限，全部记为超时失败', async () => {
+    const r = fakeRunner({ hang: new Set(codes(6)) });
+    const m = new ScanJobManager(r.run, { maxParallel: 2, perStockTimeoutMs: 10 });
+    const id = m.create(codes(6)).job_id;
+    let peakManager = 0;
+    while (m.get(id).status === 'running') { peakManager = Math.max(peakManager, m.activeCount()); await tick(); }
+    const v = m.get(id);
+    assert.strictEqual(r.st.peak, 2, `实际在跑峰值 ${r.st.peak}`);
+    assert.ok(peakManager <= 2);
+    assert.strictEqual(r.st.active, 0, '仍有 runner 未结束');
+    assert.strictEqual(v.failed.length, 6);
+    assert.ok(v.failed.every(f => /超时.*已终止/.test(f.reason)));
+  });
+
+  await test('runner 无视中止、一直不结束：名额一直占着，不会超过上限启动新股票（硬上限）', async () => {
+    const st = { active: 0, peak: 0, calls: 0 };
+    const run = () => { st.calls++; st.active++; st.peak = Math.max(st.peak, st.active); return new Promise(() => {}); };
+    const m = new ScanJobManager(run, { maxParallel: 2, perStockTimeoutMs: 5 });
+    const id = m.create(codes(5)).job_id;
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepStrictEqual([st.calls, st.peak, m.activeCount()], [2, 2, 2]);
+    assert.strictEqual(m.get(id).status, 'running');
+    assert.strictEqual(m.get(id).pending, 3);
+  });
+
+  await test('真实子进程：超时 SIGKILL，确认退出后才启动下一只；并发不超过 2，结束后无遗留进程', async () => {
+    const pids = [];
+    let live = 0, peak = 0;
+    const run = async (code, signal) => {
+      live++; peak = Math.max(peak, live);
+      try {
+        const res = await runProcess('sleep', ['30'], { signal });
+        pids.push(res.pid);
+        throw new Error(`killed=${res.killed}`);
+      } finally { live--; }
+    };
+    const m = new ScanJobManager(run, { maxParallel: 2, perStockTimeoutMs: 150 });
+    const id = m.create(codes(5)).job_id;
+    await until(() => m.get(id).status === 'done', 10000);
+    const v = m.get(id);
+    assert.strictEqual(peak, 2, `并发峰值 ${peak}`);
+    assert.strictEqual(pids.length, 5);
+    const alive = pids.filter(pid => { try { process.kill(pid, 0); return true; } catch { return false; } });
+    assert.deepStrictEqual(alive, [], `遗留进程：${alive}`);
+    assert.ok(v.failed.every(f => /超时/.test(f.reason)));
+  });
+
+  await test('runProcess：正常输出、超时 SIGKILL、中止 SIGKILL 都在进程退出后才返回', async () => {
+    const ok = await runProcess(process.execPath, ['-e', 'process.stdout.write("hi")']);
+    assert.deepStrictEqual([ok.stdout, ok.exitCode, ok.killed], ['hi', 0, false]);
+    const to = await runProcess('sleep', ['30'], { timeoutMs: 50 });
+    assert.deepStrictEqual([to.killed, to.signal], ['timeout', 'SIGKILL']);
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 30);
+    const ab = await runProcess('sleep', ['30'], { signal: ac.signal });
+    assert.deepStrictEqual([ab.killed, ab.signal], ['aborted', 'SIGKILL']);
+    for (const pid of [to.pid, ab.pid]) assert.throws(() => process.kill(pid, 0));
+  });
+
   console.log('前端：实际部署的 V4 页面');
 
   /** 模拟后端任务接口：每次 GET 推进 step 只 */
@@ -156,7 +220,7 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
         if (lose && done > 0) return json(404, { message: '扫描任务不存在或已过期（服务重启会清空任务），请重新扫描' });
         done = Math.min(total, done + step);
         const finished = done >= total;
-        return json(200, { job_id: 'job-1', status: finished ? 'done' : 'running', total, done,
+        return json(200, { job_id: 'job-1', status: finished ? 'done' : 'running', finished_at: finished ? '2026-10-23T00:00:00Z' : null, total, done,
           succeeded: items.length, matched: items.length, failed_count: finished ? failed.length : 0,
           items: finished ? items : [], failed: finished ? failed : [] });
       }
@@ -217,6 +281,51 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     assert.strictEqual(wr['600001'].bull_top.score, 88);
     assert.strictEqual(wr['600002'].bull_top, null);
     assert.ok(rendered >= 2);
+  });
+
+  await test('QA R71-1：取消后页面继续等在途股票，最终展示其结果；未启动的不再分析', async () => {
+    // 页面 → 桩 fetch → 真实 ScanJobManager；第一只股票挂起，直到测试放行
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const calls = [];
+    const runner = async (code) => {
+      calls.push(code);
+      if (code === '600001') await gate;
+      return batchItem(code, 80);
+    };
+    const m = new ScanJobManager(runner, { maxParallel: 1 });
+    const res = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+    let gets = 0;
+    const fetch = async (url, init = {}) => {
+      const method = init.method || 'GET';
+      const mm = url.match(/\/scan\/jobs(?:\/([^/]+))?$/);
+      if (!mm) return res(404, {});
+      if (method === 'POST') return res(201, m.create(JSON.parse(init.body).codes, {}));
+      if (method === 'DELETE') { m.cancel(mm[1]); return res(200, m.get(mm[1])); }
+      gets++;
+      const v = m.get(mm[1]);
+      return v ? res(200, JSON.parse(JSON.stringify(v))) : res(404, { message: 'gone' });
+    };
+    const p = loadPage({ fetch, immediateTimers: true, exports: ['startMarketScan', 'cancelMarketScan'] });
+    const doc = p.sandbox.document;
+    doc.querySelectorAll = (sel) => sel === '.sector-checkbox:checked' ? [{ value: 'S' }] : [];
+    p.sandbox.getAllSectors = () => ({ S: ['600001', '600002', '600003'] });
+    doc.getElementById('scanMinScore').value = '0';
+    doc.getElementById('scanSignalType').value = 'all';
+    let finished = false;
+    const scan = p.x.startMarketScan().then(() => { finished = true; });
+    await until(() => calls.length === 1 && vm.runInContext('currentScanJobId', p.sandbox));
+    await p.x.cancelMarketScan();
+    const getsAtCancel = gets;
+    await until(() => gets > getsAtCancel + 3);
+    assert.strictEqual(finished, false, '取消后、在途股票结束前，页面不应结束轮询');
+    assert.ok(/已请求停止.*在途/.test(doc.getElementById('scanStatus').innerHTML), doc.getElementById('scanStatus').innerHTML);
+    release();
+    await scan;
+    assert.deepStrictEqual(calls, ['600001'], '未启动的股票不应再分析');
+    const status = doc.getElementById('scanStatus').innerHTML;
+    assert.ok(/扫描已停止/.test(status) && /已分析 1 只/.test(status), status);
+    assert.ok(/600001/.test(doc.getElementById('scanResults').innerHTML), '在途股票的最终结果应展示');
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);

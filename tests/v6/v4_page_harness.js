@@ -76,7 +76,8 @@ function loadPage(opts = {}) {
     location: { href: 'https://example.test/v4/', pathname: '/v4/', search: '', hash: '', origin: 'https://example.test', protocol: 'https:', host: 'example.test' },
     history: { pushState() {}, replaceState() {} },
     alert() {}, confirm: () => false, prompt: () => null,
-    setTimeout: opts.immediateTimers ? ((fn) => { Promise.resolve().then(fn); return 0; }) : ((fn) => { timeouts.push(fn); return timeouts.length; }),
+    // immediateTimers：用宏任务立即执行（不能用微任务，否则轮询循环会饿死测试里的事件）
+    setTimeout: opts.immediateTimers ? ((fn) => { setImmediate(fn); return 0; }) : ((fn) => { timeouts.push(fn); return timeouts.length; }),
     clearTimeout() {},
     setInterval: () => 0, clearInterval() {}, requestAnimationFrame: () => 0,
     fetch: opts.fetch || (async () => { throw new Error('fetch 未桩'); }),

@@ -211,7 +211,7 @@ canvas { width: 100%; display: block; }
           <button onclick="clearAllWatchlist()" style="padding:8px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:13px;cursor:pointer;">清空全部</button>
         </div>
       </div>
-      <p style="font-size:13px;color:#8899aa;margin-bottom:12px;">自选股自动保存在本地，下次打开自动加载。添加股票后自动分析，双击行可在新标签页查看详情。</p>
+      <p style="font-size:13px;color:#8899aa;margin-bottom:12px;">自选股保存在服务器，手机和电脑同步。添加股票后自动分析，双击行可在新标签页查看详情。</p>
       
       <!-- 添加股票 -->
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
@@ -223,68 +223,19 @@ canvas { width: 100%; display: block; }
       <!-- 自选股标签列表 -->
       <div id="watchlistTags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;min-height:32px;"></div>
       
-      <!-- 云配置同步 -->
+      <!-- 多端同步（FIR-41：服务端保存，全站共用一份） -->
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:8px;padding:12px;margin-bottom:12px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
-          <span style="font-size:13px;font-weight:600;color:#f39c12;">☁️ 云配置同步（GitHub）</span>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <span id="autoSyncBadge" style="font-size:10px;padding:2px 8px;border-radius:8px;background:#1a2332;color:#556677;display:none;">自动同步已开启</span>
-            <button onclick="toggleGithubSettings()" style="padding:4px 10px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:4px;font-size:11px;cursor:pointer;">⚙️ 设置</button>
-          </div>
+          <span style="font-size:13px;font-weight:600;color:#f39c12;">☁️ 多端同步（服务器保存）</span>
+          <button onclick="refreshWatchlist(true)" style="padding:4px 10px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:4px;font-size:11px;cursor:pointer;">🔄 刷新</button>
         </div>
+        <div style="font-size:12px;color:#8899aa;line-height:1.6;margin-bottom:8px;">自选股保存在服务器，手机和电脑打开即是同一份清单；删除后不会被其它设备带回来。不再需要 GitHub 令牌。</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button onclick="exportConfig()" style="padding:8px 16px;background:#27ae60;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">📤 导出配置</button>
+          <button onclick="exportConfig()" style="padding:8px 16px;background:#27ae60;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">📤 导出备份</button>
           <label style="padding:8px 16px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">
-            📥 导入文件
+            📥 导入备份
             <input type="file" accept=".json" onchange="importConfigFromFile(event)" style="display:none;">
           </label>
-          <input type="text" id="githubConfigUrl" placeholder="粘贴GitHub链接导入（支持raw链接或网页链接）" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:12px;">
-          <button onclick="fillDefaultConfigUrl()" style="padding:8px 12px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:11px;cursor:pointer;" title="填充默认配置链接">默认链接</button>
-          <button onclick="importConfigFromUrl()" style="padding:8px 16px;background:#9b59b6;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;">从URL导入</button>
-          <button onclick="syncToGithub()" id="syncBtn" style="padding:8px 16px;background:#e67e22;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;display:none;">🔄 立即同步</button>
-        </div>
-        <!-- GitHub设置面板（默认隐藏） -->
-        <div id="githubSettingsPanel" style="display:none;margin-top:10px;padding:10px;background:#0f1419;border-radius:6px;border:1px solid #2a3441;">
-          <div style="font-size:12px;font-weight:600;color:#f39c12;margin-bottom:8px;">GitHub 自动同步设置</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-            <div>
-              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">GitHub 用户名</label>
-              <input type="text" id="ghUsername" value="Firsh3k" placeholder="如 Firsh3k" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
-            </div>
-            <div>
-              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">仓库名</label>
-              <input type="text" id="ghRepo" value="kline-visual-pattern-analyzer" placeholder="如 kline-visual-pattern-analyzer" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
-            </div>
-            <div>
-              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">分支</label>
-              <input type="text" id="ghBranch" value="main" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
-            </div>
-            <div>
-              <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">配置文件路径</label>
-              <input type="text" id="ghPath" value="config/watchlist.json" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
-            </div>
-          </div>
-          <div style="margin-bottom:8px;">
-            <label style="font-size:11px;color:#8899aa;display:block;margin-bottom:3px;">Personal Access Token（需 repo 权限）</label>
-            <input type="password" id="ghToken" placeholder="ghp_xxxxxxxxxxxx" style="width:100%;background:#1a2332;border:1px solid #2a3441;border-radius:4px;color:#f0f0f0;padding:6px 8px;font-size:12px;">
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#8899aa;">
-              <input type="checkbox" id="autoSyncEnabled" onchange="toggleAutoSync()"> 开启自动同步
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:not-allowed;font-size:12px;color:#8899aa;" title="安全策略：强制使用会话存储，关闭浏览器后Token自动清除">
-              <input type="checkbox" id="useSessionStorage" checked disabled> 会话存储（强制，安全策略）
-            </label>
-            <button onclick="saveGithubSettings()" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">保存设置</button>
-            <button onclick="testGithubConnection()" style="padding:6px 14px;background:#3498db;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">测试连接</button>
-          </div>
-          <div style="margin-top:8px;padding:8px;background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:4px;font-size:10px;color:#e74c3c;line-height:1.5;">
-            <b>⚠️ 安全提醒</b><br>
-            1. Token仅保存在本地浏览器localStorage，不会上传到任何服务器<br>
-            2. <b>强烈建议</b>使用GitHub Fine-grained Token（仅授予目标仓库的Contents读写权限），不要使用经典repo全权限Token<br>
-            3. 公共电脑使用后请清除浏览器数据，或使用"清除设置"按钮<br>
-            4. 若仓库为<b>私有仓库</b>，通过raw链接导入配置时可能需要认证，建议使用"GitHub自动同步设置"功能而非匿名raw链接
-          </div>
         </div>
         <div id="configSummary" style="margin-top:8px;font-size:11px;color:#556677;"></div>
         <div id="syncStatus" style="margin-top:4px;font-size:11px;"></div>
@@ -474,6 +425,7 @@ function switchTab(tab) {
   document.getElementById('page-analyze').classList.toggle('active', tab==='analyze');
   document.getElementById('page-watchlist').classList.toggle('active', tab==='watchlist');
   document.getElementById('page-scanner').classList.toggle('active', tab==='scanner');
+  if (tab === 'watchlist' && typeof refreshWatchlist === 'function') refreshWatchlist(false);
 }
 
 // ============ 接口地址 ============
@@ -2911,23 +2863,122 @@ function unavailableWatchItem(code) {
   return { code, name: code, price: 0, pct: '0.00', bull_top: null, bear_top: null, engine: 'unavailable', as_of: '', unavailable: true };
 }
 
-// 从localStorage读取自选股
-function getWatchlist() {
-  try {
-    const data = localStorage.getItem(WATCHLIST_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch(e) { return []; }
-}
-
-// 保存自选股到localStorage
-function saveWatchlist(codes) {
-  try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(codes)); } catch(e) {}
-}
-
-// ============ 云配置同步（GitHub） ============
+// ============ 自选股（FIR-41：保存在服务端数据库，全站共用一份，手机 / 电脑同步） ============
+// 页面不再把自选股写进浏览器本地，也不再使用 GitHub 令牌；浏览器里的旧数据只做一次性迁入。
+const LEGACY_WATCHLIST_KEY = WATCHLIST_KEY;                       // 旧版本机清单（只读，用于迁入）
+const LEGACY_TOMBSTONES_KEY = 'kline_watchlist_tombstones_v1';    // 旧版本机删除记录（只读，用于迁入）
+const LEGACY_GITHUB_KEYS = ['kline_github_settings_v1'];           // 旧版 GitHub 同步设置（含令牌），加载即清除
+const WATCHLIST_MIGRATED_KEY = 'kline_watchlist_migrated_server_v1';
 const CUSTOM_SECTORS_KEY = 'kline_custom_sectors_v1';
 
-// 导出配置为JSON文件
+const watchlistState = { codes: [], tombstones: [], rev: null, loaded: false, error: null, storage: null };
+
+// 当前清单（服务端最近一次返回的结果）；未加载成功时为空清单
+function getWatchlist() {
+  return watchlistState.codes.slice();
+}
+
+// QA R73-2：服务端 rev 单调不减（全局序列号）。只接受 rev 不小于当前值的响应，
+// 迟到的旧读取（例如切页刷新与删除同时发生）不会把已完成的更新覆盖回去。
+function _applyWatchlistView(v) {
+  if (!v || !Array.isArray(v.items)) throw new Error('服务端返回的自选股数据格式不对');
+  const rev = Number(v.rev);
+  if (!Number.isFinite(rev)) throw new Error('服务端返回的自选股缺少版本号');
+  if (watchlistState.loaded && watchlistState.rev !== null && rev < watchlistState.rev) {
+    console.warn(`[watchlist] 忽略过期响应 rev=${rev}（当前 ${watchlistState.rev}）`);
+    return v;
+  }
+  watchlistState.rev = rev;
+  watchlistState.codes = v.items.slice();
+  watchlistState.tombstones = Array.isArray(v.tombstones) ? v.tombstones.slice() : [];
+  watchlistState.storage = v.storage || null;
+  watchlistState.loaded = true;
+  watchlistState.error = null;
+  for (const code of Object.keys(watchlistResults)) {
+    if (!watchlistState.codes.includes(code)) delete watchlistResults[code];
+  }
+  return v;
+}
+
+async function watchlistRequest(method, sub = '', body) {
+  const apiBase = _getApiBasePath();
+  const init = { method, credentials: 'include', headers: _wlHeaders(body !== undefined) };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const resp = await fetch(`${apiBase}/watchlist${sub}`, init);
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const j = await resp.json(); if (j && (j.message || j.error)) detail = Array.isArray(j.message) ? j.message.join('；') : (j.message || j.error); } catch (_) {}
+    throw new Error(detail);
+  }
+  return _applyWatchlistView(await resp.json());
+}
+
+function _wlHeaders(json) {
+  const csrfMatch = document.cookie.match(/(?:^|;\s*)suda-csrf-token=([^;]+)/);
+  const csrfToken = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+  const headers = { 'Accept': 'application/json' };
+  if (json) headers['Content-Type'] = 'application/json';
+  if (csrfToken) headers['X-Suda-Csrf-Token'] = csrfToken;
+  return headers;
+}
+
+function _readLegacy(key) {
+  try { const d = localStorage.getItem(key); return d ? JSON.parse(d) : null; } catch (_) { return null; }
+}
+
+// 清除浏览器里旧的 GitHub 同步设置（含个人令牌）。会话存储里的也一并清除。
+function purgeLegacyGithubToken() {
+  for (const k of LEGACY_GITHUB_KEYS) {
+    try { localStorage.removeItem(k); } catch (_) {}
+    try { sessionStorage.removeItem(k); } catch (_) {}
+  }
+}
+
+// 把本机旧清单 / 删除记录一次性迁入服务端（只加入服务端没有记录的代码，删除过的不会复活）
+async function migrateLegacyWatchlist() {
+  let done = null;
+  try { done = localStorage.getItem(WATCHLIST_MIGRATED_KEY); } catch (_) {}
+  if (done) return null;
+  const codes = (_readLegacy(LEGACY_WATCHLIST_KEY) || []).filter(c => /^\d{6}$/.test(String(c)));
+  const tombstones = (_readLegacy(LEGACY_TOMBSTONES_KEY) || []).filter(t => t && t.code && t.deletedAt);
+  let result = null;
+  if (codes.length || tombstones.length) {
+    result = await watchlistRequest('POST', '/import', { codes, tombstones });
+  }
+  try { localStorage.setItem(WATCHLIST_MIGRATED_KEY, new Date().toISOString()); } catch (_) {}
+  return result;
+}
+
+// 从服务端加载（必要时先迁入本机旧数据）。失败时清单为空并明确提示，不使用本机旧数据兜底。
+async function refreshWatchlist(manual = false) {
+  try {
+    const migrated = await migrateLegacyWatchlist();
+    if (!migrated) await watchlistRequest('GET');
+    if (migrated && (migrated.added || migrated.deleted)) {
+      showSyncStatus(`✅ 已把本机原有自选股迁入服务器：新增 ${migrated.added} 只，删除记录 ${migrated.deleted} 条`, '#27ae60');
+    } else if (manual) {
+      showSyncStatus(`✅ 已从服务器刷新：${watchlistState.codes.length} 只自选股`, '#27ae60');
+    }
+  } catch (e) {
+    watchlistState.error = e.message || String(e);
+    if (!watchlistState.loaded) watchlistState.codes = [];
+    showSyncStatus(`❌ 自选股服务暂不可用：${watchlistState.error}（不会把修改只存在本机）`, '#e74c3c');
+  }
+  renderWatchlistTags();
+  renderWatchlistTable();
+  updateConfigSummary();
+}
+
+async function initWatchlistSync() {
+  purgeLegacyGithubToken();
+  await refreshWatchlist(false);
+  // 切回页面时自动拉取，另一台设备的修改无需手动同步
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshWatchlist(false);
+  });
+}
+
+// 导出当前清单为 JSON 文件（备份用）
 function exportConfig() {
   const watchlist = getWatchlist();
   let customSectors = [];
@@ -2935,23 +2986,15 @@ function exportConfig() {
     const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
     customSectors = data ? JSON.parse(data) : [];
   } catch(e) {}
-  
   const config = {
-    version: '1.0',
+    version: '2.0',
+    source: 'server',
     exportDate: new Date().toISOString().split('T')[0],
     exportTime: new Date().toLocaleString('zh-CN'),
-    watchlist: watchlist,
-    customSectors: customSectors,
-    settings: {
-      scanMinScore: document.getElementById('scanMinScore')?.value || '60',
-      scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
-    },
-    stats: {
-      watchlistCount: watchlist.length,
-      customSectorsCount: customSectors.length
-    }
+    watchlist,
+    tombstones: watchlistState.tombstones.map(t => ({ code: t.code, deletedAt: t.deleted_at })),
+    customSectors,
   };
-  
   const blob = new Blob([JSON.stringify(config, null, 2)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2961,658 +3004,57 @@ function exportConfig() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  
-  document.getElementById('configSyncStatus').textContent = `✅ 已导出 ${watchlist.length} 只自选股 + ${customSectors.length} 个自定义板块`;
-  document.getElementById('configSyncStatus').style.color = '#27ae60';
-  updateConfigSummary();
+  showSyncStatus(`✅ 已导出 ${watchlist.length} 只自选股 + ${customSectors.length} 个自定义板块`, '#27ae60');
 }
 
-// 从文件导入配置
+// 从 JSON 文件导入：按迁入规则合并到服务端（只加入服务端没有记录的代码；删除记录按时间合并）
 function importConfigFromFile(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const config = JSON.parse(e.target.result);
-      applyConfig(config, '本地文件');
+      if (!config.watchlist || !Array.isArray(config.watchlist)) throw new Error('配置文件缺少 watchlist 字段');
+      const r = await watchlistRequest('POST', '/import', {
+        codes: config.watchlist,
+        tombstones: Array.isArray(config.tombstones) ? config.tombstones : [],
+      });
+      if (Array.isArray(config.customSectors)) {
+        try { localStorage.setItem(CUSTOM_SECTORS_KEY, JSON.stringify(config.customSectors)); } catch(e2) {}
+      }
+      renderWatchlistTags();
+      renderWatchlistTable();
+      updateConfigSummary();
+      showSyncStatus(`✅ 导入完成：新增 ${r.added} 只，删除记录 ${r.deleted} 条${r.skipped && r.skipped.length ? `，跳过无效 ${r.skipped.length} 条` : ''}（已删除过的股票不会被重新加入）`, '#27ae60');
     } catch(err) {
-      alert('配置文件格式错误: ' + err.message);
+      showSyncStatus('❌ 导入失败：' + (err.message || err), '#e74c3c');
     }
   };
   reader.readAsText(file);
   event.target.value = '';
 }
 
-// 从GitHub URL导入配置（支持私有仓库认证）
-function importConfigFromUrl() {
-  let url = document.getElementById('githubConfigUrl').value.trim();
-  if (!url) {
-    alert('请输入GitHub配置文件链接');
-    return;
-  }
-  
-  // 自动识别github.com链接并转换为raw链接
-  // 格式1: https://github.com/用户名/仓库/blob/分支/路径 -> raw链接
-  // 格式2: https://raw.githubusercontent.com/用户名/仓库/分支/路径
-  const githubComMatch = url.match(/github\.com\/([^\/]+)\/([^\/]+)\/blob\/([^\/]+)\/(.+)/);
-  if (githubComMatch) {
-    const [, user, repo, branch, path] = githubComMatch;
-    url = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/${path}`;
-    document.getElementById('githubConfigUrl').value = url;
-  }
-  
-  if (!url.includes('raw.githubusercontent.com') && !url.includes('github.com')) {
-    alert('请输入有效的GitHub链接，支持：\n1. raw链接: https://raw.githubusercontent.com/...\n2. 网页链接: https://github.com/用户名/仓库/blob/分支/路径');
-    return;
-  }
-  
-  document.getElementById('configSyncStatus').textContent = '⏳ 正在从GitHub加载配置...';
-  document.getElementById('configSyncStatus').style.color = '#f39c12';
-  
-  // 如果已配置GitHub Token，自动带上Authorization头（支持私有仓库）
-  const settings = getGithubSettings();
-  const headers = { 'Accept': 'application/vnd.github.v3+json' };
-  if (settings && settings.token) {
-    headers['Authorization'] = `token ${settings.token}`;
-  }
-  
-  fetch(url, { headers })
-    .then(r => {
-      if (r.status === 404) {
-        throw new Error('404 文件不存在（私有仓库需先在设置中配置Token）');
-      }
-      if (r.status === 403) {
-        throw new Error('403 无权限（请检查Token是否有repo权限）');
-      }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    })
-    .then(text => {
-      try {
-        const config = JSON.parse(text);
-        applyConfig(config, 'GitHub');
-      } catch(e) {
-        throw new Error('配置文件格式错误: ' + e.message);
-      }
-    })
-    .catch(err => {
-      let errMsg = '❌ 加载失败: ' + err.message;
-      if (!settings || !settings.token) {
-        errMsg += '。提示：私有仓库请先在「⚙️ 设置」中配置GitHub Token';
-      }
-      document.getElementById('configSyncStatus').textContent = errMsg;
-      document.getElementById('configSyncStatus').style.color = '#e74c3c';
-    });
-}
-
-// 填充默认配置链接
-function fillDefaultConfigUrl() {
-  const settings = getGithubSettings();
-  const user = settings?.username || 'Firsh3k';
-  const repo = settings?.repo || 'kline-visual-pattern-analyzer';
-  const branch = settings?.branch || 'main';
-  const path = settings?.path || 'config/watchlist.json';
-  const url = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/${path}`;
-  document.getElementById('githubConfigUrl').value = url;
-  document.getElementById('configSyncStatus').textContent = '✅ 已填充默认链接，点击「从URL导入」即可加载';
-  document.getElementById('configSyncStatus').style.color = '#27ae60';
-}
-
-// 应用配置
-function applyConfig(config, source) {
-  if (!config.watchlist || !Array.isArray(config.watchlist)) {
-    alert('配置文件缺少watchlist字段');
-    return;
-  }
-  
-  // 导入自选股（合并去重）
-  const existing = getWatchlist();
-  const merged = [...new Set([...existing, ...config.watchlist])];
-  saveWatchlist(merged);
-  watchlistResults = {};
-  renderWatchlistTags();
-  
-  // 导入自定义板块
-  if (config.customSectors && Array.isArray(config.customSectors)) {
-    try {
-      localStorage.setItem(CUSTOM_SECTORS_KEY, JSON.stringify(config.customSectors));
-    } catch(e) {}
-  }
-  
-  // 应用设置
-  if (config.settings) {
-    if (config.settings.scanMinScore && document.getElementById('scanMinScore')) {
-      document.getElementById('scanMinScore').value = config.settings.scanMinScore;
-    }
-    if (config.settings.scanSignalType && document.getElementById('scanSignalType')) {
-      document.getElementById('scanSignalType').value = config.settings.scanSignalType;
-    }
-  }
-  
-  document.getElementById('configSyncStatus').textContent = `✅ 从${source}导入成功：${config.watchlist.length}只自选股 + ${(config.customSectors||[]).length}个自定义板块`;
-  document.getElementById('configSyncStatus').style.color = '#27ae60';
-  updateConfigSummary();
-}
-
-// 更新配置摘要
 function updateConfigSummary() {
-  const watchlist = getWatchlist();
+  const el = document.getElementById('configSummary');
+  if (!el) return;
   let customSectors = [];
   try {
     const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
     customSectors = data ? JSON.parse(data) : [];
   } catch(e) {}
-  
-  document.getElementById('configSummary').innerHTML = 
-    `当前配置：<b style="color:#f0f0f0">${watchlist.length}</b> 只自选股 | <b style="color:#f0f0f0">${customSectors.length}</b> 个自定义板块 | ` +
-    `<span style="color:#556677;">导出后请将JSON文件提交到GitHub仓库，其他设备通过raw链接导入即可同步</span>`;
-}
-
-// ============ GitHub 自动同步 ============
-const GITHUB_SETTINGS_KEY = 'kline_github_settings_v1';
-
-function getGithubSettings() {
-  try {
-    // 优先从 sessionStorage 读取（更安全，关闭浏览器即清除）
-    let data = sessionStorage.getItem(GITHUB_SETTINGS_KEY);
-    let storageUsed = sessionStorage;
-    if (!data) {
-      // 兼容旧版 localStorage
-      data = localStorage.getItem(GITHUB_SETTINGS_KEY);
-      storageUsed = localStorage;
-    }
-    if (!data) return null;
-    const settings = JSON.parse(data);
-    // Token 过期检查（默认7天）— 过期则实际删除，不只是标记
-    if (settings.token && settings.savedAt) {
-      const ageDays = (Date.now() - settings.savedAt) / (1000 * 60 * 60 * 24);
-      if (ageDays > 7) {
-        console.warn('GitHub Token已过期（超过7天），已自动删除');
-        // 实际删除两个存储中的数据
-        sessionStorage.removeItem(GITHUB_SETTINGS_KEY);
-        localStorage.removeItem(GITHUB_SETTINGS_KEY);
-        return null;
-      }
-    }
-    return settings;
-  } catch(e) { return null; }
-}
-
-function saveGithubSettings() {
-  const useSession = document.getElementById('useSessionStorage')?.checked ?? true;
-  const settings = {
-    username: document.getElementById('ghUsername').value.trim() || 'Firsh3k',
-    repo: document.getElementById('ghRepo').value.trim() || 'kline-visual-pattern-analyzer',
-    branch: document.getElementById('ghBranch').value.trim() || 'main',
-    path: document.getElementById('ghPath').value.trim() || 'config/watchlist.json',
-    token: document.getElementById('ghToken').value.trim(),
-    autoSync: document.getElementById('autoSyncEnabled').checked,
-    savedAt: Date.now(),
-    storageType: useSession ? 'session' : 'local'
-  };
-  if (!settings.token) {
-    alert('请填写GitHub Personal Access Token');
-    document.getElementById('ghToken').focus();
-    return;
-  }
-  if (settings.token.length < 10) {
-    alert('Token格式不正确，长度至少10个字符');
-    return;
-  }
-  // #18/#16 安全强制：完全禁止 localStorage 持久化 write PAT
-  // GitHub PAT 含 repo 写权限，持久化到 localStorage 存在安全风险
-  // 强制使用 sessionStorage（关闭浏览器即自动清除）
-  if (!useSession) {
-    alert(
-      '⚠️ 安全策略：不允许将 GitHub Personal Access Token 持久化到 localStorage。\n\n' +
-      '原因：PAT 含 repo 写权限，任何同源脚本或恶意扩展都可能读取，导致仓库被篡改或删除。\n\n' +
-      '已自动切换为 sessionStorage（关闭浏览器即自动清除，更安全）。'
-    );
-    document.getElementById('useSessionStorage').checked = true;
-    useSession = true;
-    settings.storageType = 'session';
-  }
-  try {
-    const storage = useSession ? sessionStorage : localStorage;
-    storage.setItem(GITHUB_SETTINGS_KEY, JSON.stringify(settings));
-    // 清除另一个存储中的旧数据
-    const otherStorage = useSession ? localStorage : sessionStorage;
-    otherStorage.removeItem(GITHUB_SETTINGS_KEY);
-    const storageName = useSession ? 'sessionStorage（关闭浏览器即清除）' : 'localStorage（持久化，安全性较低）';
-    showSyncStatus(`✅ 设置已保存！Token存储在${storageName}，7天后自动过期`, '#27ae60');
-    updateAutoSyncUI();
-    setTimeout(() => testGithubConnection(), 300);
-  } catch(e) {
-    alert('保存失败: ' + e.message + '。可能是浏览器禁用了存储，请检查隐私设置。');
-  }
-}
-
-function loadGithubSettings() {
-  const settings = getGithubSettings();
-  if (settings) {
-    document.getElementById('ghUsername').value = settings.username || 'Firsh3k';
-    document.getElementById('ghRepo').value = settings.repo || 'kline-visual-pattern-analyzer';
-    document.getElementById('ghBranch').value = settings.branch || 'main';
-    document.getElementById('ghPath').value = settings.path || 'config/watchlist.json';
-    document.getElementById('ghToken').value = settings._tokenExpired ? '' : (settings.token || '');
-    document.getElementById('autoSyncEnabled').checked = settings.autoSync || false;
-    if (document.getElementById('useSessionStorage')) {
-      document.getElementById('useSessionStorage').checked = settings.storageType !== 'local';
-    }
-    if (settings._tokenExpired) {
-      showSyncStatus('⚠️ Token已过期（超过7天），请重新输入Token', '#e74c3c');
-    } else {
-      showSyncStatus(`✅ 已加载保存的设置（${settings.username}/${settings.repo}）`, '#27ae60');
-    }
-  } else {
-    showSyncStatus('💡 请填写Token后点击保存设置', '#f39c12');
-  }
-  updateAutoSyncUI();
-}
-
-function toggleGithubSettings() {
-  const panel = document.getElementById('githubSettingsPanel');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  if (panel.style.display === 'block') loadGithubSettings();
-}
-
-function toggleAutoSync() {
-  const enabled = document.getElementById('autoSyncEnabled').checked;
-  if (enabled) {
-    const settings = getGithubSettings();
-    if (!settings || !settings.token) {
-      alert('请先填写并保存GitHub设置');
-      document.getElementById('autoSyncEnabled').checked = false;
-      return;
-    }
-  }
-  updateAutoSyncUI();
-}
-
-function updateAutoSyncUI() {
-  const settings = getGithubSettings();
-  const enabled = settings && settings.autoSync;
-  document.getElementById('autoSyncBadge').style.display = enabled ? 'inline-block' : 'none';
-  document.getElementById('syncBtn').style.display = settings ? 'inline-block' : 'none';
+  el.innerHTML = watchlistState.loaded
+    ? `服务器上：<b style="color:#f0f0f0">${watchlistState.codes.length}</b> 只自选股 | 删除记录 ${watchlistState.tombstones.length} 条 | 本机自定义板块 ${customSectors.length} 个`
+    : '<span style="color:#e74c3c;">尚未从服务器加载自选股</span>';
 }
 
 function showSyncStatus(msg, color) {
   const el = document.getElementById('syncStatus');
+  if (!el) return;
   el.textContent = msg;
   el.style.color = color;
-  setTimeout(() => { el.textContent = ''; }, 5000);
 }
 
-function buildConfigObject() {
-  const watchlist = getWatchlist();
-  let customSectors = [];
-  try {
-    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
-    customSectors = data ? JSON.parse(data) : [];
-  } catch(e) {}
-  return {
-    version: '1.0',
-    exportDate: new Date().toISOString().split('T')[0],
-    exportTime: new Date().toLocaleString('zh-CN'),
-    description: 'K线形态分析工具 - 自选股云配置（自动同步）',
-    watchlist: watchlist,
-    customSectors: customSectors,
-    settings: {
-      scanMinScore: document.getElementById('scanMinScore')?.value || '60',
-      scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
-    },
-    stats: {
-      watchlistCount: watchlist.length,
-      customSectorsCount: customSectors.length
-    }
-  };
-}
-
-// ============ FIR-19 多设备同步核心纯函数（可测试） ============
-
-/**
- * 合并远程与本地自选股，应用tombstone删除语义
- * @param {Array} remoteWatchlist - 远程自选股列表
- * @param {Array} localWatchlist - 本地自选股列表
- * @param {Array} remoteTombstones - 远程删除记录 [{code, deletedAt}]
- * @param {Array} localTombstones - 本地删除记录 [{code, deletedAt}]
- * @returns {Object} { mergedWatchlist, mergedTombstones, onlyRemote, onlyLocal, resurrected }
- */
-function mergeWatchlistsWithTombstones(remoteWatchlist, localWatchlist, remoteTombstones, localTombstones) {
-  remoteWatchlist = remoteWatchlist || [];
-  localWatchlist = localWatchlist || [];
-  remoteTombstones = remoteTombstones || [];
-  localTombstones = localTombstones || [];
-
-  // 合并tombstones（取并集，按code去重，保留最新的deletedAt）
-  const tombstoneMap = new Map();
-  for (const t of [...remoteTombstones, ...localTombstones]) {
-    if (t && t.code) {
-      const existing = tombstoneMap.get(t.code);
-      if (!existing || (t.deletedAt && t.deletedAt > existing.deletedAt)) {
-        tombstoneMap.set(t.code, t);
-      }
-    }
-  }
-  const mergedTombstones = Array.from(tombstoneMap.values());
-  const deletedCodes = new Set(mergedTombstones.map(t => t.code));
-
-  // 合并watchlist（取并集去重，远程在前，本地追加），过滤掉已删除的
-  const seen = new Set();
-  const mergedWatchlist = [];
-  const resurrected = []; // 被tombstone阻止复活的股票
-
-  for (const code of [...remoteWatchlist, ...localWatchlist]) {
-    if (!code || seen.has(code)) continue;
-    seen.add(code);
-    if (deletedCodes.has(code)) {
-      resurrected.push(code); // 记录被阻止复活的
-      continue;
-    }
-    mergedWatchlist.push(code);
-  }
-
-  // 统计（基于过滤前的原始列表）
-  const onlyRemote = remoteWatchlist.filter(c => c && !localWatchlist.includes(c) && !deletedCodes.has(c));
-  const onlyLocal = localWatchlist.filter(c => c && !remoteWatchlist.includes(c) && !deletedCodes.has(c));
-
-  return {
-    mergedWatchlist,
-    mergedTombstones,
-    onlyRemote,
-    onlyLocal,
-    resurrected,
-    deletedCount: deletedCodes.size
-  };
-}
-
-/**
- * 合并自定义板块
- */
-function mergeCustomSectors(remoteSectors, localSectors) {
-  remoteSectors = remoteSectors || [];
-  localSectors = localSectors || [];
-  const merged = [];
-  const seen = new Set();
-  for (const s of [...remoteSectors, ...localSectors]) {
-    const key = (s && (s.code || s.name)) || JSON.stringify(s);
-    if (key && !seen.has(key)) {
-      seen.add(key);
-      merged.push(s);
-    }
-  }
-  return merged;
-}
-
-/**
- * 从GitHub拉取并解析远程配置
- * @returns {Object} { config, sha, exists, parseError }
- */
-async function fetchRemoteGithubConfig(apiUrl, token) {
-  try {
-    const resp = await fetch(apiUrl, {
-      headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
-    });
-
-    if (resp.status === 404) {
-      return { config: null, sha: null, exists: false, parseError: null };
-    }
-
-    if (!resp.ok) {
-      throw new Error(`GitHub API返回 ${resp.status}`);
-    }
-
-    const fileData = await resp.json();
-    const sha = fileData.sha;
-
-    // 解码和验证远程内容
-    let config = null;
-    let parseError = null;
-    try {
-      const decoded = decodeURIComponent(escape(atob(fileData.content)));
-      config = JSON.parse(decoded);
-      // 基本验证：必须是对象且有watchlist字段（或为空对象）
-      if (typeof config !== 'object' || config === null) {
-        throw new Error('远程配置不是有效的JSON对象');
-      }
-    } catch(e) {
-      parseError = e.message;
-    }
-
-    return { config, sha, exists: true, parseError };
-  } catch(e) {
-    throw new Error(`拉取远程配置失败: ${e.message}`);
-  }
-}
-
-/**
- * 构建配置对象
- */
-function buildMergedConfig(mergedWatchlist, mergedSectors, mergedTombstones, remoteConfig, localWatchlist, remoteWatchlist, onlyRemote, onlyLocal, resurrected) {
-  return {
-    version: '1.1',
-    exportDate: new Date().toISOString().split('T')[0],
-    exportTime: new Date().toLocaleString('zh-CN'),
-    description: 'K线形态分析工具 - 自选股云配置（多设备合并同步+Tombstone删除语义）',
-    watchlist: mergedWatchlist,
-    tombstones: mergedTombstones,
-    customSectors: mergedSectors,
-    settings: {
-      scanMinScore: document.getElementById('scanMinScore')?.value || '60',
-      scanSignalType: document.getElementById('scanSignalType')?.value || 'bull'
-    },
-    stats: {
-      watchlistCount: mergedWatchlist.length,
-      customSectorsCount: mergedSectors.length,
-      tombstoneCount: mergedTombstones.length
-    },
-    syncMeta: {
-      mergedFromRemote: remoteWatchlist.length > 0,
-      remoteCount: remoteWatchlist.length,
-      localCount: localWatchlist.length,
-      mergedCount: mergedWatchlist.length,
-      onlyRemote: onlyRemote,
-      onlyLocal: onlyLocal,
-      resurrectedBlocked: resurrected,
-      mergedAt: new Date().toISOString()
-    }
-  };
-}
-
-async function syncToGithub() {
-  const settings = getGithubSettings();
-  if (!settings || !settings.token) {
-    alert('请先在设置中填写GitHub信息');
-    return;
-  }
-  showSyncStatus('⏳ 正在从GitHub拉取最新配置...', '#f39c12');
-
-  const MAX_RETRIES = 3;
-  let attempt = 0;
-
-  try {
-    const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}`;
-    const localWatchlist = getWatchlist();
-
-    // 获取本地tombstones
-    let localTombstones = [];
-    try {
-      const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-      localTombstones = data ? JSON.parse(data) : [];
-    } catch(e) {}
-
-    while (attempt < MAX_RETRIES) {
-      attempt++;
-
-      // ========== 步骤1: 从GitHub拉取最新配置 ==========
-      let remoteResult;
-      try {
-        remoteResult = await fetchRemoteGithubConfig(apiUrl, settings.token);
-      } catch(e) {
-        showSyncStatus(`❌ ${e.message}`, '#e74c3c');
-        return;
-      }
-
-      // Blocker 3修复：远程文件存在但解析失败 → 中止写入，不视为空配置
-      if (remoteResult.exists && remoteResult.parseError) {
-        showSyncStatus(`❌ 远程配置解析失败，已中止同步以保护数据：${remoteResult.parseError}。请手动检查GitHub上的配置文件格式。`, '#e74c3c');
-        return;
-      }
-
-      const remoteConfig = remoteResult.config || {};
-      const sha = remoteResult.sha;
-      const remoteWatchlist = remoteConfig.watchlist || [];
-      const remoteTombstones = remoteConfig.tombstones || [];
-
-      // ========== 步骤2: 合并（含tombstone删除语义） ==========
-      const mergeResult = mergeWatchlistsWithTombstones(
-        remoteWatchlist, localWatchlist, remoteTombstones, localTombstones
-      );
-
-      // 合并自定义板块
-      let localSectors = [];
-      try {
-        const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
-        localSectors = data ? JSON.parse(data) : [];
-      } catch(e) {}
-      const mergedSectors = mergeCustomSectors(remoteConfig.customSectors, localSectors);
-
-      const { mergedWatchlist, mergedTombstones, onlyRemote, onlyLocal, resurrected } = mergeResult;
-
-      let mergeInfo = `本地${localWatchlist.length}只 + 远程${remoteWatchlist.length}只 → 合并${mergedWatchlist.length}只`;
-      if (onlyRemote.length > 0) mergeInfo += `（从远程新增${onlyRemote.length}只）`;
-      if (onlyLocal.length > 0) mergeInfo += `（本地新增${onlyLocal.length}只）`;
-      if (resurrected.length > 0) mergeInfo += `（阻止${resurrected.length}只已删除股票复活）`;
-
-      if (attempt === 1) {
-        showSyncStatus(`⏳ 合并完成：${mergeInfo}，正在上传...`, '#f39c12');
-      } else {
-        showSyncStatus(`⏳ 冲突重试(${attempt}/${MAX_RETRIES})：重新合并后上传...`, '#f39c12');
-      }
-
-      // ========== 步骤3: 构建配置对象 ==========
-      const config = buildMergedConfig(
-        mergedWatchlist, mergedSectors, mergedTombstones,
-        remoteConfig, localWatchlist, remoteWatchlist,
-        onlyRemote, onlyLocal, resurrected
-      );
-
-      const content = btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2))));
-
-      // ========== 步骤4: 上传到GitHub ==========
-      const putBody = {
-        message: `auto-sync: 合并自选股配置 (本地${localWatchlist.length}+远程${remoteWatchlist.length}=${mergedWatchlist.length}只)`,
-        content: content,
-        branch: settings.branch
-      };
-      if (sha) putBody.sha = sha; // 仅在文件存在时传sha
-
-      const resp = await fetch(apiUrl, {
-        method: 'PUT',
-        headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(putBody)
-      });
-
-      if (resp.ok) {
-        // ========== 步骤5: 同步更新本地 ==========
-        saveWatchlist(mergedWatchlist);
-        // 保存合并后的tombstones到本地
-        try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(mergedTombstones)); } catch(e) {}
-        // 刷新页面显示
-        if (typeof renderWatchlistTags === 'function') renderWatchlistTags();
-        if (typeof renderWatchlistTable === 'function') renderWatchlistTable();
-
-        const rawUrl = `https://raw.githubusercontent.com/${settings.username}/${settings.repo}/${settings.branch}/${settings.path}`;
-        showSyncStatus(`✅ 同步成功！${mergeInfo}。Raw链接已复制到导入框`, '#27ae60');
-        document.getElementById('githubConfigUrl').value = rawUrl;
-        return;
-      }
-
-      // Blocker 1修复：检测stale SHA冲突（409/422），重试
-      if ((resp.status === 409 || resp.status === 422) && attempt < MAX_RETRIES) {
-        const errData = await resp.json().catch(() => ({}));
-        console.warn(`Stale SHA冲突 (${resp.status})，正在重试...`, errData.message);
-        await new Promise(r => setTimeout(r, 500 * attempt)); // 指数退避
-        continue; // 重新拉取、合并、上传
-      }
-
-      // 其他错误或重试耗尽
-      const err = await resp.json().catch(() => ({}));
-      if (attempt >= MAX_RETRIES && (resp.status === 409 || resp.status === 422)) {
-        showSyncStatus(`❌ 同步失败：检测到并发冲突，已重试${MAX_RETRIES}次仍失败。请稍后重试。`, '#e74c3c');
-      } else {
-        showSyncStatus(`❌ 同步失败: ${err.message || resp.status}`, '#e74c3c');
-      }
-      return;
-    }
-  } catch(e) {
-    showSyncStatus(`❌ 同步失败: ${e.message}`, '#e74c3c');
-  }
-}
-
-/**
- * 从所有设备删除股票（添加到tombstone）
- */
-async function deleteFromAllDevices(code) {
-  if (!code) return;
-  const confirmed = await showConfirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`, '从所有设备删除');
-  if (!confirmed) return;
-
-  // 添加到本地tombstones
-  let tombstones = [];
-  try {
-    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-    tombstones = data ? JSON.parse(data) : [];
-  } catch(e) {}
-
-  // 避免重复
-  if (!tombstones.find(t => t.code === code)) {
-    tombstones.push({ code, deletedAt: new Date().toISOString() });
-    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
-  }
-
-  // 从本地watchlist移除
-  const watchlist = getWatchlist().filter(c => c !== code);
-  saveWatchlist(watchlist);
-
-  // 刷新显示
-  if (typeof renderWatchlistTags === 'function') renderWatchlistTags();
-  if (typeof renderWatchlistTable === 'function') renderWatchlistTable();
-
-  alert(`${code} 已标记为从所有设备删除。\n请点击"同步到GitHub"将删除操作同步到云端。`);
-}
-
-async function testGithubConnection() {
-  const settings = getGithubSettings();
-  if (!settings || !settings.token) {
-    alert('请先填写并保存GitHub设置');
-    return;
-  }
-  showSyncStatus('⏳ 测试连接...', '#f39c12');
-  try {
-    const resp = await fetch(`https://api.github.com/repos/${settings.username}/${settings.repo}`, {
-      headers: { 'Authorization': `token ${settings.token}`, 'Accept': 'application/vnd.github.v3+json' }
-    });
-    if (resp.ok) {
-      showSyncStatus('✅ 连接成功！仓库可访问', '#27ae60');
-    } else {
-      showSyncStatus(`❌ 连接失败: ${resp.status} ${resp.statusText}`, '#e74c3c');
-    }
-  } catch(e) {
-    showSyncStatus(`❌ 连接失败: ${e.message}`, '#e74c3c');
-  }
-}
-
-// 自动同步触发：增减个股时调用
-function triggerAutoSync() {
-  const settings = getGithubSettings();
-  if (settings && settings.autoSync && settings.token) {
-    // 延迟500ms，避免连续操作频繁同步
-    clearTimeout(window._autoSyncTimer);
-    window._autoSyncTimer = setTimeout(() => syncToGithub(), 500);
-  }
-}
 
 // 显示引擎详细信息
 function showEngineDetail(mode) {
@@ -3658,7 +3100,6 @@ function showEngineDetail(mode) {
 // 页面加载时加载GitHub设置 + 健康检查 + selftest
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(updateConfigSummary, 500);
-  setTimeout(loadGithubSettings, 600);
   // 第二道防线：页面加载时健康检查
   setTimeout(checkEngineHealth, 200);
   // 第三道防线：URL参数触发自检
@@ -3680,7 +3121,9 @@ function renderWatchlistTags() {
   const codes = getWatchlist();
   const container = document.getElementById('watchlistTags');
   if (codes.length === 0) {
-    container.innerHTML = '<span style="font-size:13px;color:#556677;">暂无自选股，请在上方输入代码添加</span>';
+    container.innerHTML = watchlistState.error && !watchlistState.loaded
+      ? '<span style="font-size:13px;color:#e74c3c;">自选股服务暂不可用，请稍后点“刷新”</span>'
+      : '<span style="font-size:13px;color:#556677;">暂无自选股，请在上方输入代码添加</span>';
     return;
   }
   container.innerHTML = codes.map(code => {
@@ -3688,42 +3131,30 @@ function renderWatchlistTags() {
     return `<span style="display:inline-flex;align-items:center;gap:6px;background:#1a2332;border:1px solid #2a3441;border-radius:14px;padding:4px 8px 4px 12px;font-size:13px;">
       <span style="color:#f0f0f0">${name}</span>
       <span style="color:#556677;font-size:11px">${code}</span>
-      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="从所有设备删除">×</button>
-      <button onclick="deleteFromAllDevices('${code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:12px;padding:0 2px;line-height:1;" title="从所有设备删除（同步到云端）">☁️</button>
+      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="删除（所有设备同步）">×</button>
     </span>`;
   }).join('');
 }
 
-// 添加股票
+// 添加股票（写入服务端；用户主动加回删除过的股票会先确认）
 async function addStock() {
   const input = document.getElementById('addStockInput');
   const code = input.value.trim();
   if (!/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
-  const codes = getWatchlist();
-  if (codes.includes(code)) { alert('该股票已在自选股池中'); return; }
-
-  // FIR-19: 检查是否在tombstone中（已从所有设备删除）
-  let tombstones = [];
-  try {
-    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-    tombstones = data ? JSON.parse(data) : [];
-  } catch(e) {}
-  if (tombstones.find(t => t.code === code)) {
-    const confirmed = await showConfirm(`该股票(${code})此前已从所有设备删除。\n\n如需重新添加，将清除其删除记录并同步到所有设备。\n\n确定要重新添加吗？`, '重新添加已删除股票');
-    if (!confirmed) {
-      return;
-    }
-    // 用户确认重新添加：从tombstone中移除
-    tombstones = tombstones.filter(t => t.code !== code);
-    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+  if (getWatchlist().includes(code)) { alert('该股票已在自选股池中'); return; }
+  if (watchlistState.tombstones.find(t => t.code === code)) {
+    const confirmed = await showConfirm(`该股票(${code})此前已从自选股删除。\n\n确定要重新加入吗？所有设备都会看到它。`, '重新添加已删除股票');
+    if (!confirmed) return;
   }
-
-  codes.push(code);
-  saveWatchlist(codes);
+  try {
+    await watchlistRequest('POST', `/${code}`);
+  } catch (e) {
+    showSyncStatus(`❌ 添加失败：${e.message}（未保存）`, '#e74c3c');
+    return;
+  }
   input.value = '';
   renderWatchlistTags();
   updateConfigSummary();
-  triggerAutoSync();
   // 自动分析这只股票
   analyzeSingleStock(code);
 }
@@ -3789,195 +3220,53 @@ function showConfirm(message, title = '确认操作') {
   });
 }
 
-// 删除股票（默认全局删除：创建tombstone，同步后所有设备都会删除）
+// 删除股票（服务端记删除记录，所有设备同步；旧设备迁入也不会把它带回来）
 async function removeStock(code) {
   if (!code) return;
-  const confirmed = await showConfirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`, '删除自选股');
+  const confirmed = await showConfirm(`确定要删除 ${code} 吗？\n手机和电脑都会同步删除。`, '删除自选股');
   if (!confirmed) return;
-
-  // 添加到本地tombstones（防止同步时被远程复活）
-  let tombstones = [];
   try {
-    const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-    tombstones = data ? JSON.parse(data) : [];
-  } catch(e) {}
-  if (!tombstones.find(t => t.code === code)) {
-    tombstones.push({ code, deletedAt: new Date().toISOString() });
-    try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(tombstones)); } catch(e) {}
+    await watchlistRequest('DELETE', `/${code}`);
+  } catch (e) {
+    showSyncStatus(`❌ 删除失败：${e.message}（未修改）`, '#e74c3c');
+    return;
   }
-
-  // 从本地watchlist移除
-  let codes = getWatchlist();
-  codes = codes.filter(c => c !== code);
-  saveWatchlist(codes);
   delete watchlistResults[code];
   renderWatchlistTags();
   renderWatchlistTable();
   updateConfigSummary();
-  triggerAutoSync();
 }
 
-// 清空全部（原子事务：GET→tombstone→PUT带SHA→409重试→成功后才改本地）
+// 清空全部（服务端一次完成，所有设备同步）
 async function clearAllWatchlist() {
-  const confirmed = await showConfirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。', '清空全部自选股');
+  const confirmed = await showConfirm('确定要清空全部自选股吗？\n手机和电脑都会同步清空。', '清空全部自选股');
   if (!confirmed) return;
-
-  const settings = getGithubSettings();
-
-  // 未配置GitHub时：只做本地清空（无远程可同步）
-  if (!settings || !settings.token) {
-    saveWatchlist([]);
+  try {
+    const v = await watchlistRequest('DELETE');
     watchlistResults = {};
     renderWatchlistTags();
+    renderWatchlistTable();
     document.getElementById('batchResults').innerHTML = '';
     document.getElementById('batchStatus').textContent = '';
     updateConfigSummary();
-    showSyncStatus('✅ 本地自选股已清空（未配置GitHub同步）', '#27ae60');
-    return;
+    showSyncStatus(`✅ 已清空 ${v.cleared} 只自选股（所有设备同步）`, '#27ae60');
+  } catch (e) {
+    showSyncStatus(`❌ 清空失败：${e.message}（未修改）`, '#e74c3c');
   }
-
-  const apiUrl = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${settings.path}?ref=${settings.branch}`;
-  const MAX_RETRIES = 3;
-  let attempt = 0;
-
-  while (attempt < MAX_RETRIES) {
-    attempt++;
-    showSyncStatus(`⏳ 正在拉取远程配置（第${attempt}次）...`, '#f39c12');
-
-    // ========== 步骤1: GET最新远程配置+SHA ==========
-    let remoteResult;
-    try {
-      remoteResult = await fetchRemoteGithubConfig(apiUrl, settings.token);
-    } catch(e) {
-      showSyncStatus(`❌ 拉取远程配置失败，已中止（未修改本地）: ${e.message}`, '#e74c3c');
-      return;
-    }
-
-    // ========== 步骤2: 远程存在但无法解析 → 中止（不修改本地） ==========
-    if (remoteResult.exists && remoteResult.parseError) {
-      showSyncStatus(`❌ 远程配置解析失败，已中止（未修改本地）: ${remoteResult.parseError}`, '#e74c3c');
-      return;
-    }
-
-    // ========== 步骤3: 计算remote ∪ local ==========
-    const remoteWatchlist = (remoteResult.config && remoteResult.config.watchlist) || [];
-    const localWatchlist = getWatchlist();
-    const allCodes = [...new Set([...remoteWatchlist, ...localWatchlist])];
-
-    // ========== 步骤4: 以remoteConfig为基础，只修改watchlist相关字段 ==========
-    // 保留所有未知/现有字段（如scanMinScore、scanSignalType、schemaExtra等）
-    const config = remoteResult.config ? { ...remoteResult.config } : {};
-
-    // merge remote + local tombstones（按code去重，保留remote的deletedAt）
-    const remoteTombstones = Array.isArray(config.tombstones) ? config.tombstones : [];
-    let localTombstones = [];
-    try {
-      const data = localStorage.getItem('kline_watchlist_tombstones_v1');
-      localTombstones = data ? JSON.parse(data) : [];
-    } catch(e) {}
-    const mergedTombstones = [...remoteTombstones];
-    localTombstones.forEach(lt => {
-      if (!mergedTombstones.find(mt => mt.code === lt.code)) {
-        mergedTombstones.push(lt);
-      }
-    });
-
-    // 为remote ∪ local watchlist增加tombstones
-    const now = new Date().toISOString();
-    allCodes.forEach(code => {
-      if (!mergedTombstones.find(t => t.code === code)) {
-        mergedTombstones.push({ code, deletedAt: now });
-      }
-    });
-    config.tombstones = mergedTombstones;
-
-    // watchlist = []
-    config.watchlist = [];
-
-    // customSectors按正常同步逻辑merge（使用mergeCustomSectors函数）
-    let localSectors = [];
-    try {
-      const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
-      localSectors = data ? JSON.parse(data) : [];
-    } catch(e) {}
-    config.customSectors = mergeCustomSectors(config.customSectors, localSectors);
-
-    // settings原样保留（不修改config.settings）
-    // 所有未知/现有字段自动保留（因为我们是从remoteConfig复制的）
-
-    // 更新syncMeta（保留原有syncMeta字段，只更新clear_all相关的）
-    config.syncMeta = {
-      ...(config.syncMeta || {}),
-      mergedFromRemote: true,
-      remoteCount: remoteWatchlist.length,
-      localCount: localWatchlist.length,
-      mergedCount: 0,
-      mergedAt: new Date().toISOString(),
-      operation: 'clear_all',
-    };
-
-    // ========== 步骤6: PUT使用该SHA ==========
-    const putBody = {
-      message: `auto-sync: 全局清空自选股 (远程${remoteWatchlist.length}+本地${localWatchlist.length}=${allCodes.length}只标记删除)`,
-      content: btoa(unescape(encodeURIComponent(JSON.stringify(config, null, 2)))),
-      branch: settings.branch,
-    };
-    if (remoteResult.sha) {
-      putBody.sha = remoteResult.sha;
-    }
-
-    try {
-      const putResp = await fetch(apiUrl, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `token ${settings.token}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(putBody),
-      });
-
-      // ========== 步骤7: 409/422 stale SHA → 重试（重新拉取，为新代码创建tombstone） ==========
-      if (putResp.status === 409 || putResp.status === 422) {
-        showSyncStatus(`⚠️ SHA冲突，正在重试（第${attempt}次）...`, '#f39c12');
-        await new Promise(r => setTimeout(r, 500 * attempt));
-        continue;
-      }
-
-      if (!putResp.ok) {
-        const errData = await putResp.json().catch(() => ({}));
-        showSyncStatus(`❌ 上传失败: ${putResp.status} ${errData.message || ''}（未修改本地）`, '#e74c3c');
-        return;
-      }
-
-      // ========== 步骤8: 成功PUT后才修改本地 ==========
-      try { localStorage.setItem('kline_watchlist_tombstones_v1', JSON.stringify(mergedTombstones)); } catch(e) {}
-      saveWatchlist([]);
-      watchlistResults = {};
-      renderWatchlistTags();
-      document.getElementById('batchResults').innerHTML = '';
-      document.getElementById('batchStatus').textContent = '';
-      updateConfigSummary();
-
-      showSyncStatus(`✅ 全局清空成功！已为${allCodes.length}只股票创建删除标记（远程${remoteWatchlist.length}+本地${localWatchlist.length}），远程和本地均已清空`, '#27ae60');
-      return;
-
-    } catch(e) {
-      showSyncStatus(`❌ 上传失败: ${e.message}（未修改本地）`, '#e74c3c');
-      return;
-    }
-  }
-
-  showSyncStatus('❌ 全局清空失败：重试次数已用完（未修改本地）', '#e74c3c');
 }
 
 // 加载示例自选股
-function loadExampleWatchlist() {
+async function loadExampleWatchlist() {
   const examples = ['002436', '600519', '002594', '300750', '601318', '000858'];
-  let codes = getWatchlist();
-  examples.forEach(c => { if (!codes.includes(c)) codes.push(c); });
-  saveWatchlist(codes);
+  try {
+    for (const c of examples) {
+      if (!getWatchlist().includes(c)) await watchlistRequest('POST', `/${c}`);
+    }
+  } catch (e) {
+    showSyncStatus(`❌ 加载示例失败：${e.message}`, '#e74c3c');
+  }
   renderWatchlistTags();
+  updateConfigSummary();
   analyzeAllWatchlist();
 }
 
@@ -4177,15 +3466,14 @@ function renderWatchlistTable() {
                 <span style="display:inline-block;padding:4px 10px;border-radius:10px;background:${st.c}22;color:${st.c};font-weight:600;font-size:12px">${st.t}</span>
               </td>
               <td style="padding:10px 8px;">
-                <button onclick="event.stopPropagation();removeStock('${r.code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:16px;padding:4px 6px;" title="本地删除">×</button>
-                <button onclick="event.stopPropagation();deleteFromAllDevices('${r.code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;padding:4px 6px;" title="从所有设备删除（同步到云端）">☁️</button>
+                <button onclick="event.stopPropagation();removeStock('${r.code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:16px;padding:4px 6px;" title="删除（所有设备同步）">×</button>
               </td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div>
-    <div style="margin-top:12px;font-size:12px;color:#556677;">单击行查看详情 | <b style="color:#8899aa">双击行在新标签页打开</b> | 按“买入信号→卖出信号→观望”排序 | 形态来自 Python Core（信号强度非胜率，仅显示已确认形态） | <b style="color:#8899aa">×</b>仅本地删除 | <b style="color:#e74c3c">☁️</b>从所有设备删除（需同步到GitHub）</div>
+    <div style="margin-top:12px;font-size:12px;color:#556677;">单击行查看详情 | <b style="color:#8899aa">双击行在新标签页打开</b> | 按“买入信号→卖出信号→观望”排序 | 形态来自 Python Core（信号强度非胜率，仅显示已确认形态） | <b style="color:#8899aa">×</b>删除（所有设备同步）</div>
   `;
 }
 
@@ -4387,16 +3675,19 @@ function toggleSelectAllScan(checkbox) {
 }
 
 // 将勾选的股票加入自选股
-function addSelectedToWatchlist() {
+async function addSelectedToWatchlist() {
   const checked = document.querySelectorAll('.scan-item-checkbox:checked');
   if (checked.length === 0) { alert('请先勾选股票'); return; }
-  let codes = getWatchlist();
   let added = 0;
-  checked.forEach(cb => {
-    const code = cb.value;
-    if (!codes.includes(code)) { codes.push(code); added++; }
-  });
-  saveWatchlist(codes);
+  try {
+    for (const cb of checked) {
+      const code = cb.value;
+      if (!getWatchlist().includes(code)) { await watchlistRequest('POST', `/${code}`); added++; }
+    }
+  } catch (e) {
+    alert(`加入自选股失败：${e.message}（已加入 ${added} 只）`);
+    return;
+  }
   alert(`已添加 ${added} 只股票到自选股池`);
   // 跳转到自选股池
   switchTab('watchlist');
@@ -4408,6 +3699,7 @@ function addSelectedToWatchlist() {
 renderPatterns();
 renderWatchlistTags();
 renderSectorList();
+initWatchlistSync();
 // 支持URL参数自动分析：?code=002436
 const urlParams = new URLSearchParams(window.location.search);
 const urlCode = urlParams.get('code');

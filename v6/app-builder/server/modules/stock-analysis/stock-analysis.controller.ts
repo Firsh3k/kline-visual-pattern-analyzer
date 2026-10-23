@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Delete, Body, Param, Query,
-  BadRequestException, ConflictException, NotFoundException,
+  BadRequestException, NotFoundException, HttpException, ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertAsOf } from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
@@ -29,7 +29,7 @@ export class StockAnalysisController {
       core_sha256: coreStatus.coreSha256,
       analyzer_sha256: coreStatus.analyzerSha256,
       engine_commit: coreStatus.engineCommit,
-      watchlistCount: this.service.getWatchlist().count,
+      watchlist_store: await this.service.checkWatchlist(),
       timestamp: new Date().toISOString(),
     };
   }
@@ -59,9 +59,21 @@ export class StockAnalysisController {
     return this.service.getMarketEnv();
   }
 
+  /** FIR-41：自选股（服务端数据库，全站共用一份）。存储不可用 → 503，不在浏览器兜底。 */
   @Get('watchlist')
   getWatchlist() {
-    return this.service.getWatchlist();
+    return watchlistCall(() => this.service.getWatchlist());
+  }
+
+  @Delete('watchlist')
+  clearWatchlist() {
+    return watchlistCall(() => this.service.clearWatchlist());
+  }
+
+  /** 浏览器一次性迁入本机旧清单与删除记录：{ codes: string[], tombstones: [{code, deletedAt}] } */
+  @Post('watchlist/import')
+  importWatchlist(@Body() body: unknown) {
+    return watchlistCall(() => this.service.importWatchlist(body));
   }
 
   @Post('watchlist/analyze')
@@ -77,26 +89,12 @@ export class StockAnalysisController {
 
   @Post('watchlist/:code')
   addWatchlist(@Param('code') code: string) {
-    try {
-      return this.service.addToWatchlist(code);
-    } catch (error) {
-      if (error instanceof Error && (error as any).statusCode === 409) {
-        throw new ConflictException(error.message);
-      }
-      throw error;
-    }
+    return watchlistCall(() => this.service.addToWatchlist(code));
   }
 
   @Delete('watchlist/:code')
   removeWatchlist(@Param('code') code: string) {
-    try {
-      return this.service.removeFromWatchlist(code);
-    } catch (error) {
-      if (error instanceof Error && (error as any).statusCode === 404) {
-        throw new NotFoundException(error.message);
-      }
-      throw error;
-    }
+    return watchlistCall(() => this.service.removeFromWatchlist(code));
   }
 
   @Post('scan')
@@ -172,5 +170,18 @@ export class StockAnalysisController {
   syncPull() {
     const result = this.service.syncPull();
     throw new BadRequestException(result.error);
+  }
+}
+
+/** 自选股接口统一错误映射：400 输入错误 / 503 存储不可用 / 其它 500 */
+async function watchlistCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    const status = (error as any)?.statusCode;
+    const msg = error instanceof Error ? error.message : String(error);
+    if (status === 400) throw new BadRequestException(msg);
+    if (status === 503) throw new ServiceUnavailableException(msg);
+    throw new HttpException(`自选股存储出错：${msg}`, 500);
   }
 }

@@ -117,6 +117,36 @@ export class StockAnalysisController {
     }
   }
 
+  /** FIR-41：提交扫描后台任务，立即返回 job_id；前端轮询 GET scan/jobs/:id */
+  @Post('scan/jobs')
+  createScanJob(@Body() body: { codes: string[]; min_score?: number; only_bull?: boolean }) {
+    try {
+      return this.service.createScanJob(body?.codes, {
+        minScore: body?.min_score ?? 0,
+        onlyBull: body?.only_bull ?? false,
+      });
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '提交扫描失败');
+    }
+  }
+
+  @Get('scan/jobs/:id')
+  getScanJob(@Param('id') id: string) {
+    const job = this.service.getScanJob(id);
+    if (!job) {
+      throw new NotFoundException('扫描任务不存在或已过期（服务重启会清空任务），请重新扫描');
+    }
+    return job;
+  }
+
+  @Delete('scan/jobs/:id')
+  cancelScanJob(@Param('id') id: string) {
+    if (!this.service.cancelScanJob(id)) {
+      throw new NotFoundException('扫描任务不存在或已过期');
+    }
+    return this.service.getScanJob(id);
+  }
+
   @Get('sectors')
   sectors() {
     return this.service.getSectors();

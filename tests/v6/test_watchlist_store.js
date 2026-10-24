@@ -340,6 +340,24 @@ async function pgConcurrency(url, sql, newTable) {
     assert.strictEqual((await wl.check()).ready, false);
     assert.strictEqual(W.createWatchlistStore({ WATCHLIST_STORE: 'memory' }).kind, 'memory');
   });
+  await test('部署前检查：postgres 驱动缺失 / 连接串错误 → 服务照常启动，仅自选股 503，原因里不含连接串', async () => {
+    const url = 'postgres://kline:S3cret@db.internal:5432/app';
+    const missing = W.createWatchlistStore({ SUDA_DATABASE_URL: url }, () => { const e = new Error("Cannot find module 'postgres'"); e.code = 'MODULE_NOT_FOUND'; throw e; });
+    assert.strictEqual(missing.kind, 'unavailable');
+    let wl = new W.Watchlist(missing);
+    await wl.init();
+    assert.strictEqual(wl.status().ready, false);
+    assert.ok(/Cannot find module 'postgres'/.test(wl.status().error), wl.status().error);
+    await assert.rejects(() => wl.view(), e => e.statusCode === 503);
+    const badUrl = W.createWatchlistStore({ SUDA_DATABASE_URL: url }, () => (u) => { throw new Error('Invalid URL: ' + u); });
+    wl = new W.Watchlist(badUrl);
+    await wl.init();
+    assert.strictEqual(wl.status().ready, false);
+    assert.ok(!wl.status().error.includes('S3cret') && !wl.status().error.includes(url), '原因里不能出现连接串：' + wl.status().error);
+    // 驱动正常时仍是 PostgreSQL 实现（只构造，不连接）
+    const ok = W.createWatchlistStore({ SUDA_DATABASE_URL: url }, () => () => ({}));
+    assert.strictEqual(ok.kind, 'postgres');
+  });
   await test('数据库建表失败：status 报错，接口 503，恢复后自动重试', async () => {
     let fail = true;
     const inner = new W.MemoryWatchlistStore();

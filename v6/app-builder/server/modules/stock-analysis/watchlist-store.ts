@@ -163,6 +163,7 @@ export class MemoryWatchlistStore implements WatchlistStore {
 // ------------------------------------------------------------------ PostgreSQL 实现（生产）
 
 export const PG_TABLE = 'kline_watchlist';
+const PG_CLIENT_OPTIONS = { max: 3, idle_timeout: 30, connect_timeout: 10, onnotice: () => {} };
 
 type Sql = any; // postgres-js 实例（运行时加载，避免在无驱动的环境编译失败）
 
@@ -191,7 +192,7 @@ export class PostgresWatchlistStore implements WatchlistStore {
     if (typeof urlOrSql === 'string') {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const postgres = require('postgres');
-      this.sql = postgres(urlOrSql, { max: 3, idle_timeout: 30, connect_timeout: 10, onnotice: () => {} });
+      this.sql = postgres(urlOrSql, PG_CLIENT_OPTIONS);
     } else {
       this.sql = urlOrSql;
     }
@@ -345,14 +346,31 @@ export class UnavailableWatchlistStore implements WatchlistStore {
   async importLocal(): Promise<{ added: number; deleted: number }> { return this.fail(); }
 }
 
-/** 按环境变量选择实现：WATCHLIST_STORE=memory（仅本地开发）；否则用 WATCHLIST_DATABASE_URL / SUDA_DATABASE_URL */
-export function createWatchlistStore(env: Record<string, string | undefined>): WatchlistStore {
+/**
+ * 按环境变量选择实现：WATCHLIST_STORE=memory（仅本地开发）；否则用 WATCHLIST_DATABASE_URL / SUDA_DATABASE_URL。
+ *
+ * 部署前检查（FIR-41）：postgres 驱动目前是平台包的间接依赖（package.json 未直接声明）。
+ * 驱动缺失或连接串格式错误时不能让整个服务启动失败（本函数在 Service 构造时调用），
+ * 只让自选股 fail-closed：ready=false、接口 503、/api/health 报原因；个股分析等其他功能照常。
+ * 原因里会去掉连接串，避免账号密码出现在 /api/health。
+ */
+export function createWatchlistStore(
+  env: Record<string, string | undefined>,
+  loadDriver: () => any = () => require('postgres'),
+): WatchlistStore {
   if (env.WATCHLIST_STORE === 'memory') return new MemoryWatchlistStore();
   const url = env.WATCHLIST_DATABASE_URL || env.SUDA_DATABASE_URL;
   if (!url) {
     return new UnavailableWatchlistStore('自选股存储未配置（缺少 SUDA_DATABASE_URL），不在浏览器本地兜底保存');
   }
-  return new PostgresWatchlistStore(url);
+  try {
+    const postgres = loadDriver();
+    const sql = postgres(url, PG_CLIENT_OPTIONS);
+    return new PostgresWatchlistStore(sql);
+  } catch (err) {
+    const reason = errMsg(err).split(url).join('***');
+    return new UnavailableWatchlistStore(`自选股存储不可用：PostgreSQL 驱动加载或连接串解析失败（${reason}）`);
+  }
 }
 
 // ------------------------------------------------------------------ 对外接口层（校验 + 视图 + 就绪状态），与实现无关

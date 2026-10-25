@@ -34,6 +34,7 @@
 - `tests/v6/test_v4_adapter_r67.js`：加载实际部署的 V4 页面脚本，验证确认 / 主导只来自 Python、斜颈线绘制、坏数据报错。
 - `tests/v6/test_v4_no_local_engine.js`：本地 JS 形态引擎 / 推荐度 / 降级入口不得重新出现。
 - `tests/v6/test_bff_pure.js`：asOf 校验与扫描列表透传 Python 确认。
+- `tests/v6/test_mobile_layout.js`（FIR-41 第 6 项）：真实 Chrome 在 320 / 390 / 768 / 1280px 打开实际页面（接口用真实 Core doc 打桩），首页、个股分析、自选股、市场扫描都不能横向滚动；多列卡片网格必须带 `m-stack`。
 
 ## 第二层：部署后 — 线上验收
 

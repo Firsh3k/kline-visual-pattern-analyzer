@@ -213,6 +213,11 @@ jobs:
       run: |
         node tests/test_fir28_release_identity.js
 
+    - name: Run FIR-41 item 6 mobile layout check (real Chrome, 320/390/768/1280px, deployed V4 page)
+      run: |
+        npm install --no-save --no-package-lock playwright-core@1.55.1
+        CHROME_PATH="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)" node tests/v6/test_mobile_layout.js
+
     - name: Run FIR-41/42 watchlist tests (memory + real PostgreSQL incl. least-privilege role + probe, deployed V4 page = DB)
       env:
         TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres

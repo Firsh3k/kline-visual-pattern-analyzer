@@ -49,6 +49,8 @@
   `core_sha256` / `analyzer_sha256`（Python Core 与执行器）、`deploy.page_sha256`（浏览器实际拿到的页面）与该版本一致，
   `core_analyzer=real_core`，页面 / 执行器 / core 都在服务的 `cwd` 下，`watchlist_store` 为 `postgres` 且 `ready=true`
   （FIR-41 第 5 项；只想看指纹时仍可用 `python3 scripts/v6_fingerprint.py --ref <版本>`）
+  退出码：0 通过；1 不通过（字段缺失、类型不对也算）；3 部分核对——只在部署的确是第 5 项之前的版本、显式加
+  `--allow-legacy-health` 时出现，页面与运行时文件未核对，**不能当作 PRODUCTION GATE PASS**
 
 **个股冒烟**
 - [ ] 任选一只股票：`/api/analyze/<code>` → 200，`engine.analyzer=real_core`，250 根前复权，有 `signals`，无推荐度

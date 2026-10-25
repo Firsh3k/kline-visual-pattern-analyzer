@@ -71,15 +71,59 @@ def test_watchlist_down_is_warning_when_allowed():
     assert _results(VD.verify(h, fp, allow_watchlist_down=True))["watchlist_store"] == "WARN"
 
 
-def test_old_health_without_deploy_skips_page(tmp_path, capsys):
+def _cli(tmp_path, health, *extra):
+    f = tmp_path / "health.json"
+    f.write_text(health if isinstance(health, str) else json.dumps(health), encoding="utf-8")
+    return VD.main(["--ref", "HEAD", "--health", str(f), *extra])
+
+
+def test_r77_1_missing_or_broken_deploy_is_fail_not_pass(tmp_path, capsys):
+    """QA R77-1：Core / 执行器 / 自选股都对，但 deploy 缺失、不是对象、files_found 值不是严格 true → 一律 FAIL（exit 1）"""
+    fp = FP.fingerprint("HEAD")
+    cases = {}
+    h = _good_health(fp); del h["deploy"]; cases["deploy 缺失"] = h
+    h = _good_health(fp); h["deploy"] = "BROKEN"; cases["deploy 不是对象"] = h
+    h = _good_health(fp); h["deploy"]["files_found"]["page"] = "false"; cases["files_found.page 是字符串"] = h
+    h = _good_health(fp); h["deploy"]["files_found"] = ["page"]; cases["files_found 不是对象"] = h
+    h = _good_health(fp); h["deploy"]["files_found"]["core"] = 1; cases["files_found.core 是 1"] = h
+    h = _good_health(fp); h["deploy"]["page_sha256"] = None; cases["page_sha256 为空"] = h
+    for label, health in cases.items():
+        assert _cli(tmp_path, health) == 1, label
+        out = capsys.readouterr().out
+        assert "[FAIL]" in out and "结论：不通过" in out and "结论：通过" not in out, (label, out)
+
+
+def test_r77_1_legacy_health_needs_explicit_opt_in_and_is_partial(tmp_path, capsys):
     fp = FP.fingerprint("HEAD")
     h = _good_health(fp)
     del h["deploy"]
-    assert _results(VD.verify(h, fp))["page_sha256"] == "SKIP"
-    f = tmp_path / "health.json"
-    f.write_text(json.dumps(h), encoding="utf-8")
-    assert VD.main(["--ref", "HEAD", "--health", str(f)]) == 0
-    assert "[SKIP] page_sha256" in capsys.readouterr().out
+    assert _cli(tmp_path, h) == 1
+    assert "--allow-legacy-health" in capsys.readouterr().out
+    assert _cli(tmp_path, h, "--allow-legacy-health") == 3
+    out = capsys.readouterr().out
+    assert "[SKIP] page_sha256" in out and "[SKIP] runtime_files" in out
+    assert "部分核对" in out and "不是完整部署通过" in out and "结论：通过" not in out
+    # 显式兼容旧版本时，deploy 存在但损坏仍按新版本严格判失败
+    h = _good_health(fp)
+    h["deploy"] = "BROKEN"
+    assert _cli(tmp_path, h, "--allow-legacy-health") == 1
+    capsys.readouterr()
+    # 兼容模式下其他项不对仍是 FAIL
+    h = _good_health(fp)
+    del h["deploy"]
+    h["core_sha256"] = "0" * 64
+    assert _cli(tmp_path, h, "--allow-legacy-health") == 1
+
+
+def test_r77_1_malformed_input_is_reported_not_traceback(tmp_path, capsys):
+    assert _cli(tmp_path, "[1, 2]") == 1
+    assert "health 不是 JSON 对象" in capsys.readouterr().out
+    assert _cli(tmp_path, "{not json") == 1
+    assert "不是合法 JSON" in capsys.readouterr().out
+    fp = FP.fingerprint("HEAD")
+    h = _good_health(fp)
+    h["watchlist_store"] = "down"
+    assert _cli(tmp_path, h) == 1
 
 
 def test_cli_exit_code(tmp_path, capsys):

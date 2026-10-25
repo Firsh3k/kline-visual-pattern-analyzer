@@ -495,6 +495,36 @@ async function pgConcurrency(url, sql, newTable) {
         const s = new W.PostgresWatchlistStore(sql, table);
         await assert.rejects(() => s.add('abc', new Date()), /check constraint/);
       });
+      await test('QA R76-1：已有股票数据但缺版本行 → 重跑 migration 后 rev 接着已有数据，不倒退；已有版本行不被覆盖；页面照常接受之后的修改', async () => {
+        const table = `kline_watchlist_t${process.pid}_r761`;
+        tables.push(table);
+        await W.applyWatchlistMigration(sql, table);
+        const wl = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock());
+        await wl.init();
+        await wl.add('600000');
+        const old = await wl.add('600001');                       // 页面持有的旧视图：rev 2
+        assert.strictEqual(old.rev, 2);
+        await sql`DELETE FROM ${sql(table + '_meta')}`;           // 股票行保留、版本行丢失
+        await W.applyWatchlistMigration(sql, table);              // 重跑 migration
+        const [m] = await sql`SELECT rev FROM ${sql(table + '_meta')} WHERE id = 1`;
+        assert.strictEqual(Number(m.rev), 2, 'migration 应按已有数据的最大 rev 补版本行');
+        const wl2 = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock('2026-10-25T08:00:00Z'));
+        await wl2.init();
+        const restored = await wl2.view();
+        assert.deepStrictEqual([restored.items, restored.rev, wl2.status().ready], [['600000', '600001'], 2, true]);
+        const afterDelete = await wl2.remove('600000');
+        assert.strictEqual(afterDelete.rev, 3, '恢复后的下一次修改必须大于页面已有的 rev');
+        // 已存在的版本行不被 migration 覆盖或降低
+        await W.applyWatchlistMigration(sql, table);
+        assert.strictEqual((await wl2.view()).rev, 3);
+        // 实际页面：先持有 rev2 旧视图，再收到删除响应 rev3 → 接受
+        const { loadPage } = require('./v4_page_harness');
+        const page = loadPage({ exports: ['_applyWatchlistView'] });
+        page.x._applyWatchlistView(old);
+        page.x._applyWatchlistView(afterDelete);
+        const shown = JSON.parse(JSON.stringify(require('vm').runInContext('({codes: watchlistState.codes, rev: watchlistState.rev})', page.sandbox)));
+        assert.deepStrictEqual(shown, { codes: ['600001'], rev: 3 });
+      });
       await test('FIR-42：版本行缺失（平台 migration 只建了表）→ init 用普通 INSERT 补上，rev 接着已有数据', async () => {
         const table = `kline_watchlist_t${process.pid}_seed`;
         tables.push(table);

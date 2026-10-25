@@ -193,7 +193,10 @@ CREATE TABLE IF NOT EXISTS ${table}_meta (
   id   int PRIMARY KEY CHECK (id = 1),
   rev  bigint NOT NULL
 );
-INSERT INTO ${table}_meta (id, rev) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+-- 版本行缺失时按已有数据的最大 rev 补上（空表为 0），不覆盖、不降低已存在的版本（QA R76-1）
+INSERT INTO ${table}_meta (id, rev)
+SELECT 1, COALESCE(MAX(rev), 0) FROM ${table}
+ON CONFLICT (id) DO NOTHING;
 `;
 }
 

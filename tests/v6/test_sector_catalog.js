@@ -114,6 +114,27 @@ const ths = (over) => ({
     ]);
   });
 
+  await test('QA R79-1：核对日期晚于今天（上海）→ 未核对，不显示已核对；今天 / 第 7 天 / 第 8 天 / 第 30 天 / 第 31 天边界正确', async () => {
+    const exact = { matched: 2, local_only: 0, source_only: 0 };
+    const at = (d, id) => ths({ id, reconciled_at: d, reconciliation: exact });
+    const f = tmpCatalog([
+      at('2026-10-26', 'tomorrow'), at('2099-01-01', 'far'), at('2026-10-25', 'today'),
+      at('2026-10-18', 'd7'), at('2026-10-17', 'd8'), at('2026-09-25', 'd30'), at('2026-09-24', 'd31'),
+    ]);
+    const v = Object.fromEntries(new C.SectorCatalogStore(f).list('2026-10-25').sectors.map((s) => [s.id, s]));
+    for (const id of ['tomorrow', 'far']) {
+      assert.deepStrictEqual([v[id].status, v[id].verified, v[id].reconciled_days_ago], ['unverified', false, null], id);
+      assert.ok(/晚于今天，视为无效/.test(v[id].label) && !/已核对/.test(v[id].label), v[id].label);
+    }
+    assert.deepStrictEqual([v.today.status, v.today.label, v.today.reconciled_days_ago], ['verified', '已核对 · 2026-10-25', 0]);
+    assert.deepStrictEqual([v.d7.status, v.d7.label], ['verified', '已核对 · 2026-10-18']);
+    assert.deepStrictEqual([v.d8.status, v.d8.label], ['verified', '已核对 · 2026-10-17（8 天前）']);
+    assert.deepStrictEqual([v.d30.status, v.d30.reconciled_days_ago], ['verified', 30]);
+    assert.deepStrictEqual([v.d31.status, v.d31.verified], ['stale', false]);
+    // 跨日：上海时间已到 10-26 时，“明天”的核对变成今天，正常显示已核对
+    assert.strictEqual(new C.SectorCatalogStore(f).list('2026-10-26').sectors.find((s) => s.id === 'tomorrow').status, 'verified');
+  });
+
   await test('跨运行时：新鲜度与 Python SectorProvenance.get_freshness_level 逐日一致（含未核对 / 非法日期）', () => {
     const today = '2026-10-25';
     const cases = [null, '2026-10-25', '2026-10-18', '2026-10-17', '2026-09-25', '2026-09-24', '2025-01-01', '2026-02-30', 'bad'];

@@ -103,6 +103,12 @@ export function sectorView(s: CatalogSector, today: string, fd = { fresh: 7, agi
     if (level === 'not_reconciled' || level === 'unknown') {
       status = 'unverified';
       label = `未核对 · 数据日期 ${s.as_of}`;
+    } else if (daysAgo !== null && daysAgo < 0) {
+      // QA R79-1：核对日期晚于今天（上海）= 还没发生的核对，多半是录入错误，按未核对处理。
+      // freshnessLevel 保持与 Python 一致（Python 对未来日期也返回 fresh），保护放在状态判定这一层。
+      status = 'unverified';
+      label = `未核对 · 核对日期 ${s.reconciled_at} 晚于今天，视为无效 · 数据日期 ${s.as_of}`;
+      daysAgo = null;
     } else if (!r || r.local_only > 0 || r.source_only > 0) {
       status = 'mismatch';
       label = r ? `核对有差异（本地多 ${r.local_only}、权威源多 ${r.source_only}）· ${s.reconciled_at}` : `核对结果缺失 · ${s.reconciled_at}`;

@@ -116,6 +116,31 @@ async function suite(label, makeStore) {
     await assert.rejects(() => c.put('ok', { codes: Array.from({ length: 201 }, (_, i) => String(600000 + i)) }), (e) => e.statusCode === 400 && /200/.test(e.message));
   });
 
+  await test('QA R80-1：已有 50 个再迁入 1 个 → 不加入、列在 over_limit、数据与 rev 不变', async () => {
+    const c = await fresh();
+    for (let i = 0; i < CS.MAX_CUSTOM_SECTORS; i++) await c.put(`S${i}`, { codes: ['600000'] });
+    const before = await c.view();
+    const v = await c.importLocal({ sectors: { 来自第二台设备: ['600001'] } });
+    assert.deepStrictEqual([v.added, v.deleted, plain(v.over_limit)], [0, 0, ['来自第二台设备']]);
+    assert.deepStrictEqual([v.count, v.rev], [50, before.rev]);
+    assert.ok(!v.items.some((i) => i.name === '来自第二台设备'));
+  });
+
+  await test('QA R80-1：先应用迁入里的删除记录再算容量；接近上限的多批迁入在容量内按顺序加入', async () => {
+    const now = clock();
+    const c = await fresh(now);
+    for (let i = 0; i < 48; i++) await c.put(`S${i}`, { codes: ['600000'] });
+    let v = await c.importLocal({ sectors: { N1: ['600001'], N2: ['600002'], N3: ['600003'], N4: ['600004'] } });
+    assert.deepStrictEqual([v.added, plain(v.over_limit), v.count], [2, ['N3', 'N4'], 50]);
+    assert.deepStrictEqual(v.items.slice(-2).map((i) => i.name), ['N1', 'N2']);
+    const rev = v.rev;
+    v = await c.importLocal({ sectors: { N5: ['600005'] } });
+    assert.deepStrictEqual([v.added, plain(v.over_limit), v.count, v.rev], [0, ['N5'], 50, rev]);
+    // 同一次迁入里带删除记录：先删掉 1 个，腾出 1 个位置
+    v = await c.importLocal({ sectors: { N6: ['600006'], N7: ['600007'] }, tombstones: [{ name: 'S0', deletedAt: new Date(now.peek().getTime() + 500).toISOString() }] });
+    assert.deepStrictEqual([v.deleted, v.added, plain(v.over_limit), v.count], [1, 1, ['N7'], 50]);
+  });
+
   await test('rev：每次有改动的写入严格递增，无改动不变', async () => {
     const c = await fresh();
     const revs = [(await c.view()).rev];
@@ -153,6 +178,16 @@ async function suite(label, makeStore) {
     assert.ok(!/CREATE\s+(TABLE|SEQUENCE|INDEX)/i.test(body), '运行时代码里有建表语句');
   });
 
+  await test('内存实现中途出错整体回滚：数据与 rev 都不变（与 PostgreSQL 事务一致）', async () => {
+    const st = new CS.MemoryCustomSectorStore();
+    const t = new Date('2026-10-25T08:00:00Z');
+    await st.put('A', ['600000'], t, 50);
+    const before = plain(await st.snapshot());
+    const bad = { name: 'B', get codes() { throw new Error('boom'); } };
+    await assert.rejects(() => st.importLocal([{ name: 'C', codes: ['600001'] }, bad], [{ name: 'A', deletedAt: '2026-10-25T09:00:00Z' }], t, 50), /boom/);
+    assert.deepStrictEqual(plain(await st.snapshot()), before);
+  });
+
   const url = process.env.TEST_DATABASE_URL;
   if (url) {
     const postgres = require('postgres');
@@ -176,6 +211,27 @@ async function suite(label, makeStore) {
         await CS.applyCustomSectorsMigration(sql, t);
         assert.strictEqual((await c.check()).ready, true);
       });
+      await test('QA R80-1：两个连接接近上限时并发迁入，全站在用总数始终 ≤ 50', async () => {
+        const t = `kline_custom_sectors_t${process.pid}_lim`;
+        tables.push(t);
+        await CS.applyCustomSectorsMigration(sql, t);
+        const conns = [postgres(url, { max: 1, onnotice: () => {} }), postgres(url, { max: 1, onnotice: () => {} })];
+        try {
+          const seed = new CS.CustomSectors(new CS.PostgresCustomSectorStore(sql, t), clock());
+          await seed.init();
+          for (let i = 0; i < 47; i++) await seed.put(`S${i}`, { codes: ['600000'] });
+          const cs = conns.map((c, i) => new CS.CustomSectors(new CS.PostgresCustomSectorStore(c, t), clock(`2026-10-25T0${i + 1}:00:00Z`)));
+          for (const c of cs) await c.init();
+          const rs = await Promise.all(cs.map((c, i) => c.importLocal({ sectors: Object.fromEntries([0, 1, 2, 3].map((k) => [`D${i}-${k}`, [String(600100 + k)]])) })));
+          const fin = await seed.view();
+          assert.strictEqual(fin.count, 50, `最终 ${fin.count}`);
+          assert.strictEqual(rs[0].added + rs[1].added, 3);
+          assert.strictEqual(rs[0].over_limit.length + rs[1].over_limit.length, 5);
+          const [{ n }] = await sql`SELECT count(*)::int AS n FROM ${sql(t)} WHERE state = 'active'`;
+          assert.strictEqual(n, 50);
+        } finally { for (const c of conns) await c.end(); }
+      });
+
       await test('PostgreSQL：两个连接并发写，rev 连续不丢、同一 rev 内容一致', async () => {
         const t = `kline_custom_sectors_t${process.pid}_cc`;
         tables.push(t);
@@ -308,6 +364,35 @@ async function suite(label, makeStore) {
     await p.add('B', '600000');
     assert.ok(/保存自定义板块失败/.test(p.alerts.join()), p.alerts.join());
     assert.strictEqual(p.storage.kline_custom_sectors_v1, JSON.stringify({ 我的: ['600000'] }));
+  });
+
+  await test('QA R80-2：名称为 "__proto__" 的板块保存后在页面列表、扫描范围、导出数据里都不丢', async () => {
+    const srv = server();
+    const p = open(srv, { kline_custom_sectors_migrated_server_v1: 'x' });
+    await until(() => p.state().loaded);
+    await p.add('__proto__', '600000 600519');
+    assert.deepStrictEqual(p.state().items, [{ name: '__proto__', codes: ['600000', '600519'] }]);
+    const dict = p.x.getCustomSectors();
+    assert.strictEqual(JSON.stringify(dict), '{"__proto__":["600000","600519"]}');
+    assert.deepStrictEqual(Object.keys(dict), ['__proto__']);
+    assert.ok(/value="custom:__proto__"/.test(p.chips()), '页面列表里应有该板块');
+    p.sandbox.document.querySelectorAll = (sel) => (sel === '.sector-checkbox:checked' ? [{ value: 'custom:__proto__' }] : []);
+    const scope = plain(vm.runInContext('getScanScope()', p.sandbox));
+    assert.deepStrictEqual([scope.customCodes, scope.customNames, scope.total], [['600000', '600519'], ['__proto__'], 2]);
+    // 导出文件再导入（JSON 往返）：服务端迁入能识别
+    const other = server();
+    const v = await other.cs.importLocal({ sectors: JSON.parse(JSON.stringify(dict)) });
+    assert.deepStrictEqual(v.items.map((i) => i.name), ['__proto__']);
+  });
+
+  await test('QA R80-1：旧浏览器迁入超过全站上限时，页面说明哪些没迁入，本机旧数据不删', async () => {
+    const srv = server();
+    for (let i = 0; i < 50; i++) await srv.cs.put(`S${i}`, { codes: ['600000'] });
+    const legacy = JSON.stringify({ 本机1: ['600001'], 本机2: ['600002'] });
+    const p = open(srv, { kline_custom_sectors_v1: legacy });
+    await until(() => p.state().loaded && p.state().notice);
+    assert.ok(/2 个自定义板块因超过全站 50 个上限未迁入：本机1、本机2/.test(p.chips()), p.chips().slice(0, 300));
+    assert.strictEqual(p.storage.kline_custom_sectors_v1, legacy);
   });
 
   await test('迟到的旧读取不覆盖已完成的更新（rev 不倒退）', async () => {

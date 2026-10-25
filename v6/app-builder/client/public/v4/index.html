@@ -3050,7 +3050,7 @@ function importConfigFromFile(event) {
       renderWatchlistTags();
       renderWatchlistTable();
       updateConfigSummary();
-      showSyncStatus(`✅ 导入完成：新增 ${r.added} 只，删除记录 ${r.deleted} 条${r.skipped && r.skipped.length ? `，跳过无效 ${r.skipped.length} 条` : ''}（已删除过的股票不会被重新加入）${cs ? `；自定义板块新增 ${cs.added} 个` : ''}`, '#27ae60');
+      showSyncStatus(`✅ 导入完成：新增 ${r.added} 只，删除记录 ${r.deleted} 条${r.skipped && r.skipped.length ? `，跳过无效 ${r.skipped.length} 条` : ''}（已删除过的股票不会被重新加入）${cs ? `；自定义板块新增 ${cs.added} 个${cs.over_limit && cs.over_limit.length ? `，超过全站 50 个上限未加入 ${cs.over_limit.length} 个（${cs.over_limit.slice(0, 5).join('、')}）` : ''}` : ''}`, '#27ae60');
     } catch(err) {
       showSyncStatus('❌ 导入失败：' + (err.message || err), '#e74c3c');
     }
@@ -3518,7 +3518,7 @@ function _escHtml(s) {
 }
 
 // ---- 自定义板块：存服务端（全站共用一份，手机 / 电脑同步，删除不复活）。与自选股同一规则 ----
-const customSectorState = { loaded: false, error: null, rev: null, items: [], tombstones: [] };
+const customSectorState = { loaded: false, error: null, rev: null, items: [], tombstones: [], notice: null };
 
 function _applyCustomSectorView(v) {
   if (!v || !Array.isArray(v.items)) throw new Error('服务端返回的自定义板块数据格式不对');
@@ -3548,9 +3548,9 @@ async function customSectorRequest(method, sub = '', body) {
   return _applyCustomSectorView(await resp.json());
 }
 
-/** {名称: 代码[]}，只来自服务端 */
+/** {名称: 代码[]}，只来自服务端。用无原型对象：服务端接受的任何名称（包括 "__proto__"）都不会在这里丢失（QA R80-2） */
 function getCustomSectors() {
-  const out = {};
+  const out = Object.create(null);
   for (const i of customSectorState.items) out[i.name] = i.codes;
   return out;
 }
@@ -3573,6 +3573,9 @@ async function refreshCustomSectors() {
   try {
     const migrated = await migrateLegacyCustomSectors();
     if (!migrated) await customSectorRequest('GET');
+    if (migrated && Array.isArray(migrated.over_limit) && migrated.over_limit.length) {
+      customSectorState.notice = `本机原有的 ${migrated.over_limit.length} 个自定义板块因超过全站 50 个上限未迁入：${migrated.over_limit.slice(0, 5).join('、')}${migrated.over_limit.length > 5 ? ' 等' : ''}（本机旧数据未删除）`;
+    }
   } catch (e) {
     customSectorState.error = e.message || String(e);
     if (!customSectorState.loaded) customSectorState.items = [];
@@ -3642,6 +3645,9 @@ function renderSectorList() {
   if (customSectorState.error) {
     html += `<div style="width:100%;color:#e74c3c;font-size:12px;">自定义板块服务暂不可用：${_escHtml(customSectorState.error)}（不会只存在本机）
       <a href="javascript:void(0)" onclick="refreshCustomSectors()" style="color:#3498db;margin-left:6px;">重试</a></div>`;
+  }
+  if (customSectorState.notice) {
+    html += `<div style="width:100%;color:#f39c12;font-size:12px;">${_escHtml(customSectorState.notice)}</div>`;
   }
   for (const { name, codes } of customSectorState.items) {
     html += chip({ value: `custom:${name}`, name, count: (codes || []).length, label: '自定义', status: 'custom', title: `${name}（自定义，保存在服务器，手机 / 电脑同步）`, disabled: false })

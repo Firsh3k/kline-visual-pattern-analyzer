@@ -12,7 +12,8 @@
  * - put：新建或替换成分（已删除的会重新启用）；成分完全相同则不改动。
  * - remove：写删除记录（之后的迁入不会把它带回来）。
  * - importLocal（浏览器一次性迁入）：先应用删除记录（只覆盖比它更早的服务器记录），
- *   再加入服务器上完全没有记录的板块（绝不覆盖已有的在用 / 删除记录）。
+ *   再加入服务器上完全没有记录的板块（绝不覆盖已有的在用 / 删除记录）；全站最多 50 个在用，
+ *   在剩余容量内按顺序加入，超出的列在 over_limit（QA R80-1，与写入同一把版本行锁，多台设备并发迁入也不会超）。
  */
 import { WatchlistInputError, WatchlistUnavailableError } from './watchlist-store';
 
@@ -35,6 +36,7 @@ export interface CustomSectorRow {
 export interface CustomSectorSnapshot { rows: CustomSectorRow[]; rev: number }
 export interface ImportSector { name: string; codes: string[] }
 export interface ImportSectorTombstone { name: string; deletedAt: string }
+export interface ImportResult { added: number; deleted: number; over_limit: string[] }
 
 export interface CustomSectorStore {
   readonly kind: string;
@@ -43,7 +45,8 @@ export interface CustomSectorStore {
   /** 返回 'created' | 'updated' | 'unchanged' */
   put(name: string, codes: string[], now: Date, limit: number): Promise<'created' | 'updated' | 'unchanged'>;
   remove(name: string, now: Date): Promise<boolean>;
-  importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date): Promise<{ added: number; deleted: number }>;
+  /** limit：全站在用板块上限；先应用删除记录，再在剩余容量内按顺序加入，超出的列在 over_limit */
+  importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date, limit: number): Promise<ImportResult>;
   close?(): Promise<void>;
 }
 
@@ -85,12 +88,20 @@ export class MemoryCustomSectorStore implements CustomSectorStore {
     return { rows: [...this.data.values()].map((r) => ({ ...r, codes: r.codes.slice() })), rev: this.rev };
   }
 
+  /** 一个写操作 = 一个新版本；无改动版本不变；中途抛错则整体回滚（与 PostgreSQL 事务一致） */
   private write<T>(fn: (put: (row: Omit<CustomSectorRow, 'rev'>) => void) => T): T {
     const next = this.rev + 1;
+    const backup = new Map(this.data);
     let changed = 0;
-    const out = fn((row) => { this.data.set(row.name, { ...row, codes: row.codes.slice(), rev: next }); changed++; });
-    if (changed > 0) this.rev = next;
-    return out;
+    try {
+      const out = fn((row) => { this.data.set(row.name, { ...row, codes: row.codes.slice(), rev: next }); changed++; });
+      if (changed > 0) this.rev = next;
+      return out;
+    } catch (err) {
+      this.data.clear();
+      for (const [k, v] of backup) this.data.set(k, v);
+      throw err;
+    }
   }
 
   async put(name: string, codes: string[], now: Date, limit: number) {
@@ -115,23 +126,27 @@ export class MemoryCustomSectorStore implements CustomSectorStore {
     });
   }
 
-  async importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date) {
+  async importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date, limit: number) {
     return this.write((put) => {
       let added = 0, deleted = 0;
+      const overLimit: string[] = [];
       for (const t of tombstones) {
         const r = this.data.get(t.name);
         const at = iso(t.deletedAt);
         if (!r) { put({ name: t.name, codes: [], state: 'deleted', created_at: at, updated_at: at, deleted_at: at }); deleted++; }
         else if (r.updated_at < at && r.state === 'active') { put({ ...r, state: 'deleted', updated_at: at, deleted_at: at }); deleted++; }
       }
+      // QA R80-1：应用删除记录之后，按全站有效在用数量检查剩余容量
+      let active = [...this.data.values()].filter((x) => x.state === 'active').length;
       sectors.forEach((s, i) => {
-        if (!this.data.has(s.name)) {
-          const at = iso(new Date(now.getTime() + i));
-          put({ name: s.name, codes: s.codes, state: 'active', created_at: at, updated_at: at, deleted_at: null });
-          added++;
-        }
+        if (this.data.has(s.name)) return;
+        if (active >= limit) { overLimit.push(s.name); return; }
+        const at = iso(new Date(now.getTime() + i));
+        put({ name: s.name, codes: s.codes, state: 'active', created_at: at, updated_at: at, deleted_at: null });
+        added++;
+        active++;
       });
-      return { added, deleted };
+      return { added, deleted, over_limit: overLimit };
     });
   }
 }
@@ -272,9 +287,10 @@ export class PostgresCustomSectorStore implements CustomSectorStore {
     });
   }
 
-  async importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date) {
+  async importLocal(sectors: ImportSector[], tombstones: ImportSectorTombstone[], now: Date, limit: number) {
     return this.write(async (tx, rev) => {
       let added = 0, deleted = 0;
+      const overLimit: string[] = [];
       for (const t of tombstones) {
         const at = new Date(t.deletedAt);
         const rs = await tx`
@@ -286,7 +302,13 @@ export class PostgresCustomSectorStore implements CustomSectorStore {
           RETURNING name`;
         deleted += rs.length;
       }
+      // QA R80-1：在版本行锁保护的同一事务里，按应用删除记录后的有效在用数量检查剩余容量
+      const [{ n }] = await tx`SELECT count(*)::int AS n FROM ${this.t(tx)} WHERE state = 'active'`;
+      let active = n;
       for (const [i, s] of sectors.entries()) {
+        const [exists] = await tx`SELECT 1 FROM ${this.t(tx)} WHERE name = ${s.name}`;
+        if (exists) continue;
+        if (active >= limit) { overLimit.push(s.name); continue; }
         const at = new Date(now.getTime() + i);
         const rs = await tx`
           INSERT INTO ${this.t(tx)} (name, codes_json, state, created_at, updated_at, deleted_at, rev)
@@ -294,8 +316,9 @@ export class PostgresCustomSectorStore implements CustomSectorStore {
           ON CONFLICT (name) DO NOTHING
           RETURNING name`;
         added += rs.length;
+        active += rs.length;
       }
-      return { out: { added, deleted }, changed: added + deleted };
+      return { out: { added, deleted, over_limit: overLimit }, changed: added + deleted };
     });
   }
 
@@ -312,7 +335,7 @@ export class UnavailableCustomSectorStore implements CustomSectorStore {
   async snapshot(): Promise<CustomSectorSnapshot> { return this.fail(); }
   async put(): Promise<'created'> { return this.fail(); }
   async remove(): Promise<boolean> { return this.fail(); }
-  async importLocal(): Promise<{ added: number; deleted: number }> { return this.fail(); }
+  async importLocal(): Promise<ImportResult> { return this.fail(); }
 }
 
 /** 与 createWatchlistStore 同一选择规则；驱动缺失 / 连接串错误只让自定义板块 fail-closed，原因里去掉连接串 */
@@ -412,7 +435,7 @@ export class CustomSectors {
   }
 
   /** 浏览器一次性迁入：sectors 为本机 {名称: 代码[]}（或 [{name, codes}]），tombstones 为 [{name, deletedAt}] */
-  async importLocal(body: unknown): Promise<CustomSectorView & { added: number; deleted: number; skipped: string[] }> {
+  async importLocal(body: unknown): Promise<CustomSectorView & ImportResult & { skipped: string[] }> {
     const b = (body ?? {}) as { sectors?: unknown; tombstones?: unknown };
     const skipped: string[] = [];
     const list: Array<{ name: unknown; codes: unknown }> = Array.isArray(b.sectors)
@@ -440,7 +463,7 @@ export class CustomSectors {
     }
     if (sectors.length > MAX_CUSTOM_SECTORS || tombs.length > 1000) throw new WatchlistInputError('迁入数据过多，请检查本机数据');
     return this.run(async () => {
-      const r = await this.store.importLocal(sectors, tombs, this.now());
+      const r = await this.store.importLocal(sectors, tombs, this.now(), MAX_CUSTOM_SECTORS);
       return { ...(await this.buildView()), ...r, skipped };
     });
   }

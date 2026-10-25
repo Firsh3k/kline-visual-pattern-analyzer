@@ -34,9 +34,9 @@ async function until(cond, ms = 3000) {
 }
 
 /** 模拟服务端：与 controller 相同的路由与错误码 */
-function fakeServer({ down = false, holdGets = false } = {}) {
+function fakeServer({ down = false, holdGets = false, store = null } = {}) {
   let t = Date.parse('2026-10-23T08:00:00Z');
-  const wl = new W.Watchlist(new W.MemoryWatchlistStore(), () => new Date((t += 1000)));
+  const wl = new W.Watchlist(store || new W.MemoryWatchlistStore(), () => new Date((t += 1000)));
   const calls = [];
   const held = [];   // holdGets：GET 先在服务端读出快照，响应暂缓，由测试释放（模拟迟到的旧读取）
   const res = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -237,6 +237,54 @@ function open(server, localStorage = {}) {
     assert.strictEqual(p.storage.kline_watchlist_v1, JSON.stringify(['600519']), '本机旧数据不应被改动');
     assert.ok(!p.storage.kline_watchlist_migrated_server_v1, '迁入失败时不应标记为已迁入');
   });
+
+  const dbUrl = process.env.TEST_DATABASE_URL;
+  if (dbUrl) {
+    console.log('FIR-42：页面显示 = 服务端返回 = 数据库（真实 PostgreSQL）');
+    const postgres = require('postgres');
+    const sql = postgres(dbUrl, { max: 2, onnotice: () => {} });
+    const table = `kline_watchlist_page_t${process.pid}`;
+    const shownTags = (p) => [...p.sandbox.document.getElementById('watchlistTags').innerHTML.matchAll(/removeStock\('(\d{6})'\)/g)].map(m => m[1]);
+    const dbActive = async () => (await sql`SELECT code FROM ${sql(table)} WHERE state = 'active' ORDER BY added_at, code`).map(r => r.code);
+    const dbDeleted = async () => (await sql`SELECT code FROM ${sql(table)} WHERE state = 'deleted' ORDER BY code`).map(r => r.code);
+    try {
+      await W.applyWatchlistMigration(sql, table);
+      await test('两台设备经页面增删 / 迁入 / 清空：每一步两端页面显示的清单 = 数据库里的 active 行；删除记录 = 数据库 deleted 行', async () => {
+        const server = fakeServer({ store: new W.PostgresWatchlistStore(sql, table) });
+        await server.wl.init();
+        const pc = open(server, { kline_watchlist_v1: JSON.stringify(['600519', '000858']) });   // 电脑上有旧的本机清单
+        const phone = open(server);
+        await until(() => pc.state().loaded && phone.state().loaded);
+        const check = async (label) => {
+          await pc.x.refreshWatchlist(false); await phone.x.refreshWatchlist(false);
+          const db = await dbActive();
+          assert.deepStrictEqual(plain(pc.state().codes), db, `${label}：电脑状态 ≠ 数据库`);
+          assert.deepStrictEqual(shownTags(pc), db, `${label}：电脑页面显示 ≠ 数据库`);
+          assert.deepStrictEqual(shownTags(phone), db, `${label}：手机页面显示 ≠ 数据库`);
+          assert.deepStrictEqual(plain(phone.state().tombstones.map(t => t.code)), await dbDeleted(), `${label}：删除记录 ≠ 数据库`);
+          assert.strictEqual(pc.state().rev, Number((await sql`SELECT rev FROM ${sql(table + '_meta')} WHERE id = 1`)[0].rev), `${label}：rev ≠ 数据库`);
+        };
+        await check('迁入后');
+        phone.sandbox.document.getElementById('addStockInput').value = '300750';
+        await phone.x.addStock();
+        await check('手机添加后');
+        await pc.x.removeStock('600519');
+        await check('电脑删除后');
+        const reopened = open(server, { kline_watchlist_v1: JSON.stringify(['600519']) });     // 另一台旧浏览器带着 600519
+        await until(() => reopened.state().loaded);
+        assert.ok(!shownTags(reopened).includes('600519'), '删除的股票被旧浏览器带回来了');
+        await check('旧浏览器迁入后');
+        await phone.x.clearAllWatchlist();
+        await check('清空后');
+        assert.deepStrictEqual(await dbActive(), []);
+      });
+    } finally {
+      await sql`DROP TABLE IF EXISTS ${sql(table)}, ${sql(table + '_meta')}`;
+      await sql.end();
+    }
+  } else {
+    console.log('FIR-42 页面 = 数据库一致性：跳过（未设置 TEST_DATABASE_URL）');
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

@@ -46,6 +46,7 @@ interface Job {
   status: JobStatus;
   createdAt: number;
   finishedAt: number | null;
+  scope: unknown[];                   // FIR-41 第 4 项：扫描范围说明（板块、来源、核对状态），原样回显
 }
 
 const CODE_RE = /^\d{6}$/;
@@ -69,7 +70,7 @@ export class ScanJobManager {
   }
 
   /** 提交任务：校验 → 去重 → 入队，立即返回 */
-  create(codes: unknown, filter: ScanFilter = {}): { job_id: string; total: number } {
+  create(codes: unknown, filter: ScanFilter = {}, meta: { scope?: unknown[] } = {}): { job_id: string; total: number } {
     this.purge();
     if (!Array.isArray(codes) || codes.length === 0) throw new InvalidRequestError('股票代码列表不能为空');
     const clean = [...new Set(codes.map((c) => String(c).trim()))];
@@ -89,6 +90,7 @@ export class ScanJobManager {
       filter: { minScore: Number.isFinite(minScore) ? minScore : 0, onlyBull: !!filter.onlyBull },
       next: 0, running: 0, done: 0, items: [], filteredOut: 0, failed: [],
       status: 'running', createdAt: this.opt.now(), finishedAt: null,
+      scope: Array.isArray(meta.scope) ? meta.scope : [],
     };
     this.jobs.set(job.id, job);
     this.order.push(job.id);
@@ -117,6 +119,7 @@ export class ScanJobManager {
       items: [...j.items].sort((a, b) => scoreOf(b) - scoreOf(a)),
       failed: [...j.failed],
       filter: { min_score: j.filter.minScore, only_bull: j.filter.onlyBull },
+      scope: j.scope,
       created_at: new Date(j.createdAt).toISOString(),
       finished_at: j.finishedAt === null ? null : new Date(j.finishedAt).toISOString(),
       storage: 'memory',

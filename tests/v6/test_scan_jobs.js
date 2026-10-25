@@ -240,7 +240,7 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     const p = loadPage({ fetch: be.fetch, immediateTimers: true, exports: ['startMarketScan'] });
     const doc = p.sandbox.document;
     doc.querySelectorAll = (sel) => sel === '.sector-checkbox:checked' ? [{ value: 'S' }] : [];
-    p.sandbox.getAllSectors = () => ({ S: ['600001', '600002', '600003', '600004', '600005'] });
+    p.sandbox.getScanScope = () => ({ ids: [], customCodes: ['600001', '600002', '600003', '600004', '600005'], customNames: ['S'], total: 5 });
     doc.getElementById('scanMinScore').value = '0';
     doc.getElementById('scanSignalType').value = 'all';
     await p.x.startMarketScan();
@@ -257,7 +257,7 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     const p = loadPage({ fetch: be.fetch, immediateTimers: true, exports: ['startMarketScan'] });
     const doc = p.sandbox.document;
     doc.querySelectorAll = (sel) => sel === '.sector-checkbox:checked' ? [{ value: 'S' }] : [];
-    p.sandbox.getAllSectors = () => ({ S: codes(10) });
+    p.sandbox.getScanScope = () => ({ ids: [], customCodes: codes(10), customNames: ['S'], total: 10 });
     doc.getElementById('scanMinScore').value = '0';
     doc.getElementById('scanSignalType').value = 'all';
     await p.x.startMarketScan();
@@ -309,7 +309,7 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     const p = loadPage({ fetch, immediateTimers: true, exports: ['startMarketScan', 'cancelMarketScan'] });
     const doc = p.sandbox.document;
     doc.querySelectorAll = (sel) => sel === '.sector-checkbox:checked' ? [{ value: 'S' }] : [];
-    p.sandbox.getAllSectors = () => ({ S: ['600001', '600002', '600003'] });
+    p.sandbox.getScanScope = () => ({ ids: [], customCodes: ['600001', '600002', '600003'], customNames: ['S'], total: 3 });
     doc.getElementById('scanMinScore').value = '0';
     doc.getElementById('scanSignalType').value = 'all';
     let finished = false;

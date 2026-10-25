@@ -117,13 +117,16 @@ export class StockAnalysisController {
 
   /** FIR-41：提交扫描后台任务，立即返回 job_id；前端轮询 GET scan/jobs/:id */
   @Post('scan/jobs')
-  createScanJob(@Body() body: { codes: string[]; min_score?: number; only_bull?: boolean }) {
+  createScanJob(@Body() body: { codes?: string[]; sectors?: string[]; min_score?: number; only_bull?: boolean }) {
     try {
       return this.service.createScanJob(body?.codes, {
         minScore: body?.min_score ?? 0,
         onlyBull: body?.only_bull ?? false,
-      });
+      }, body?.sectors);
     } catch (error) {
+      if ((error as { statusCode?: number })?.statusCode === 503) {
+        throw new ServiceUnavailableException((error as Error).message);
+      }
       throw new BadRequestException(error instanceof Error ? error.message : '提交扫描失败');
     }
   }
@@ -145,9 +148,14 @@ export class StockAnalysisController {
     return this.service.getScanJob(id);
   }
 
+  /** FIR-41 第 4 项：扫描范围——板块清单、来源、数据日期、核对状态（不含成分明细） */
   @Get('sectors')
   sectors() {
-    return this.service.getSectors();
+    try {
+      return this.service.listSectors();
+    } catch (error) {
+      throw new ServiceUnavailableException(error instanceof Error ? error.message : '板块清单不可用');
+    }
   }
 
   @Post('sector/:code/scan')

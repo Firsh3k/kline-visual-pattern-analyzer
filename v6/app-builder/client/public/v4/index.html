@@ -19,7 +19,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 .page.active { display: block; }
 
 /* 图形库 */
-.pattern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.pattern-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 16px; }
 .pattern-card { background: #1a2332; border-radius: 10px; padding: 20px; border: 1px solid #2a3441; cursor: pointer; transition: all 0.2s; }
 .pattern-card:hover { border-color: #e74c3c; transform: translateY(-2px); }
 .pattern-card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
@@ -58,7 +58,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 .chart-section { background: #1a2332; border-radius: 10px; padding: 16px; margin-bottom: 16px; border: 1px solid #2a3441; }
 .chart-section h3 { font-size: 15px; margin-bottom: 10px; color: #aabbcc; }
 canvas { width: 100%; display: block; }
-.analysis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.analysis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; }
 .analysis-card { background: #1a2332; border-radius: 10px; padding: 16px; border: 1px solid #2a3441; }
 .analysis-card h3 { font-size: 15px; margin-bottom: 12px; color: #aabbcc; border-bottom: 1px solid #2a3441; padding-bottom: 8px; }
 .match-item { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -84,6 +84,21 @@ canvas { width: 100%; display: block; }
 .legend { display: flex; gap: 16px; font-size: 12px; color: #8899aa; margin-bottom: 8px; flex-wrap: wrap; }
 .legend span { display: flex; align-items: center; gap: 4px; }
 .legend i { width: 12px; height: 3px; display: inline-block; border-radius: 2px; }
+/* FIR-41 第 6 项：手机布局（≤640px）。页面里内联写死的多列卡片网格都加了 m-stack 类，窄屏改为单列；
+   只改排版，不改任何内容与数据。小的两列键值对（gap ≤10px）和 5 列数字条保持原样。 */
+@media (max-width: 640px) {
+  .container { padding: 12px; }
+  .header { padding: 12px 14px; }
+  .header h1 { font-size: 17px; }
+  .tabs { width: 100%; }
+  .tab { flex: 1; padding: 8px 4px; font-size: 13px; white-space: nowrap; }
+  .m-stack { grid-template-columns: 1fr !important; }
+  .stock-info .name { font-size: 20px; }
+  .stock-info .price { font-size: 24px; }
+  .chart-section { padding: 10px; }
+  .analysis-card { padding: 12px; }
+  .search-bar input { min-width: 0; }
+}
 </style>
 </head>
 <body>
@@ -128,7 +143,7 @@ canvas { width: 100%; display: block; }
     <div style="margin-top:20px;background:linear-gradient(135deg,#0f1419,#1a1a0f);border:2px solid #f39c12;border-radius:10px;padding:16px;">
       <h3 style="margin:0 0 12px 0;color:#f39c12;font-size:16px;">🎯 假信号识别指南（提高交易成功率的核心）</h3>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
         <div style="background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);border-radius:8px;padding:12px;">
           <div style="font-size:14px;font-weight:700;color:#e74c3c;margin-bottom:8px;">🔴 假突破（买入假信号）迹象</div>
           <ul style="margin:0;padding-left:18px;font-size:12px;color:#aabbcc;line-height:1.8;">
@@ -183,7 +198,7 @@ canvas { width: 100%; display: block; }
       <div style="display:flex;align-items:center;gap:8px;background:#0f1419;border:1px solid #2a3441;border-radius:8px;padding:6px 12px;">
         <span style="font-size:13px;color:#8899aa;">📅 回测</span>
         <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
-          <input type="checkbox" id="backtestMode" onchange="toggleBacktestMode()" style="opacity:0;width:0;height:0;">
+          <input type="checkbox" id="backtestMode" onchange="toggleBacktestMode()" style="position:absolute;opacity:0;width:0;height:0;margin:0;">
           <span id="backtestSlider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#2a3441;transition:.3s;border-radius:22px;"></span>
           <span id="backtestSliderDot" style="position:absolute;content:'';height:16px;width:16px;left:3px;bottom:3px;background-color:#8899aa;transition:.3s;border-radius:50%;"></span>
         </label>
@@ -2228,7 +2243,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     ` : ''}
 
     <!-- ===== 新增：大盘环境 + 当前阶段 + 形态可靠性 ===== -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+    <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
       <!-- 大盘环境 -->
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -2309,7 +2324,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
         <span style="font-size:14px;font-weight:600;color:#f0f0f0;">多空形态信号 <span style="font-size:11px;color:#8899aa;font-weight:400;">（Python Canonical Core · 各方向取最近一次实例）</span></span>
       </div>
       ${offline ? '<div style="font-size:12px;color:#8899aa;">离线CSV不做形态识别。</div>' : `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         ${[
           { latest: bullLatest, id: bullLatestId, color:'#e74c3c', bg:'rgba(231,76,60,0.08)', bd:'rgba(231,76,60,0.3)', icon:'📈 多头（买入）', arr: PATTERNS },
           { latest: bearLatest, id: bearLatestId, color:'#2ecc71', bg:'rgba(46,204,113,0.08)', bd:'rgba(46,204,113,0.3)', icon:'📉 空头（卖出）', arr: BEAR_PATTERNS },
@@ -2441,7 +2456,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       </div>
     </div>
     <!-- 增强信号：MACD背离 + 量价背离 + 颈线确认 -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
       <div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
         <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">MACD背离</div>
         ${macdDiv.topDivergence > 0 ? `
@@ -2487,7 +2502,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     </div>
 
     <!-- ===== 新增：5大增强指标 ===== -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+    <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
       <!-- RSI + KDJ -->
       <div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
         <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">RSI + KDJ 超买超卖</div>
@@ -2545,7 +2560,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
       <!-- ATR动态止损 -->
       <div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
         <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">ATR 动态止损位</div>
@@ -2611,7 +2626,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       <h3>近60日放大K线</h3>
       <canvas id="chart60"></canvas>
     </div>
-    <div class="analysis-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+    <div class="analysis-grid m-stack" style="grid-template-columns: 1fr 1fr 1fr;">
        <div class="analysis-card">
          <h3 style="color:#e74c3c">上升形态（Python Core · 最近实例）</h3>
          ${PATTERNS.map(p => {
@@ -2658,7 +2673,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     <!-- 详细形态点位分析 -->
     <div class="analysis-card" style="margin-top:16px;">
       <h3 style="color:${bestConfirmed?(bestType==='bear'?'#2ecc71':'#e74c3c'):'#f39c12'}">当前形态详细分析 — ${best.name} ${offline?'（离线·不做形态）':(bestConfirmed?(bestType==='bear'?'（下降/已确认卖出信号）':'（上升/已确认买入信号）'):'（最近结构·未确认/观望）')}</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div>
           <div style="margin-bottom:12px;">
             <div style="font-size:13px;color:#8899aa;margin-bottom:4px">当前所处阶段</div>
@@ -2687,7 +2702,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     <!-- 点位解读 -->
     <div class="analysis-card" style="margin-top:16px;">
       <h3>点位解读 — 为什么这些位置是关键？</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:16px;margin-top:12px;">
         ${bestInterp.map(item => `
           <div style="background:#0f1419;border-radius:8px;padding:14px;border-left:3px solid ${bestType==='bear'?'#2ecc71':'#e74c3c'};">
             <div style="font-size:15px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">${item.point}</div>
@@ -2709,7 +2724,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     ${PATTERN_KNOWLEDGE[best.id] ? `
     <div class="analysis-card" style="margin-top:16px;background:linear-gradient(135deg,#1a2332,#0f1419);">
       <h3 style="color:${bestType==='bear'?'#2ecc71':'#e74c3c'}">形态知识卡片 — ${PATTERN_KNOWLEDGE[best.id].title}</h3>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:12px;">
+      <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:12px;">
         <div>
           <div style="margin-bottom:12px;">
             <div style="font-size:13px;color:#f39c12;font-weight:600;margin-bottom:4px;">形态本质</div>
@@ -2757,7 +2772,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
       </div>
       <div class="analysis-card">
         <h3>其他形态参考</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div>
             <div style="font-size:13px;color:#e74c3c;font-weight:600;margin-bottom:8px">上升形态</div>
             <div style="font-size:13px;line-height:2;color:#aabbcc;">
@@ -2792,9 +2807,13 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
 
   // 绘制图表：只标注“当前主导形态”（Python Core，index 与 doc.bars 同源），未确认形态用灰色；MACD背离为技术补充。
   setTimeout(() => {
+    // 50ms 内若又开始了一次分析（如 ?code= 链接的两处自动分析、连点快捷代码），结果区已被替换、画布已不在：
+    // 跳过这次过期的绘制，由新的结果自己画（FIR-41 第 6 项测试在慢速设备上发现）
+    const cf = document.getElementById('chartFull'), c6 = document.getElementById('chart60');
+    if (!cf || !c6) return;
     const mergedMarkers = buildChartMarkers(offline, bestDetail, bestConfirmed, bestType, macdDiv);
-    drawKline(document.getElementById('chartFull'), data, ind, 0, n, true, mergedMarkers);
-    drawKline(document.getElementById('chart60'), data, ind, Math.max(0, n-60), n, true, mergedMarkers);
+    drawKline(cf, data, ind, 0, n, true, mergedMarkers);
+    drawKline(c6, data, ind, Math.max(0, n-60), n, true, mergedMarkers);
   }, 50);
 }
 

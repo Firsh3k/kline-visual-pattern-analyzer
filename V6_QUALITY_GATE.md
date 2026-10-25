@@ -34,14 +34,20 @@
 - `tests/v6/test_v4_adapter_r67.js`：加载实际部署的 V4 页面脚本，验证确认 / 主导只来自 Python、斜颈线绘制、坏数据报错。
 - `tests/v6/test_v4_no_local_engine.js`：本地 JS 形态引擎 / 推荐度 / 降级入口不得重新出现。
 - `tests/v6/test_bff_pure.js`：asOf 校验与扫描列表透传 Python 确认。
+- `tests/v6/test_repo_equals_prod.js`（FIR-41 第 5 项）：仓库里的平台快照自洽——依赖与 lock 版本一致；服务端运行时导入
+  都是直接依赖或在 `runtime-deps.json` 登记的间接依赖；启动链（`run.sh` / `build.sh` / nest / prune-smart）一致；
+  运行时文件都在；`/api/health` 的页面指纹算法与 `scripts/v6_fingerprint.py` 一致。
 
 ## 第二层：部署后 — 线上验收
 
 流程：PR → QA → 合并 → 合并提交 CI 绿 → 记录回退点 → 部署 → 线上冒烟 → 回写 FIR。不先上线后审核。
 
 **版本自证（替代人工逐个文件算哈希）**
-- [ ] 本地运行 `python3 scripts/v6_fingerprint.py --ref <本次部署的标签或提交>`
-- [ ] 线上 `/api/health` 的 `core_sha256`、`analyzer_sha256` 与上一步输出完全一致；`core_analyzer=real_core`
+- [ ] 在已登录的浏览器打开线上 `/api/health`，把返回的 JSON 存成 `health.json`
+- [ ] 运行 `python3 scripts/v6_verify_deploy.py --ref <本次部署的标签或提交> --health health.json`，结论必须是“通过”：
+  `core_sha256` / `analyzer_sha256`（Python Core 与执行器）、`deploy.page_sha256`（浏览器实际拿到的页面）与该版本一致，
+  `core_analyzer=real_core`，页面 / 执行器 / core 都在服务的 `cwd` 下，`watchlist_store` 为 `postgres` 且 `ready=true`
+  （FIR-41 第 5 项；只想看指纹时仍可用 `python3 scripts/v6_fingerprint.py --ref <版本>`）
 
 **个股冒烟**
 - [ ] 任选一只股票：`/api/analyze/<code>` → 200，`engine.analyzer=real_core`，250 根前复权，有 `signals`，无推荐度

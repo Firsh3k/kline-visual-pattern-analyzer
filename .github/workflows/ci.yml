@@ -213,6 +213,11 @@ jobs:
       run: |
         node tests/test_fir28_release_identity.js
 
+    - name: Run FIR-41 item 5 repo = production checks (deps/lock, runtime imports, startup chain, page fingerprint)
+      run: |
+        npm install --no-save --no-package-lock typescript@5.4.5 semver@7.6.3
+        node tests/v6/test_repo_equals_prod.js
+
     - name: Run FIR-41/42 watchlist tests (memory + real PostgreSQL incl. least-privilege role + probe, deployed V4 page = DB)
       env:
         TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres

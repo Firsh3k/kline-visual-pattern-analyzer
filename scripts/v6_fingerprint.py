@@ -8,6 +8,7 @@ V6 线上版本自证：按 git 版本算出“线上应该看到的指纹”，
 输出：
 - core_sha256      对应 /api/health 的 core_sha256，算法同 core.analysis.core_content_sha256
 - analyzer_sha256  对应 /api/health 的 analyzer_sha256（python_analyzer.py 文件本身）
+- page_sha256      对应 /api/health 的 deploy.page_sha256（线上实际返回的 V4 页面，FIR-41 第 5 项）
 - files            关键部署文件的 sha256，供人工抽查（NestJS 线上跑编译产物，.ts 无法自报）
 """
 import argparse
@@ -19,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = "v6/app-builder"
+PAGE = f"{APP}/client/public/v4/index.html"
 KEY_FILES = [
     f"{APP}/client/public/v4/index.html",
     f"{APP}/python_analyzer.py",
@@ -64,6 +66,7 @@ def fingerprint(ref=None):
         "commit": commit,
         "core_sha256": core_sha256(ref),
         "analyzer_sha256": hashlib.sha256(_read(ref, f"{APP}/python_analyzer.py")).hexdigest(),
+        "page_sha256": hashlib.sha256(_read(ref, PAGE)).hexdigest(),
         "files": {p: hashlib.sha256(_read(ref, p)).hexdigest()[:16] for p in KEY_FILES},
     }
 

@@ -7,6 +7,7 @@ import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { SectorCatalogStore } from './sector-catalog';
+import { CustomSectors, CustomSectorStatus, CustomSectorView, createCustomSectorStore } from './custom-sector-store';
 import { runProcess } from './run-process';
 
 dotenv.config();
@@ -46,6 +47,7 @@ export class StockAnalysisService implements OnModuleInit {
     maxParallel: Number(process.env.SCAN_MAX_PARALLEL ?? 3) || 3,
   });
   private readonly sectorCatalog = new SectorCatalogStore();
+  private readonly customSectors = new CustomSectors(createCustomSectorStore(process.env));
 
   onModuleInit(): void {
     this.watchlist.init().then(() => {
@@ -240,6 +242,27 @@ export class StockAnalysisService implements OnModuleInit {
   }
 
   /** 真实读取一次后返回状态（/api/health 用，QA R73-3：反映当前是否真的可用） */
+  // ---- FIR-41 第 4 项：自定义板块（服务端，全站共用） ----
+  checkCustomSectors(): Promise<CustomSectorStatus> {
+    return this.customSectors.check();
+  }
+
+  getCustomSectors(): Promise<CustomSectorView> {
+    return this.customSectors.view();
+  }
+
+  putCustomSector(name: string, body: unknown) {
+    return this.customSectors.put(name, body);
+  }
+
+  removeCustomSector(name: string) {
+    return this.customSectors.remove(name);
+  }
+
+  importCustomSectors(body: unknown) {
+    return this.customSectors.importLocal(body);
+  }
+
   checkWatchlist(): Promise<WatchlistStatus> {
     return this.watchlist.check();
   }

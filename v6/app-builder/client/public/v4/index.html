@@ -442,7 +442,10 @@ function switchTab(tab) {
   document.getElementById('page-watchlist').classList.toggle('active', tab==='watchlist');
   document.getElementById('page-scanner').classList.toggle('active', tab==='scanner');
   if (tab === 'watchlist' && typeof refreshWatchlist === 'function') refreshWatchlist(false);
-  if (tab === 'scanner' && typeof loadSectors === 'function' && !sectorState.loaded) loadSectors();
+  if (tab === 'scanner' && typeof loadSectors === 'function') {
+    if (!sectorState.loaded) loadSectors();
+    refreshCustomSectors();
+  }
 }
 
 // ============ 接口地址 ============
@@ -2890,7 +2893,6 @@ const LEGACY_WATCHLIST_KEY = WATCHLIST_KEY;                       // 旧版本�
 const LEGACY_TOMBSTONES_KEY = 'kline_watchlist_tombstones_v1';    // 旧版本机删除记录（只读，用于迁入）
 const LEGACY_GITHUB_KEYS = ['kline_github_settings_v1'];           // 旧版 GitHub 同步设置（含令牌），加载即清除
 const WATCHLIST_MIGRATED_KEY = 'kline_watchlist_migrated_server_v1';
-const CUSTOM_SECTORS_KEY = 'kline_custom_sectors_v1';
 
 const watchlistState = { codes: [], tombstones: [], rev: null, loaded: false, error: null, storage: null };
 
@@ -2995,18 +2997,17 @@ async function initWatchlistSync() {
   await refreshWatchlist(false);
   // 切回页面时自动拉取，另一台设备的修改无需手动同步
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') refreshWatchlist(false);
+    if (document.visibilityState === 'visible') {
+      refreshWatchlist(false);
+      if (typeof refreshCustomSectors === 'function') refreshCustomSectors();
+    }
   });
 }
 
 // 导出当前清单为 JSON 文件（备份用）
 function exportConfig() {
   const watchlist = getWatchlist();
-  let customSectors = [];
-  try {
-    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
-    customSectors = data ? JSON.parse(data) : [];
-  } catch(e) {}
+  const customSectors = getCustomSectors();      // 服务端的自定义板块 {名称: 代码[]}
   const config = {
     version: '2.0',
     source: 'server',
@@ -3025,7 +3026,7 @@ function exportConfig() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showSyncStatus(`✅ 已导出 ${watchlist.length} 只自选股 + ${customSectors.length} 个自定义板块`, '#27ae60');
+  showSyncStatus(`✅ 已导出 ${watchlist.length} 只自选股 + ${Object.keys(customSectors).length} 个自定义板块`, '#27ae60');
 }
 
 // 从 JSON 文件导入：按迁入规则合并到服务端（只加入服务端没有记录的代码；删除记录按时间合并）
@@ -3041,13 +3042,15 @@ function importConfigFromFile(event) {
         codes: config.watchlist,
         tombstones: Array.isArray(config.tombstones) ? config.tombstones : [],
       });
-      if (Array.isArray(config.customSectors)) {
-        try { localStorage.setItem(CUSTOM_SECTORS_KEY, JSON.stringify(config.customSectors)); } catch(e2) {}
+      let cs = null;
+      if (config.customSectors && typeof config.customSectors === 'object' && Object.keys(config.customSectors).length) {
+        cs = await customSectorRequest('POST', '/import', { sectors: config.customSectors });   // 只加入服务端没有记录的板块
+        renderSectorList();
       }
       renderWatchlistTags();
       renderWatchlistTable();
       updateConfigSummary();
-      showSyncStatus(`✅ 导入完成：新增 ${r.added} 只，删除记录 ${r.deleted} 条${r.skipped && r.skipped.length ? `，跳过无效 ${r.skipped.length} 条` : ''}（已删除过的股票不会被重新加入）`, '#27ae60');
+      showSyncStatus(`✅ 导入完成：新增 ${r.added} 只，删除记录 ${r.deleted} 条${r.skipped && r.skipped.length ? `，跳过无效 ${r.skipped.length} 条` : ''}（已删除过的股票不会被重新加入）${cs ? `；自定义板块新增 ${cs.added} 个${cs.over_limit && cs.over_limit.length ? `，超过全站 50 个上限未加入 ${cs.over_limit.length} 个（${cs.over_limit.slice(0, 5).join('、')}）` : ''}` : ''}`, '#27ae60');
     } catch(err) {
       showSyncStatus('❌ 导入失败：' + (err.message || err), '#e74c3c');
     }
@@ -3059,13 +3062,9 @@ function importConfigFromFile(event) {
 function updateConfigSummary() {
   const el = document.getElementById('configSummary');
   if (!el) return;
-  let customSectors = [];
-  try {
-    const data = localStorage.getItem(CUSTOM_SECTORS_KEY);
-    customSectors = data ? JSON.parse(data) : [];
-  } catch(e) {}
+  const nCustom = typeof customSectorState !== 'undefined' && customSectorState.loaded ? `${customSectorState.items.length} 个` : '（未加载）';
   el.innerHTML = watchlistState.loaded
-    ? `服务器上：<b style="color:#f0f0f0">${watchlistState.codes.length}</b> 只自选股 | 删除记录 ${watchlistState.tombstones.length} 条 | 本机自定义板块 ${customSectors.length} 个`
+    ? `服务器上：<b style="color:#f0f0f0">${watchlistState.codes.length}</b> 只自选股 | 删除记录 ${watchlistState.tombstones.length} 条 | 自定义板块 ${nCustom}`
     : '<span style="color:#e74c3c;">尚未从服务器加载自选股</span>';
 }
 
@@ -3502,7 +3501,8 @@ function renderWatchlistTable() {
 // FIR-41 第 4 项：扫描范围由服务端统一维护（GET /api/sectors），页面不再写死板块成分。
 // 每个板块显示来源、数据日期和核对状态：只有服务端判定 verified 的才显示“已核对”；人工样例永远标“人工样例”。
 // 提交扫描只传板块 id，由服务端按清单取成分；每只股票的结论仍 100% 来自 Python Core。
-const SCAN_SECTORS_KEY = 'kline_custom_sectors_v1';   // 自定义板块（暂存本机，后续改存服务器）
+const SCAN_SECTORS_KEY = 'kline_custom_sectors_v1';                       // 旧版：浏览器本机的自定义板块（只用于一次性迁入）
+const CUSTOM_SECTORS_MIGRATED_KEY = 'kline_custom_sectors_migrated_server_v1';
 const SECTOR_STATUS_STYLE = {
   verified:   { c: '#2ecc71', bg: 'rgba(46,204,113,0.12)' },
   unverified: { c: '#f39c12', bg: 'rgba(243,156,18,0.12)' },
@@ -3517,19 +3517,71 @@ function _escHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
-function getCustomSectors() {
-  try {
-    const data = localStorage.getItem(SCAN_SECTORS_KEY);
-    const obj = data ? JSON.parse(data) : {};
-    return obj && typeof obj === 'object' ? obj : {};
-  } catch (e) { return {}; }
+// ---- 自定义板块：存服务端（全站共用一份，手机 / 电脑同步，删除不复活）。与自选股同一规则 ----
+const customSectorState = { loaded: false, error: null, rev: null, items: [], tombstones: [], notice: null };
+
+function _applyCustomSectorView(v) {
+  if (!v || !Array.isArray(v.items)) throw new Error('服务端返回的自定义板块数据格式不对');
+  const rev = Number(v.rev);
+  if (!Number.isFinite(rev)) throw new Error('服务端返回的自定义板块缺少版本号');
+  if (customSectorState.loaded && customSectorState.rev !== null && rev < customSectorState.rev) {
+    console.warn(`[custom-sectors] 忽略过期响应 rev=${rev}（当前 ${customSectorState.rev}）`);
+    return v;
+  }
+  customSectorState.rev = rev;
+  customSectorState.items = v.items.map(i => ({ name: i.name, codes: (i.codes || []).slice() }));
+  customSectorState.tombstones = Array.isArray(v.tombstones) ? v.tombstones.slice() : [];
+  customSectorState.loaded = true;
+  customSectorState.error = null;
+  return v;
 }
 
-// 保存自定义板块
-function saveCustomSector(name, codes) {
-  const custom = getCustomSectors();
-  custom[name] = codes;
-  try { localStorage.setItem(SCAN_SECTORS_KEY, JSON.stringify(custom)); } catch(e) {}
+async function customSectorRequest(method, sub = '', body) {
+  const init = { method, credentials: 'include', headers: _wlHeaders(body !== undefined) };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const resp = await fetch(`${_getApiBasePath()}/custom-sectors${sub}`, init);
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try { const j = await resp.json(); if (j && (j.message || j.error)) detail = Array.isArray(j.message) ? j.message.join('；') : (j.message || j.error); } catch (_) {}
+    throw new Error(detail);
+  }
+  return _applyCustomSectorView(await resp.json());
+}
+
+/** {名称: 代码[]}，只来自服务端。用无原型对象：服务端接受的任何名称（包括 "__proto__"）都不会在这里丢失（QA R80-2） */
+function getCustomSectors() {
+  const out = Object.create(null);
+  for (const i of customSectorState.items) out[i.name] = i.codes;
+  return out;
+}
+
+// 首次打开：把本机旧的自定义板块迁入服务器（只迁一次；迁入失败不标记，下次再试；本机旧数据不改动）
+async function migrateLegacyCustomSectors() {
+  let done = null;
+  try { done = localStorage.getItem(CUSTOM_SECTORS_MIGRATED_KEY); } catch (_) {}
+  if (done) return null;
+  const legacy = _readLegacy(SCAN_SECTORS_KEY);
+  let result = null;
+  if (legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
+    result = await customSectorRequest('POST', '/import', { sectors: legacy });
+  }
+  try { localStorage.setItem(CUSTOM_SECTORS_MIGRATED_KEY, new Date().toISOString()); } catch (_) {}
+  return result;
+}
+
+async function refreshCustomSectors() {
+  try {
+    const migrated = await migrateLegacyCustomSectors();
+    if (!migrated) await customSectorRequest('GET');
+    if (migrated && Array.isArray(migrated.over_limit) && migrated.over_limit.length) {
+      customSectorState.notice = `本机原有的 ${migrated.over_limit.length} 个自定义板块因超过全站 50 个上限未迁入：${migrated.over_limit.slice(0, 5).join('、')}${migrated.over_limit.length > 5 ? ' 等' : ''}（本机旧数据未删除）`;
+    }
+  } catch (e) {
+    customSectorState.error = e.message || String(e);
+    if (!customSectorState.loaded) customSectorState.items = [];
+  }
+  renderSectorList();
+  if (typeof updateConfigSummary === 'function') updateConfigSummary();
 }
 
 // 从服务端读取扫描范围（板块 + 来源 + 核对状态）；失败时不在页面兜底写死成分
@@ -3590,8 +3642,16 @@ function renderSectorList() {
     ].filter(Boolean).join('\n');
     html += chip({ value: s.id, name: s.name, count: s.count, label: over ? `${s.label} · 超过 ${sectorState.maxCodes} 只上限` : s.label, status: s.status, title, disabled: over });
   }
-  for (const [name, codes] of Object.entries(getCustomSectors())) {
-    html += chip({ value: `custom:${name}`, name, count: (codes || []).length, label: '自定义', status: 'custom', title: `${name}（自定义，保存在本机）`, disabled: false });
+  if (customSectorState.error) {
+    html += `<div style="width:100%;color:#e74c3c;font-size:12px;">自定义板块服务暂不可用：${_escHtml(customSectorState.error)}（不会只存在本机）
+      <a href="javascript:void(0)" onclick="refreshCustomSectors()" style="color:#3498db;margin-left:6px;">重试</a></div>`;
+  }
+  if (customSectorState.notice) {
+    html += `<div style="width:100%;color:#f39c12;font-size:12px;">${_escHtml(customSectorState.notice)}</div>`;
+  }
+  for (const { name, codes } of customSectorState.items) {
+    html += chip({ value: `custom:${name}`, name, count: (codes || []).length, label: '自定义', status: 'custom', title: `${name}（自定义，保存在服务器，手机 / 电脑同步）`, disabled: false })
+      .replace('</label>', `<button type="button" class="custom-sector-del" data-name="${_escHtml(name)}" onclick="event.preventDefault();event.stopPropagation();removeCustomSector(this.dataset.name)" title="删除这个自定义板块（所有设备同步）" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;">×</button></label>`);
   }
   container.innerHTML = html;
   updateScanScope();
@@ -3639,8 +3699,8 @@ function _scanScopeHtml(scope, customNames) {
   return `<div style="margin-top:6px;font-size:12px;color:#8899aa;">扫描范围：${parts.join('、')}${unverified ? '<br><span style="color:#f39c12;">注意：范围里有未核对 / 人工样例的板块，成分可能不完整或已变化；每只股票的形态结论仍以 Python Core 为准。</span>' : ''}</div>`;
 }
 
-// 添加自定义板块
-function addCustomSector() {
+// 添加 / 更新自定义板块（写入服务端；同名则替换成分）
+async function addCustomSector() {
   const nameInput = document.getElementById('customSectorName');
   const codesInput = document.getElementById('customSectorCodes');
   const name = nameInput.value.trim();
@@ -3648,11 +3708,31 @@ function addCustomSector() {
   if (!name) { alert('请输入板块名称'); return; }
   const codes = [...new Set(codesStr.split(/[,，\s]+/).filter(c => c && /^\d{6}$/.test(c)))];
   if (codes.length === 0) { alert('请输入有效的股票代码'); return; }
-  saveCustomSector(name, codes);
+  let r;
+  try {
+    r = await customSectorRequest('PUT', `/${encodeURIComponent(name)}`, { codes });
+  } catch (e) {
+    alert(`保存自定义板块失败：${e.message}（未修改）`);
+    return;
+  }
   nameInput.value = '';
   codesInput.value = '';
   renderSectorList();
-  alert(`已添加自定义板块"${name}"（${codes.length}只股票）`);
+  alert(r && r.result === 'updated' ? `已更新自定义板块"${name}"（${codes.length}只股票）`
+    : r && r.result === 'unchanged' ? `自定义板块"${name}"没有变化` : `已添加自定义板块"${name}"（${codes.length}只股票，所有设备同步）`);
+}
+
+async function removeCustomSector(name) {
+  if (!name) return;
+  const ok = await showConfirm(`确定要删除自定义板块“${name}”吗？\n手机和电脑都会同步删除。`, '删除自定义板块');
+  if (!ok) return;
+  try {
+    await customSectorRequest('DELETE', `/${encodeURIComponent(name)}`);
+  } catch (e) {
+    alert(`删除失败：${e.message}（未修改）`);
+    return;
+  }
+  renderSectorList();
 }
 
 // 扫描结果缓存
@@ -3799,6 +3879,7 @@ renderPatterns();
 renderWatchlistTags();
 renderSectorList();
 loadSectors();
+refreshCustomSectors();
 initWatchlistSync();
 // 支持URL参数自动分析：?code=002436
 const urlParams = new URLSearchParams(window.location.search);

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Body, Param, Query,
+  Controller, Get, Post, Put, Delete, Body, Param, Query,
   BadRequestException, NotFoundException, HttpException, ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertAsOf } from './stock-analysis.pure';
@@ -30,6 +30,7 @@ export class StockAnalysisController {
       analyzer_sha256: coreStatus.analyzerSha256,
       engine_commit: coreStatus.engineCommit,
       watchlist_store: await this.service.checkWatchlist(),
+      custom_sectors_store: await this.service.checkCustomSectors(),
       timestamp: new Date().toISOString(),
     };
   }
@@ -148,7 +149,29 @@ export class StockAnalysisController {
     return this.service.getScanJob(id);
   }
 
-  /** FIR-41 第 4 项：扫描范围——板块清单、来源、数据日期、核对状态（不含成分明细） */
+  // ---- FIR-41 第 4 项：自定义板块（服务端，全站共用；错误码与自选股一致：400 / 503） ----
+  @Get('custom-sectors')
+  getCustomSectors() {
+    return watchlistCall(() => this.service.getCustomSectors(), '自定义板块');
+  }
+
+  /** 浏览器一次性迁入本机旧的自定义板块：{ sectors: {名称: 代码[]}, tombstones?: [{name, deletedAt}] } */
+  @Post('custom-sectors/import')
+  importCustomSectors(@Body() body: unknown) {
+    return watchlistCall(() => this.service.importCustomSectors(body), '自定义板块');
+  }
+
+  @Put('custom-sectors/:name')
+  putCustomSector(@Param('name') name: string, @Body() body: unknown) {
+    return watchlistCall(() => this.service.putCustomSector(name, body), '自定义板块');
+  }
+
+  @Delete('custom-sectors/:name')
+  removeCustomSector(@Param('name') name: string) {
+    return watchlistCall(() => this.service.removeCustomSector(name), '自定义板块');
+  }
+
+  /** FIR-41 第 4 项：扫描范围——板块清单、来源、数据日期、核对状态 */
   @Get('sectors')
   sectors() {
     try {
@@ -182,7 +205,7 @@ export class StockAnalysisController {
 }
 
 /** 自选股接口统一错误映射：400 输入错误 / 503 存储不可用 / 其它 500 */
-async function watchlistCall<T>(fn: () => Promise<T>): Promise<T> {
+async function watchlistCall<T>(fn: () => Promise<T>, label = '自选股'): Promise<T> {
   try {
     return await fn();
   } catch (error) {
@@ -190,6 +213,6 @@ async function watchlistCall<T>(fn: () => Promise<T>): Promise<T> {
     const msg = error instanceof Error ? error.message : String(error);
     if (status === 400) throw new BadRequestException(msg);
     if (status === 503) throw new ServiceUnavailableException(msg);
-    throw new HttpException(`自选股存储出错：${msg}`, 500);
+    throw new HttpException(`${label}存储出错：${msg}`, 500);
   }
 }

@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { assertAsOf } from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
+import { collectDeployInfo } from './deploy-info';
 
 @Controller('api')
 export class StockAnalysisController {
@@ -31,6 +32,7 @@ export class StockAnalysisController {
       engine_commit: coreStatus.engineCommit,
       watchlist_store: await this.service.checkWatchlist(),
       custom_sectors_store: await this.service.checkCustomSectors(),
+      deploy: collectDeployInfo(),   // FIR-41 第 5 项：实际 cwd、运行时文件、页面 sha256（scripts/v6_verify_deploy.py 比对）
       timestamp: new Date().toISOString(),
     };
   }

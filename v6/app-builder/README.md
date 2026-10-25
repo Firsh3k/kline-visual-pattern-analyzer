@@ -51,6 +51,8 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | `scripts/watchlist-probe.js` | 部署前在平台运行环境执行：检查连接、表与权限、写事务与行锁串行（全部回滚，不改数据），输出 JSON，全部通过 exit 0 |
 | `server/modules/stock-analysis/scan-jobs.ts` | 扫描后台任务（FIR-41）：`POST /api/scan/jobs` 提交、`GET /api/scan/jobs/:id` 查进度、`DELETE` 取消；全局最多 3 个分析并发（环境变量 `SCAN_MAX_PARALLEL`），单只超时，单次 ≤200 只；任务存内存，服务重启即清空 |
 | `server/modules/stock-analysis/v4-page.controller.ts` | 托管 V4 HTML |
+| `server/modules/stock-analysis/deploy-info.ts` | `/api/health` 的 `deploy` 字段（FIR-41 第 5 项）：服务实际 `cwd`、Node 版本、页面 / `python_analyzer.py` / `core` 是否在 `cwd` 下、页面 sha256；部署后用 `scripts/v6_verify_deploy.py` 核对 |
+| `runtime-deps.json` | 服务端运行时用到、但 `package.json` 未直接声明的间接依赖登记（目前只有 `postgres`），CI 校验链路与版本 |
 | `client/public/v4/FRONTEND_PATCHES.md` | V4 HTML 上 Python Core 集成 + 三道防线的受控改动 |
 
 > 完整 5363 行 `client/public/v4/index.html` 在 App Builder 沙箱；本目录用
@@ -81,7 +83,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | Python | `3.10.12`（平台自带，`child_process` 调用，无需额外打包） |
 | 依赖锁 | `package-lock.json`，lockfileVersion 3 |
 | 构建 | `npm run build` → `scripts/build.sh`：`nest build`（SWC，server）+ `vite build`（client），产物输出 `dist/` |
-| 生产启动（平台实际） | `NODE_ENV=production node server/main.js`，cwd 为构建产物目录 `dist/`（即 `scripts/build.sh` 第 162 行拷贝到 `dist/run.sh` 的脚本；入口产物是 `dist/server/main.js`，与 `scripts/prune-smart.js` 的 `SERVER_ENTRY` 一致） |
+| 生产启动（平台实际） | `NODE_ENV=production node server/main.js`，cwd 为构建产物目录 `dist/`（**待核实**：服务按 `process.cwd()` 找 `client/public/v4/index.html`、`python_analyzer.py`、`core/`，而 `build.sh` 不会把它们拷进 `dist/`；线上实际 cwd 以 `/api/health` 的 `deploy.cwd` / `deploy.files_found` 为准）（即 `scripts/build.sh` 第 162 行拷贝到 `dist/run.sh` 的脚本；入口产物是 `dist/server/main.js`，与 `scripts/prune-smart.js` 的 `SERVER_ENTRY` 一致） |
 | 开发 | `npm run dev` → `scripts/dev.sh`；本地连沙箱用 `node scripts/dev-local.js`（会 env pull 到 `.env.local`） |
 
 说明：

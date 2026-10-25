@@ -214,6 +214,11 @@ jobs:
       run: |
         node tests/test_fir28_release_identity.js
 
+    - name: Run FIR-41 item 5 repo = production checks (deps/lock, runtime imports, startup chain, page fingerprint)
+      run: |
+        npm install --no-save --no-package-lock typescript@5.4.5 semver@7.6.3
+        node tests/v6/test_repo_equals_prod.js
+
     - name: Run FIR-41 item 6 mobile layout check (real Chrome, 320/390/768/1280px, deployed V4 page)
       run: |
         npm install --no-save --no-package-lock playwright@1.56.1

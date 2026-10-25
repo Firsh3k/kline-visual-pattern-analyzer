@@ -8,6 +8,7 @@ V6 线上版本自证：按 git 版本算出“线上应该看到的指纹”，
 输出：
 - core_sha256      对应 /api/health 的 core_sha256，算法同 core.analysis.core_content_sha256
 - analyzer_sha256  对应 /api/health 的 analyzer_sha256（python_analyzer.py 文件本身）
+- page_sha256      对应 /api/health 的 deploy.page_sha256（线上实际返回的 V4 页面，FIR-41 第 5 项）
 - files            关键部署文件的 sha256，供人工抽查（NestJS 线上跑编译产物，.ts 无法自报）
 """
 import argparse
@@ -19,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = "v6/app-builder"
+PAGE = f"{APP}/client/public/v4/index.html"
 KEY_FILES = [
     f"{APP}/client/public/v4/index.html",
     f"{APP}/python_analyzer.py",
@@ -57,6 +59,25 @@ def core_sha256(ref=None):
     return h.hexdigest()
 
 
+# 服务按 cwd 找的运行时文件（与 deploy-info.ts RUNTIME_FILES 的键一致）；该版本里有哪些，线上就必须都找得到
+RUNTIME_FILE_PATHS = {
+    "page": "client/public/v4/index.html",
+    "analyzer": "python_analyzer.py",
+    "core": "core/__init__.py",
+    "sector_catalog": "sector_data/catalog.json",
+}
+
+
+def runtime_files(ref=None):
+    names = set(_git("ls-tree", "-r", "--name-only", ref, f"{APP}/").decode().split()) if ref else None
+    out = []
+    for key, rel in RUNTIME_FILE_PATHS.items():
+        full = f"{APP}/{rel}"
+        if (full in names) if ref else (ROOT / full).exists():
+            out.append(key)
+    return out
+
+
 def fingerprint(ref=None):
     commit = _git("rev-parse", ref).decode().strip() if ref else None
     return {
@@ -64,6 +85,8 @@ def fingerprint(ref=None):
         "commit": commit,
         "core_sha256": core_sha256(ref),
         "analyzer_sha256": hashlib.sha256(_read(ref, f"{APP}/python_analyzer.py")).hexdigest(),
+        "page_sha256": hashlib.sha256(_read(ref, PAGE)).hexdigest(),
+        "runtime_files": runtime_files(ref),
         "files": {p: hashlib.sha256(_read(ref, p)).hexdigest()[:16] for p in KEY_FILES},
     }
 

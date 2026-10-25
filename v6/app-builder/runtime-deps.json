@@ -1,0 +1,10 @@
+{
+  "_说明": "FIR-41 第 5 项：服务端代码运行时用到、但 package.json 未直接声明的包（来自平台包的间接依赖）。tests/v6/test_repo_equals_prod.js 校验：每个运行时导入要么是 package.json dependencies 里的直接依赖，要么列在这里，并且能从直接依赖沿 package-lock.json 找到、版本满足上游的要求。新增这种依赖必须在这里登记原因。",
+  "transitive": {
+    "postgres": {
+      "via": ["@lark-apaas/fullstack-nestjs-core", "@lark-apaas/nestjs-datapaas"],
+      "used_by": ["server/modules/stock-analysis/watchlist-store.ts", "server/modules/stock-analysis/custom-sector-store.ts", "scripts/watchlist-probe.js"],
+      "reason": "自选股存储（FIR-41 第 2 项 / FIR-42）。平台的 package.json / lock 是从平台导出的快照，没有直接声明；驱动缺失时自选股 fail-closed（PR #75）。"
+    }
+  }
+}

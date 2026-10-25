@@ -34,6 +34,9 @@
 - `tests/v6/test_v4_adapter_r67.js`：加载实际部署的 V4 页面脚本，验证确认 / 主导只来自 Python、斜颈线绘制、坏数据报错。
 - `tests/v6/test_v4_no_local_engine.js`：本地 JS 形态引擎 / 推荐度 / 降级入口不得重新出现。
 - `tests/v6/test_bff_pure.js`：asOf 校验与扫描列表透传 Python 确认。
+- `tests/v6/test_repo_equals_prod.js`（FIR-41 第 5 项）：仓库里的平台快照自洽——依赖与 lock 版本一致；服务端运行时导入
+  都是直接依赖或在 `runtime-deps.json` 登记的间接依赖；启动链（`run.sh` / `build.sh` / nest / prune-smart）一致；
+  运行时文件都在；`/api/health` 的页面指纹算法与 `scripts/v6_fingerprint.py` 一致。
 - `tests/v6/test_sector_catalog.js` + `tests/v5/test_fir41_sector_catalog.py`（FIR-41 第 4 项）：板块扫描范围来自服务端清单 `sector_data/catalog.json`（与仓库 `sector_data/` 一致）；同花顺板块必须有来源和数据日期；只有与权威快照完全一致、核对日期在 30 天内的才显示“已核对”（新鲜度规则与 Python `core.sector_validation` 逐日比对）；人工样例永远标“人工样例”；页面不写死板块成分，清单不可用时不兜底。
 - `tests/v6/test_custom_sectors.js`（FIR-41 第 4 项）：自定义板块存服务端——内存与真实 PostgreSQL 同一组用例；删除不复活、迁入只加服务器没有的；运行时不建表；两连接并发写 rev 连续；页面一次性迁入旧数据、多端同步、503 不在本机兜底、迟到旧响应不回退。
 - `tests/v6/test_mobile_layout.js`（FIR-41 第 6 项）：真实 Chrome 在 320 / 390 / 768 / 1280px 打开实际页面（接口用真实 Core doc 打桩），首页、个股分析、自选股、市场扫描都不能横向滚动；多列卡片网格必须带 `m-stack`。
@@ -43,8 +46,13 @@
 流程：PR → QA → 合并 → 合并提交 CI 绿 → 记录回退点 → 部署 → 线上冒烟 → 回写 FIR。不先上线后审核。
 
 **版本自证（替代人工逐个文件算哈希）**
-- [ ] 本地运行 `python3 scripts/v6_fingerprint.py --ref <本次部署的标签或提交>`
-- [ ] 线上 `/api/health` 的 `core_sha256`、`analyzer_sha256` 与上一步输出完全一致；`core_analyzer=real_core`
+- [ ] 在已登录的浏览器打开线上 `/api/health`，把返回的 JSON 存成 `health.json`
+- [ ] 运行 `python3 scripts/v6_verify_deploy.py --ref <本次部署的标签或提交> --health health.json`，结论必须是“通过”：
+  `core_sha256` / `analyzer_sha256`（Python Core 与执行器）、`deploy.page_sha256`（浏览器实际拿到的页面）与该版本一致，
+  `core_analyzer=real_core`，页面 / 执行器 / core 都在服务的 `cwd` 下，`watchlist_store` 为 `postgres` 且 `ready=true`
+  （FIR-41 第 5 项；只想看指纹时仍可用 `python3 scripts/v6_fingerprint.py --ref <版本>`）
+  退出码：0 通过；1 不通过（字段缺失、类型不对也算）；3 部分核对——只在部署的确是第 5 项之前的版本、显式加
+  `--allow-legacy-health` 时出现，页面与运行时文件未核对，**不能当作 PRODUCTION GATE PASS**
 
 **个股冒烟**
 - [ ] 任选一只股票：`/api/analyze/<code>` → 200，`engine.analyzer=real_core`，250 根前复权，有 `signals`，无推荐度

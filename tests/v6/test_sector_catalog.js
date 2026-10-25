@@ -37,6 +37,15 @@ function compile(file, requireMap) {
 const pure = compile('stock-analysis.pure.ts', {});
 const C = compile('sector-catalog.ts', { './stock-analysis.pure': pure });
 const { ScanJobManager } = compile('scan-jobs.ts', { './stock-analysis.pure': pure });
+const WL = compile('watchlist-store.ts', {});
+const CS = compile('custom-sector-store.ts', { './watchlist-store': WL });
+/** 服务端自定义板块（内存实现），预置若干板块 */
+async function customWith(sectors = {}) {
+  const c = new CS.CustomSectors(new CS.MemoryCustomSectorStore());
+  await c.init();
+  for (const [name, codes] of Object.entries(sectors)) await c.put(name, { codes });
+  return c;
+}
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
@@ -177,7 +186,7 @@ print(json.dumps(out))`, JSON.stringify(cases)], { encoding: 'utf8' }));
   });
 
   /** 桩后端：/api/sectors 用真实 SectorCatalogStore；/api/scan/jobs 记录请求体 */
-  function backend(store, { sectorsDown = false } = {}) {
+  function backend(store, { sectorsDown = false, custom = null } = {}) {
     const calls = [];
     const res = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
     const jobs = new Map();
@@ -186,6 +195,7 @@ print(json.dumps(out))`, JSON.stringify(cases)], { encoding: 'utf8' }));
       const p = url.replace(/^.*\/api/, '');
       calls.push({ method, p, body: init.body ? JSON.parse(init.body) : undefined });
       if (p === '/sectors') return sectorsDown ? res(503, { message: '板块清单不可用：测试' }) : res(200, plain(store.list('2026-10-25')));
+      if (p === '/custom-sectors' && method === 'GET') return custom ? res(200, plain(await custom.view())) : res(503, { message: '未配置' });
       if (p === '/scan/jobs' && method === 'POST') {
         const b = JSON.parse(init.body);
         const r = store.resolve(b.sectors, '2026-10-25');
@@ -230,9 +240,9 @@ print(json.dumps(out))`, JSON.stringify(cases)], { encoding: 'utf8' }));
   });
 
   await test('提交扫描：板块只传 id（服务端取成分），自定义板块传代码；结果显示扫描范围与核对状态提示', async () => {
-    const be = backend(new C.SectorCatalogStore(CATALOG));
-    const p = open(be, { kline_custom_sectors_v1: JSON.stringify({ 我的: ['600000', '600519'] }) });
-    await until(() => p.state().loaded);
+    const be = backend(new C.SectorCatalogStore(CATALOG), { custom: await customWith({ 我的: ['600000', '600519'] }) });
+    const p = open(be);
+    await until(() => p.state().loaded && /custom:我的/.test(p.sandbox.document.getElementById('sectorList').innerHTML));
     p.check(['ths:885927', 'sample:光模块', 'custom:我的']);
     const doc = p.sandbox.document;
     doc.getElementById('scanMinScore').value = '0';
@@ -259,9 +269,9 @@ print(json.dumps(out))`, JSON.stringify(cases)], { encoding: 'utf8' }));
   });
 
   await test('板块清单不可用（503）：明确报错，只保留自定义板块，不在页面兜底写死成分', async () => {
-    const be = backend(new C.SectorCatalogStore(CATALOG), { sectorsDown: true });
-    const p = open(be, { kline_custom_sectors_v1: JSON.stringify({ 我的: ['600000'] }) });
-    await until(() => p.state().error);
+    const be = backend(new C.SectorCatalogStore(CATALOG), { sectorsDown: true, custom: await customWith({ 我的: ['600000'] }) });
+    const p = open(be);
+    await until(() => p.state().error && /custom:我的/.test(p.sandbox.document.getElementById('sectorList').innerHTML));
     const html = p.sandbox.document.getElementById('sectorList').innerHTML;
     assert.ok(/板块清单加载失败：板块清单不可用：测试/.test(html), html.slice(0, 200));
     assert.ok(!/CRO概念|光模块/.test(html), '不可用时不应出现任何内置板块');

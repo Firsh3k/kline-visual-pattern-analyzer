@@ -221,6 +221,7 @@ jobs:
         npm install --no-save --no-package-lock typescript@5.4.5 postgres@3.4.9
         node tests/v6/test_watchlist_store.js
         node tests/v6/test_watchlist_page.js
+        node tests/v6/test_custom_sectors.js
 
   cross-runtime-parity:
     runs-on: ubuntu-latest

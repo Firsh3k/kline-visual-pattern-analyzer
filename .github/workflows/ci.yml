@@ -213,7 +213,7 @@ jobs:
       run: |
         node tests/test_fir28_release_identity.js
 
-    - name: Run FIR-41 watchlist tests (memory + real PostgreSQL, deployed V4 page)
+    - name: Run FIR-41/42 watchlist tests (memory + real PostgreSQL incl. least-privilege role + probe, deployed V4 page = DB)
       env:
         TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres
       run: |

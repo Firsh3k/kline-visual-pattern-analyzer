@@ -173,13 +173,59 @@ export interface PostgresWatchlistOptions {
 }
 
 /**
- * 版本控制（QA R73-2 第二轮）：
- * - 版本表 `<table>_meta` 只有一行（id=1, rev）。所有写操作（add/remove/clear/import）都在事务里先
- *   `SELECT … FOR UPDATE` 锁住这一行，再以 rev+1 写数据并更新版本行，同一事务提交。
- *   → 跨连接、跨实例的写入按“拿锁顺序 = 提交顺序”串行；版本号与数据一起提交，不会出现
- *     “不同的已提交状态共用同一 rev”或“rev 大的状态先于 rev 小的状态可见”。
+ * 建表脚本（FIR-42）：由平台 migration（有 CREATE 权限的账号）执行，应用运行时**不建表**。
+ * 妙搭的应用账号对 schema 只有 USAGE，没有 CREATE；应用账号只需要两张表的 SELECT / INSERT / UPDATE。
+ * 仓库里的 watchlist.migration.sql 与本函数输出一致（测试校验），平台执行那个文件即可；可重复执行。
+ */
+export function watchlistMigrationSql(table = PG_TABLE): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`非法表名：${table}`);
+  return `-- FIR-42：自选股（全站共用一份）。由平台 migration 执行；应用运行时只做 DML，不建表。
+-- 应用账号需要：两张表的 SELECT, INSERT, UPDATE（不需要 DELETE / CREATE）。可重复执行。
+CREATE TABLE IF NOT EXISTS ${table} (
+  code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$'),
+  state       text NOT NULL CHECK (state IN ('active', 'deleted')),
+  added_at    timestamptz NOT NULL,
+  deleted_at  timestamptz,
+  updated_at  timestamptz NOT NULL,
+  rev         bigint NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ${table}_meta (
+  id   int PRIMARY KEY CHECK (id = 1),
+  rev  bigint NOT NULL
+);
+-- 版本行缺失时按已有数据的最大 rev 补上（空表为 0），不覆盖、不降低已存在的版本（QA R76-1）
+INSERT INTO ${table}_meta (id, rev)
+SELECT 1, COALESCE(MAX(rev), 0) FROM ${table}
+ON CONFLICT (id) DO NOTHING;
+`;
+}
+
+/** 测试 / 本地开发用：用有建表权限的连接执行建表脚本。生产不调用（由平台 migration 执行同一份 SQL）。 */
+export async function applyWatchlistMigration(sql: Sql, table = PG_TABLE): Promise<void> {
+  await sql.unsafe(watchlistMigrationSql(table));
+}
+
+/** 把常见的权限 / 缺表错误翻译成可操作的说明（不含连接串） */
+function describePgError(err: unknown, table: string): string {
+  const code = (err as any)?.code;
+  const msg = errMsg(err);
+  if (code === '42P01') return `自选股数据表不存在（${table} / ${table}_meta）：应用运行时不建表，需先由平台执行 watchlist.migration.sql（${msg}）`;
+  if (code === '42501') return `应用账号缺少自选股表的读写权限（需要 SELECT / INSERT / UPDATE）（${msg}）`;
+  return msg;
+}
+
+class NoChange extends Error {
+  constructor(readonly out: unknown) { super('no change'); }
+}
+
+/**
+ * 版本控制（QA R73-2；FIR-42 适配平台连接池）：
+ * - 版本表 `<table>_meta` 只有一行（id=1, rev）。每个写操作（add/remove/clear/import）的事务第一句是
+ *   `UPDATE <meta> SET rev = rev + 1 WHERE id = 1 RETURNING rev`：这一句拿到版本行的行锁并分配新版本，
+ *   锁一直持有到提交。跨连接、跨实例的写入按“拿锁顺序 = 提交顺序”串行，版本号与数据同一事务提交。
+ *   只用普通 DML 和事务，不用 advisory lock（平台的 transaction pooler 不支持），也不在运行时建表。
+ * - 没有实际改动的写操作（重复 add、clear 空清单、迁入无新内容）回滚整个事务，rev 不变。
  * - 读取用一条 SQL 同时取版本行和全部数据行（同一快照），所以返回的 rev 与 items 一定对应同一个已提交状态。
- * - 没有实际改动的写操作（重复 add、clear 空清单、迁入无新内容）不更新版本行，rev 不变。
  */
 export class PostgresWatchlistStore implements WatchlistStore {
   readonly kind = 'postgres';
@@ -206,29 +252,20 @@ export class PostgresWatchlistStore implements WatchlistStore {
     return q(this.metaTable);
   }
 
+  /** 只检查、不建表：表存在、可读；版本行缺失时补一行（普通 INSERT） */
   async init(): Promise<void> {
-    // 多实例同时启动时用事务级 advisory lock 串行建表，避免 CREATE TABLE IF NOT EXISTS 的并发冲突
-    await this.sql.begin(async (tx: Sql) => {
-      await tx`SELECT pg_advisory_xact_lock(hashtext(${this.table}))`;
-      await tx`
-        CREATE TABLE IF NOT EXISTS ${this.t(tx)} (
-          code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$'),
-          state       text NOT NULL CHECK (state IN ('active', 'deleted')),
-          added_at    timestamptz NOT NULL,
-          deleted_at  timestamptz,
-          updated_at  timestamptz NOT NULL,
-          rev         bigint NOT NULL
-        )`;
-      await tx`
-        CREATE TABLE IF NOT EXISTS ${this.m(tx)} (
-          id   int PRIMARY KEY CHECK (id = 1),
-          rev  bigint NOT NULL
-        )`;
-      await tx`
-        INSERT INTO ${this.m(tx)} (id, rev)
-        SELECT 1, COALESCE(MAX(rev), 0) FROM ${this.t(tx)}
-        ON CONFLICT (id) DO NOTHING`;
-    });
+    try {
+      const [meta] = await this.sql`SELECT rev FROM ${this.m()} WHERE id = 1`;
+      if (!meta) {
+        await this.sql`
+          INSERT INTO ${this.m()} (id, rev)
+          SELECT 1, COALESCE(MAX(rev), 0) FROM ${this.t()}
+          ON CONFLICT (id) DO NOTHING`;
+      }
+      await this.snapshot();
+    } catch (err) {
+      throw new Error(describePgError(err, this.table));
+    }
   }
 
   async snapshot(): Promise<WatchlistSnapshot> {
@@ -246,17 +283,22 @@ export class PostgresWatchlistStore implements WatchlistStore {
     return { rows, rev: Number(rs[0].meta_rev) };
   }
 
-  /** 写事务：锁版本行 → 以 rev+1 写数据 → 有改动才推进版本 → 提交 */
-  private write<T>(op: string, fn: (tx: Sql, rev: number) => Promise<{ out: T; changed: number }>): Promise<T> {
-    return this.sql.begin(async (tx: Sql) => {
-      const [meta] = await tx`SELECT rev FROM ${this.m(tx)} WHERE id = 1 FOR UPDATE`;
-      if (!meta) throw new Error('自选股版本记录缺失（未初始化）');
-      const rev = Number(meta.rev) + 1;
-      const { out, changed } = await fn(tx, rev);
-      if (changed > 0) await tx`UPDATE ${this.m(tx)} SET rev = ${rev} WHERE id = 1`;
-      if (this.opts.beforeCommit) await this.opts.beforeCommit(op);
-      return out;
-    });
+  /** 写事务：UPDATE 版本行拿锁并分配 rev → 写数据 → 有改动提交，无改动回滚 */
+  private async write<T>(op: string, fn: (tx: Sql, rev: number) => Promise<{ out: T; changed: number }>): Promise<T> {
+    try {
+      return await this.sql.begin(async (tx: Sql) => {
+        const [meta] = await tx`UPDATE ${this.m(tx)} SET rev = rev + 1 WHERE id = 1 RETURNING rev`;
+        if (!meta) throw new Error('自选股版本记录缺失（未初始化）');
+        const rev = Number(meta.rev);
+        const { out, changed } = await fn(tx, rev);
+        if (this.opts.beforeCommit) await this.opts.beforeCommit(op);
+        if (changed === 0) throw new NoChange(out);   // 回滚：版本不推进
+        return out;
+      });
+    } catch (err) {
+      if (err instanceof NoChange) return err.out as T;
+      throw err;
+    }
   }
 
   async add(code: string, now: Date, limit = 0): Promise<boolean> {

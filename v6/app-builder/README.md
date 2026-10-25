@@ -43,7 +43,9 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | `server/app.module.ts` | 根模块 |
 | `server/modules/stock-analysis/stock-analysis.controller.ts` | health/analyze/watchlist/scan 等 API |
 | `server/modules/stock-analysis/stock-analysis.service.ts` | child_process 调用 Python（核心） |
-| `server/modules/stock-analysis/watchlist-store.ts` | 自选股服务端存储（FIR-41）：PostgreSQL 表 `kline_watchlist`（连接串 `SUDA_DATABASE_URL`，启动时自动建表），全站共用一份；删除记录防止旧设备迁入时复活；未配置数据库 → 接口 503，不在浏览器兜底。接口：`GET/DELETE /api/watchlist`、`POST/DELETE /api/watchlist/:code`、`POST /api/watchlist/import` |
+| `server/modules/stock-analysis/watchlist-store.ts` | 自选股服务端存储（FIR-41）：PostgreSQL 表 `kline_watchlist` + `kline_watchlist_meta`（连接串 `SUDA_DATABASE_URL`；**运行时不建表**，表由平台执行 `watchlist.migration.sql` 创建，应用账号只需两张表的 SELECT/INSERT/UPDATE），全站共用一份；删除记录防止旧设备迁入时复活；未配置数据库 → 接口 503，不在浏览器兜底。接口：`GET/DELETE /api/watchlist`、`POST/DELETE /api/watchlist/:code`、`POST /api/watchlist/import` |
+| `server/modules/stock-analysis/watchlist.migration.sql` | 自选股建表脚本（FIR-42），由平台 migration（有 CREATE 权限的账号）执行，可重复执行；与代码里的 `watchlistMigrationSql()` 一致（CI 校验） |
+| `scripts/watchlist-probe.js` | 部署前在平台运行环境执行：检查连接、表与权限、写事务与行锁串行（全部回滚，不改数据），输出 JSON，全部通过 exit 0 |
 | `server/modules/stock-analysis/scan-jobs.ts` | 扫描后台任务（FIR-41）：`POST /api/scan/jobs` 提交、`GET /api/scan/jobs/:id` 查进度、`DELETE` 取消；全局最多 3 个分析并发（环境变量 `SCAN_MAX_PARALLEL`），单只超时，单次 ≤200 只；任务存内存，服务重启即清空 |
 | `server/modules/stock-analysis/v4-page.controller.ts` | 托管 V4 HTML |
 | `client/public/v4/FRONTEND_PATCHES.md` | V4 HTML 上 Python Core 集成 + 三道防线的受控改动 |

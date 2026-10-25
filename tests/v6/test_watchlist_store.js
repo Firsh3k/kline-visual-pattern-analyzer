@@ -199,6 +199,67 @@ async function waitFor(cond, what, ms = 5000) {
 }
 
 /**
+ * FIR-42：模拟妙搭应用账号——对 schema 只有 USAGE、没有 CREATE，只对两张表有 SELECT / INSERT / UPDATE。
+ * 表由“平台”（这里是超级用户连接）执行 migration 建好；应用账号跑完整的增删清迁入与并发写。
+ */
+async function pgLeastPrivilege(url, sql, newTable) {
+  const postgres = require('postgres');
+  await test('FIR-42：最小权限应用账号（无 CREATE、无 DELETE）——init / 增 / 删 / 清空 / 迁入 / 并发写都正常', async () => {
+    const tag = `${process.pid}`;
+    const schema = `wl_app_s${tag}`, role = `wl_app_r${tag}`, pw = `pw_${tag}`;
+    const table = newTable('lp');
+    const u = new URL(url);
+    u.username = role; u.password = pw;
+    const apps = [];
+    try {
+      await sql.unsafe(`CREATE SCHEMA ${schema}`);
+      await sql.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${pw}'`);
+      await sql.unsafe(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
+      const admin = postgres(url, { max: 1, onnotice: () => {}, connection: { search_path: schema } });
+      await W.applyWatchlistMigration(admin, table);
+      await admin.unsafe(`GRANT SELECT, INSERT, UPDATE ON ${table}, ${table}_meta TO ${role}`);
+      await admin.end();
+
+      const mk = () => { const c = postgres(u.toString(), { max: 1, onnotice: () => {}, connection: { search_path: schema } }); apps.push(c); return c; };
+      const probe = mk();
+      const [priv] = await probe`SELECT has_schema_privilege(${schema}, 'CREATE') AS c, has_table_privilege(${table}, 'DELETE') AS d`;
+      assert.deepStrictEqual([priv.c, priv.d], [false, false], '测试账号权限设置不对');
+      await assert.rejects(() => probe.unsafe(`CREATE TABLE x_${tag} (a int)`), e => e.code === '42501');
+
+      const wl = new W.Watchlist(new W.PostgresWatchlistStore(mk(), table), clock());
+      await wl.init();
+      assert.strictEqual(wl.status().ready, true, wl.status().error);
+      await wl.add('600519'); await wl.add('002436'); await wl.remove('600519');
+      let v = await wl.importLocal({ codes: ['600519', '300750'], tombstones: [{ code: '000858', deletedAt: '2026-10-01T00:00:00Z' }] });
+      assert.deepStrictEqual(v.items, ['002436', '300750']);
+      assert.strictEqual((await wl.add('002436')).rev, v.rev, '无改动写入回滚后 rev 不变');
+      const cleared = await wl.clear();
+      assert.strictEqual(cleared.cleared, 2);
+      // 两个应用连接并发写：rev 连续、无丢失
+      const w1 = new W.Watchlist(new W.PostgresWatchlistStore(mk(), table), clock('2026-10-24T01:00:00Z'));
+      const w2 = new W.Watchlist(new W.PostgresWatchlistStore(mk(), table), clock('2026-10-24T02:00:00Z'));
+      await w1.init(); await w2.init();
+      const before = (await wl.view()).rev;
+      await Promise.all([
+        (async () => { for (const c of ['600000', '600001', '600002']) await w1.add(c); })(),
+        (async () => { for (const c of ['000001', '000002', '000003']) await w2.add(c); })(),
+      ]);
+      v = await wl.view();
+      assert.strictEqual(v.rev, before + 6);
+      assert.strictEqual(v.count, 6);
+      // 表不存在时的提示（应用账号视角）
+      const missing = new W.Watchlist(new W.PostgresWatchlistStore(mk(), `${table}_none`));
+      await missing.init();
+      assert.ok(/数据表不存在/.test(missing.status().error), missing.status().error);
+    } finally {
+      for (const c of apps) await c.end();
+      await sql.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await sql.unsafe(`DROP ROLE IF EXISTS ${role}`);
+    }
+  });
+}
+
+/**
  * QA R73-2 第二轮：两个真实 PG 连接 + 受控提交屏障，复现 QA 给出的顺序：
  *   0) 清单 [600000]
  *   1) 连接 A：迁入 600000 的删除记录，停在提交前
@@ -213,7 +274,7 @@ async function pgConcurrency(url, sql, newTable) {
   const vm = require('vm');
 
   await test('QA R73-2：两个真实连接并发写（A 迁入删除记录未提交，B 加入）→ 写入按提交顺序串行，版本与数据一一对应', async () => {
-    const table = newTable('cc');
+    const table = await newTable('cc');
     const connA = postgres(url, { max: 1, onnotice: () => {} });
     const connB = postgres(url, { max: 1, onnotice: () => {} });
     const holdA = barrier(), holdB = barrier();
@@ -241,7 +302,7 @@ async function pgConcurrency(url, sql, newTable) {
       // B 必须在等锁（而不是已经写完）：数据库里能看到一个处于 Lock 等待的会话
       await waitFor(async () => {
         const [{ n }] = await sql`SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE ${'%' + table + '_meta%FOR UPDATE%'}`;
+          WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE ${'%UPDATE%' + table + '_meta%'}`;
         return n >= 1;
       }, 'B 等待版本行锁');
       assert.strictEqual(bDone(), false, 'A 未提交时 B 不应完成');
@@ -285,7 +346,7 @@ async function pgConcurrency(url, sql, newTable) {
   });
 
   await test('QA R73-2：三个连接随机并发写 + 并发读取 → 同一 rev 的快照内容完全相同，最终 rev = 有改动的写入次数', async () => {
-    const table = newTable('stress');
+    const table = await newTable('stress');
     const conns = [0, 1, 2].map(() => postgres(url, { max: 1, onnotice: () => {} }));
     try {
       const wls = conns.map((c, i) => new W.Watchlist(new W.PostgresWatchlistStore(c, table), clock(`2026-10-23T0${i + 1}:00:00Z`)));
@@ -393,6 +454,19 @@ async function pgConcurrency(url, sql, newTable) {
     assert.deepStrictEqual((await wl.view()).items, ['600519']);
   });
 
+  console.log('FIR-42：平台适配（静态检查）');
+  await test('仓库里的 watchlist.migration.sql 与代码生成的建表脚本一致', () => {
+    const file = fs.readFileSync(path.join(path.dirname(SRC), 'watchlist.migration.sql'), 'utf8');
+    assert.strictEqual(file, W.watchlistMigrationSql());
+    assert.ok(/CREATE TABLE IF NOT EXISTS kline_watchlist \(/.test(file) && /kline_watchlist_meta/.test(file));
+  });
+  await test('运行时代码不用 advisory lock，不建表（CREATE 只出现在 migration 脚本里）', () => {
+    const src = fs.readFileSync(SRC, 'utf8');
+    assert.ok(!/pg_advisory/.test(src), '仍在调用 advisory lock');
+    const body = src.replace(/export function watchlistMigrationSql[\s\S]*?\n}\n/, '');
+    assert.ok(!/CREATE\s+(TABLE|SEQUENCE|INDEX)/i.test(body), '运行时代码里仍有建表语句');
+  });
+
   const url = process.env.TEST_DATABASE_URL;
   if (url) {
     const postgres = require('postgres');
@@ -403,16 +477,92 @@ async function pgConcurrency(url, sql, newTable) {
       await suite('PostgreSQL 实现', async () => {
         const table = `kline_watchlist_t${process.pid}_${++n}`;
         tables.push(table);
+        await W.applyWatchlistMigration(sql, table);
         return new W.PostgresWatchlistStore(sql, table);
       });
-      await test('PostgreSQL：建表幂等，代码格式由数据库约束兜底', async () => {
+      await test('FIR-42：运行时不建表——表不存在时 ready=false 并提示执行 migration；migration 可重复执行；代码格式由数据库约束兜底', async () => {
         const table = `kline_watchlist_t${process.pid}_x`;
         tables.push(table);
+        const wl = new W.Watchlist(new W.PostgresWatchlistStore(sql, table));
+        await wl.init();
+        assert.strictEqual(wl.status().ready, false);
+        assert.ok(/数据表不存在.*watchlist\.migration\.sql/.test(wl.status().error), wl.status().error);
+        const [{ n }] = await sql`SELECT count(*)::int AS n FROM pg_tables WHERE tablename IN (${table}, ${table + '_meta'})`;
+        assert.strictEqual(n, 0, '运行时不应建表');
+        await W.applyWatchlistMigration(sql, table);
+        await W.applyWatchlistMigration(sql, table);
+        assert.strictEqual((await wl.check()).ready, true, '执行 migration 后下一次调用应自动恢复');
         const s = new W.PostgresWatchlistStore(sql, table);
-        await s.init(); await s.init();
         await assert.rejects(() => s.add('abc', new Date()), /check constraint/);
       });
-      await pgConcurrency(url, sql, (suffix) => { const t = `kline_watchlist_t${process.pid}_${suffix}`; tables.push(t); return t; });
+      await test('QA R76-1：已有股票数据但缺版本行 → 重跑 migration 后 rev 接着已有数据，不倒退；已有版本行不被覆盖；页面照常接受之后的修改', async () => {
+        const table = `kline_watchlist_t${process.pid}_r761`;
+        tables.push(table);
+        await W.applyWatchlistMigration(sql, table);
+        const wl = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock());
+        await wl.init();
+        await wl.add('600000');
+        const old = await wl.add('600001');                       // 页面持有的旧视图：rev 2
+        assert.strictEqual(old.rev, 2);
+        await sql`DELETE FROM ${sql(table + '_meta')}`;           // 股票行保留、版本行丢失
+        await W.applyWatchlistMigration(sql, table);              // 重跑 migration
+        const [m] = await sql`SELECT rev FROM ${sql(table + '_meta')} WHERE id = 1`;
+        assert.strictEqual(Number(m.rev), 2, 'migration 应按已有数据的最大 rev 补版本行');
+        const wl2 = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock('2026-10-25T08:00:00Z'));
+        await wl2.init();
+        const restored = await wl2.view();
+        assert.deepStrictEqual([restored.items, restored.rev, wl2.status().ready], [['600000', '600001'], 2, true]);
+        const afterDelete = await wl2.remove('600000');
+        assert.strictEqual(afterDelete.rev, 3, '恢复后的下一次修改必须大于页面已有的 rev');
+        // 已存在的版本行不被 migration 覆盖或降低
+        await W.applyWatchlistMigration(sql, table);
+        assert.strictEqual((await wl2.view()).rev, 3);
+        // 实际页面：先持有 rev2 旧视图，再收到删除响应 rev3 → 接受
+        const { loadPage } = require('./v4_page_harness');
+        const page = loadPage({ exports: ['_applyWatchlistView'] });
+        page.x._applyWatchlistView(old);
+        page.x._applyWatchlistView(afterDelete);
+        const shown = JSON.parse(JSON.stringify(require('vm').runInContext('({codes: watchlistState.codes, rev: watchlistState.rev})', page.sandbox)));
+        assert.deepStrictEqual(shown, { codes: ['600001'], rev: 3 });
+      });
+      await test('FIR-42：版本行缺失（平台 migration 只建了表）→ init 用普通 INSERT 补上，rev 接着已有数据', async () => {
+        const table = `kline_watchlist_t${process.pid}_seed`;
+        tables.push(table);
+        await W.applyWatchlistMigration(sql, table);
+        const wl = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock());
+        await wl.init();
+        await wl.add('600519'); await wl.add('002436');
+        await sql`DELETE FROM ${sql(table + '_meta')}`;
+        const wl2 = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock('2026-10-24T08:00:00Z'));
+        await wl2.init();
+        assert.strictEqual(wl2.status().ready, true, wl2.status().error);
+        assert.strictEqual((await wl2.view()).rev, 2);
+        assert.strictEqual((await wl2.add('300750')).rev, 3);
+      });
+      await test('FIR-42：平台检查脚本 watchlist-probe.js——建好表时全部通过且不改数据；缺表时 exit 1 并指出', async () => {
+        const { execFileSync } = require('child_process');
+        const probe = path.join(ROOT, 'v6', 'app-builder', 'scripts', 'watchlist-probe.js');
+        const table = `kline_watchlist_t${process.pid}_probe`;
+        tables.push(table);
+        await W.applyWatchlistMigration(sql, table);
+        const wl = new W.Watchlist(new W.PostgresWatchlistStore(sql, table), clock());
+        await wl.init(); await wl.add('600519');
+        const env = { ...process.env, SUDA_DATABASE_URL: url, WATCHLIST_TABLE: table };
+        delete env.WATCHLIST_DATABASE_URL;
+        const out = JSON.parse(execFileSync(process.execPath, [probe], { env, encoding: 'utf8' }));
+        assert.strictEqual(out.ok, true, JSON.stringify(out.results, null, 1));
+        assert.deepStrictEqual(out.results.map(r => r.check), ['驱动', '连接', '表已建好', '应用账号权限', '版本行', '一致读取', '写事务（UPDATE … RETURNING）+ 回滚', '应用写语句（回滚）', '两个连接写入串行']);
+        assert.ok(!JSON.stringify(out).includes(url), '输出里不能有连接串');
+        const v = await wl.view();
+        assert.deepStrictEqual([v.items, v.rev], [['600519'], 1], '检查脚本改动了数据');
+        let failedOut;
+        try { execFileSync(process.execPath, [probe], { env: { ...env, WATCHLIST_TABLE: `${table}_none` }, encoding: 'utf8' }); }
+        catch (e) { failedOut = JSON.parse(e.stdout); assert.strictEqual(e.status, 1); }
+        assert.ok(failedOut && failedOut.ok === false, '缺表时应失败');
+        assert.strictEqual(failedOut.results.find(r => r.check === '表已建好').ok, false);
+      });
+      await pgLeastPrivilege(url, sql, (suffix) => { const t = `kline_watchlist_t${process.pid}_${suffix}`; return t; });
+      await pgConcurrency(url, sql, async (suffix) => { const t = `kline_watchlist_t${process.pid}_${suffix}`; tables.push(t); await W.applyWatchlistMigration(sql, t); return t; });
     } finally {
       for (const t of tables) await sql`DROP TABLE IF EXISTS ${sql(t)}, ${sql(t + '_meta')}`;
       await sql.end();

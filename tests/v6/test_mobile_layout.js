@@ -5,8 +5,8 @@
  *   - 页面脚本无报错；回测开关点得动
  * 另做源码检查：多列卡片网格（三列，或间距 ≥12px 的两列）必须带 m-stack 类，窄屏才会变单列。
  *
- * 运行：node tests/v6/test_mobile_layout.js（需要 playwright-core 包和一个 Chromium / Chrome；
- *       浏览器路径用 CHROME_PATH 指定，否则依次找 /opt/pw-browsers、/usr/bin/google-chrome 等）
+ * 运行：node tests/v6/test_mobile_layout.js（需要 playwright-core@1.56.1 及其 Chromium：
+ *       npx playwright install chromium；或用 CHROME_PATH 指定其他 Chromium / Chrome）
  */
 'use strict';
 const assert = require('assert');
@@ -22,18 +22,19 @@ const HTML = fs.readFileSync(PAGE, 'utf8');
 let passed = 0, failed = 0;
 async function test(name, fn) {
   try { await fn(); passed++; console.log('  ✓ ' + name); }
-  catch (e) { failed++; console.log('  ✗ ' + name + '\n      ' + (e && e.stack ? e.stack.split('\n').slice(0, 6).join('\n      ') : e)); }
+  catch (e) { failed++; console.log('  ✗ ' + name + '\n      ' + (e && e.stack ? e.stack.split('\n').slice(0, 6).join('\n      ') : e)); annotate(name, e); }
 }
 
-function findChrome() {
-  const cands = [
-    process.env.CHROME_PATH,
-    '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-  ].filter(Boolean);
-  const hit = cands.find((p) => fs.existsSync(p));
-  if (!hit) throw new Error('找不到 Chromium / Chrome，请用 CHROME_PATH 指定');
-  return hit;
+/** 默认用 Playwright 自带、与 playwright-core 版本匹配的 Chromium；CHROME_PATH 可指定其他浏览器 */
+function launchOptions() {
+  return process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {};
+}
+
+/** 在 GitHub Actions 里把失败写成注解，便于从 API 直接看到原因 */
+function annotate(title, err) {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const msg = String(err && err.stack ? err.stack.split('\n').slice(0, 6).join(' | ') : err).replace(/\r?\n/g, ' | ');
+  console.log(`::error title=${title.replace(/[,:\n]/g, ' ')}::${msg}`);
 }
 
 (async () => {
@@ -74,7 +75,7 @@ function findChrome() {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}/app/app_test/v4/index.html`;
-  const browser = await chromium.launch({ executablePath: findChrome() });
+  const browser = await chromium.launch(launchOptions());
 
   const width = (page) => page.evaluate(() => ({ vw: document.documentElement.clientWidth, sw: document.documentElement.scrollWidth }));
   const offenders = (page) => page.evaluate(() => {
@@ -129,4 +130,4 @@ function findChrome() {
   }
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.error(e); annotate('mobile layout test crashed', e); process.exit(1); });

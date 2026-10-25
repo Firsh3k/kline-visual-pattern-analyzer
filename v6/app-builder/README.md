@@ -44,6 +44,8 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | `server/modules/stock-analysis/stock-analysis.controller.ts` | health/analyze/watchlist/scan 等 API |
 | `server/modules/stock-analysis/stock-analysis.service.ts` | child_process 调用 Python（核心） |
 | `server/modules/stock-analysis/watchlist-store.ts` | 自选股服务端存储（FIR-41）：PostgreSQL 表 `kline_watchlist` + `kline_watchlist_meta`（连接串 `SUDA_DATABASE_URL`；**运行时不建表**，表由平台执行 `watchlist.migration.sql` 创建，应用账号只需两张表的 SELECT/INSERT/UPDATE），全站共用一份；删除记录防止旧设备迁入时复活；未配置数据库 → 接口 503，不在浏览器兜底。接口：`GET/DELETE /api/watchlist`、`POST/DELETE /api/watchlist/:code`、`POST /api/watchlist/import` |
+| `server/modules/stock-analysis/sector-catalog.ts` | 板块扫描范围（FIR-41 第 4 项）：读 `sector_data/catalog.json`，`GET /api/sectors` 返回每个板块的来源、数据日期、核对状态（已核对 / 未核对 / 核对有差异 / 已过期 / 人工样例）；`POST /api/scan/jobs` 可传 `sectors`（板块 id），由服务端取成分；清单缺失 → 503，只影响板块扫描 |
+| `sector_data/catalog.json` | 部署用板块清单，由仓库根 `scripts/build_sector_catalog.py` 从 `sector_data/`（`new_sectors.js` + `provenance/` + `curated_samples.json`）生成，**不要手改**；**部署时这个目录要一起同步到平台** |
 | `server/modules/stock-analysis/watchlist.migration.sql` | 自选股建表脚本（FIR-42），由平台 migration（有 CREATE 权限的账号）执行，可重复执行；与代码里的 `watchlistMigrationSql()` 一致（CI 校验） |
 | `scripts/watchlist-probe.js` | 部署前在平台运行环境执行：检查连接、表与权限、写事务与行锁串行（全部回滚，不改数据），输出 JSON，全部通过 exit 0 |
 | `server/modules/stock-analysis/scan-jobs.ts` | 扫描后台任务（FIR-41）：`POST /api/scan/jobs` 提交、`GET /api/scan/jobs/:id` 查进度、`DELETE` 取消；全局最多 3 个分析并发（环境变量 `SCAN_MAX_PARALLEL`），单只超时，单次 ≤200 只；任务存内存，服务重启即清空 |
@@ -104,3 +106,14 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 - 平台可用持久存储（FIR-41 A）：托管 PostgreSQL（`@lark-apaas/nestjs-datapaas` + `SUDA_DATABASE_URL`）、
   Redis over TLS（`MIAODA_CACHE_URL`）、TOS 对象存储（`TOS_BUCKET`），以及持久文件卷 `/home/workspace`
   （跨部署保留；代码目录 `/home/gem/workspace/code` 在 overlay 临时层，重部署会重置）。
+
+## 板块核对流程（FIR-41 第 4 项）
+
+板块要从“未核对”变成“已核对”，必须与权威源（如同花顺 iFinD）的带日期快照完全一致：
+
+1. 用 iFinD 导出快照 JSON：`{"schema_version": "1.0", "source": "ths_ifind", "as_of_date": "YYYY-MM-DD", "sectors": {"创新药": {"sector_code": "886015", "codes": [...]}}}`
+2. 在仓库根目录执行：
+   - `python3 scripts/build_sector_catalog.py --adopt-snapshot snap.json`（把快照成分写回 `sector_data/new_sectors.js`）
+   - `python3 scripts/refresh_sector_membership.py --reconcile-with-snapshot snap.json`（写入权威核对日期与结果，留存证据）
+   - `python3 scripts/build_sector_catalog.py`（重新生成 `v6/app-builder/sector_data/catalog.json`）
+3. 提 PR → QA → 合并 → 部署。核对日期超过 30 天自动显示“核对已过期”，需要重新走一遍。

@@ -218,6 +218,12 @@ jobs:
         npm install --no-save --no-package-lock typescript@5.4.5 semver@7.6.3
         node tests/v6/test_repo_equals_prod.js
 
+    - name: Run FIR-41 item 6 mobile layout check (real Chrome, 320/390/768/1280px, deployed V4 page)
+      run: |
+        npm install --no-save --no-package-lock playwright@1.56.1
+        npx playwright install chromium
+        CPU_THROTTLE=4 node tests/v6/test_mobile_layout.js   # 模拟手机 CPU（4 倍降速）
+
     - name: Run FIR-41/42 watchlist tests (memory + real PostgreSQL incl. least-privilege role + probe, deployed V4 page = DB)
       env:
         TEST_DATABASE_URL: postgres://postgres:pw@localhost:5432/postgres

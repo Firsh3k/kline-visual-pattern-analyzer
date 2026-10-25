@@ -37,6 +37,7 @@
 - `tests/v6/test_repo_equals_prod.js`（FIR-41 第 5 项）：仓库里的平台快照自洽——依赖与 lock 版本一致；服务端运行时导入
   都是直接依赖或在 `runtime-deps.json` 登记的间接依赖；启动链（`run.sh` / `build.sh` / nest / prune-smart）一致；
   运行时文件都在；`/api/health` 的页面指纹算法与 `scripts/v6_fingerprint.py` 一致。
+- `tests/v6/test_mobile_layout.js`（FIR-41 第 6 项）：真实 Chrome 在 320 / 390 / 768 / 1280px 打开实际页面（接口用真实 Core doc 打桩），首页、个股分析、自选股、市场扫描都不能横向滚动；多列卡片网格必须带 `m-stack`。
 
 ## 第二层：部署后 — 线上验收
 

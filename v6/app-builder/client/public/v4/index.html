@@ -2805,9 +2805,13 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
 
   // 绘制图表：只标注“当前主导形态”（Python Core，index 与 doc.bars 同源），未确认形态用灰色；MACD背离为技术补充。
   setTimeout(() => {
+    // 50ms 内若又开始了一次分析（如 ?code= 链接的两处自动分析、连点快捷代码），结果区已被替换、画布已不在：
+    // 跳过这次过期的绘制，由新的结果自己画（FIR-41 第 6 项测试在慢速设备上发现）
+    const cf = document.getElementById('chartFull'), c6 = document.getElementById('chart60');
+    if (!cf || !c6) return;
     const mergedMarkers = buildChartMarkers(offline, bestDetail, bestConfirmed, bestType, macdDiv);
-    drawKline(document.getElementById('chartFull'), data, ind, 0, n, true, mergedMarkers);
-    drawKline(document.getElementById('chart60'), data, ind, Math.max(0, n-60), n, true, mergedMarkers);
+    drawKline(cf, data, ind, 0, n, true, mergedMarkers);
+    drawKline(c6, data, ind, Math.max(0, n-60), n, true, mergedMarkers);
   }, 50);
 }
 

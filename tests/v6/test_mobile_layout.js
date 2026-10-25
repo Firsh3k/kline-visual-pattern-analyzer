@@ -3,6 +3,7 @@
  * （真实行情 fixture + Python Core）生成的 doc 打桩，在 320 / 390 / 768 / 1280 宽度下检查：
  *   - 首页、个股分析（W底 002436、头肩 002594）、自选股、市场扫描：页面不出现横向滚动（文档宽 = 视口宽）
  *   - 页面脚本无报错；回测开关点得动
+ *   CPU_THROTTLE=N 时用 CDP 把 CPU 降速 N 倍（CI 用 4，模拟手机；慢速下才暴露过 ?code= 两次自动分析导致的过期绘图报错）
  * 另做源码检查：多列卡片网格（三列，或间距 ≥12px 的两列）必须带 m-stack 类，窄屏才会变单列。
  *
  * 运行：node tests/v6/test_mobile_layout.js（需要 playwright-core@1.56.1 及其 Chromium：
@@ -90,7 +91,12 @@ function annotate(title, err) {
       const ctx = await browser.newContext({ viewport: { width: w, height: 844 }, isMobile: w < 700, hasTouch: w < 700 });
       const page = await ctx.newPage();
       const errors = [];
-      page.on('pageerror', (e) => errors.push(String(e)));
+      let current = '打开页面';
+      page.on('pageerror', (e) => errors.push(`[${current}] ${String(e)}${e && e.stack ? ' @ ' + e.stack.split('\n').slice(1, 3).join(' ').trim() : ''}`));
+      if (process.env.CPU_THROTTLE) {
+        const cdp = await ctx.newCDPSession(page);
+        await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
+      }
       const views = [
         ['首页', async () => { await page.goto(base); await page.waitForTimeout(500); }],
         ['个股分析 002436（W底）', async () => {
@@ -108,12 +114,14 @@ function annotate(title, err) {
       ];
       for (const [label, go] of views) {
         await test(`${label}：无横向滚动`, async () => {
+          current = label;
           await go();
           const { vw, sw } = await width(page);
           assert.ok(sw <= vw, `文档宽 ${sw} > 视口 ${vw}：${(await offenders(page)).join(' | ')}`);
         });
       }
       await test('回测开关点得动（隐藏的 checkbox 不占位但仍可切换）', async () => {
+        current = '回测开关';
         await page.goto(base);
         await page.waitForTimeout(300);
         await page.evaluate(() => switchTab('analyze'));

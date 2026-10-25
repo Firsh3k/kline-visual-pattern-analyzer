@@ -37,6 +37,8 @@
 - `tests/v6/test_repo_equals_prod.js`（FIR-41 第 5 项）：仓库里的平台快照自洽——依赖与 lock 版本一致；服务端运行时导入
   都是直接依赖或在 `runtime-deps.json` 登记的间接依赖；启动链（`run.sh` / `build.sh` / nest / prune-smart）一致；
   运行时文件都在；`/api/health` 的页面指纹算法与 `scripts/v6_fingerprint.py` 一致。
+- `tests/v6/test_sector_catalog.js` + `tests/v5/test_fir41_sector_catalog.py`（FIR-41 第 4 项）：板块扫描范围来自服务端清单 `sector_data/catalog.json`（与仓库 `sector_data/` 一致）；同花顺板块必须有来源和数据日期；只有与权威快照完全一致、核对日期在 30 天内的才显示“已核对”（新鲜度规则与 Python `core.sector_validation` 逐日比对）；人工样例永远标“人工样例”；页面不写死板块成分，清单不可用时不兜底。
+- `tests/v6/test_custom_sectors.js`（FIR-41 第 4 项）：自定义板块存服务端——内存与真实 PostgreSQL 同一组用例；删除不复活、迁入只加服务器没有的；运行时不建表；两连接并发写 rev 连续；页面一次性迁入旧数据、多端同步、503 不在本机兜底、迟到旧响应不回退。
 - `tests/v6/test_mobile_layout.js`（FIR-41 第 6 项）：真实 Chrome 在 320 / 390 / 768 / 1280px 打开实际页面（接口用真实 Core doc 打桩），首页、个股分析、自选股、市场扫描都不能横向滚动；多列卡片网格必须带 `m-stack`。
 
 ## 第二层：部署后 — 线上验收

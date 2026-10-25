@@ -6,6 +6,8 @@ import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
+import { SectorCatalogStore } from './sector-catalog';
+import { CustomSectors, CustomSectorStatus, CustomSectorView, createCustomSectorStore } from './custom-sector-store';
 import { runProcess } from './run-process';
 
 dotenv.config();
@@ -44,6 +46,8 @@ export class StockAnalysisService implements OnModuleInit {
   private readonly scanJobs = new ScanJobManager((code, signal) => this.analyzeOne(code, signal), {
     maxParallel: Number(process.env.SCAN_MAX_PARALLEL ?? 3) || 3,
   });
+  private readonly sectorCatalog = new SectorCatalogStore();
+  private readonly customSectors = new CustomSectors(createCustomSectorStore(process.env));
 
   onModuleInit(): void {
     this.watchlist.init().then(() => {
@@ -238,6 +242,27 @@ export class StockAnalysisService implements OnModuleInit {
   }
 
   /** 真实读取一次后返回状态（/api/health 用，QA R73-3：反映当前是否真的可用） */
+  // ---- FIR-41 第 4 项：自定义板块（服务端，全站共用） ----
+  checkCustomSectors(): Promise<CustomSectorStatus> {
+    return this.customSectors.check();
+  }
+
+  getCustomSectors(): Promise<CustomSectorView> {
+    return this.customSectors.view();
+  }
+
+  putCustomSector(name: string, body: unknown) {
+    return this.customSectors.put(name, body);
+  }
+
+  removeCustomSector(name: string) {
+    return this.customSectors.remove(name);
+  }
+
+  importCustomSectors(body: unknown) {
+    return this.customSectors.importLocal(body);
+  }
+
   checkWatchlist(): Promise<WatchlistStatus> {
     return this.watchlist.check();
   }
@@ -267,11 +292,21 @@ export class StockAnalysisService implements OnModuleInit {
     return buildBatchItem(doc);
   }
 
-  createScanJob(codes: unknown, filter: ScanFilter): { job_id: string; total: number } {
+  /** 扫描任务：sectors（板块 id，服务端按清单取成分）与 codes（自定义股票）合并去重 */
+  createScanJob(codes: unknown, filter: ScanFilter, sectors?: unknown): { job_id: string; total: number } {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    return this.scanJobs.create(codes, filter);
+    const resolved = this.sectorCatalog.resolve(sectors);
+    const extra = codes === undefined || codes === null ? [] : codes;
+    if (!Array.isArray(extra)) throw new Error('codes 必须是股票代码数组');
+    const all = [...resolved.codes, ...extra];
+    return this.scanJobs.create(all, filter, { scope: resolved.scope });
+  }
+
+  /** FIR-41 第 4 项：扫描范围（板块清单 + 来源 + 核对状态） */
+  listSectors(): Record<string, unknown> {
+    return this.sectorCatalog.list();
   }
 
   getScanJob(id: string): Record<string, unknown> | null {
@@ -350,13 +385,8 @@ export class StockAnalysisService implements OnModuleInit {
     return { items: all, failed };
   }
 
-  getSectors(): { items: Array<Record<string, unknown>>; run_mode: string; note: string } {
-    // 不返回写死的假板块成分；板块成分扫描在阶段 2 以后台任务方式提供，BFF 不伪造。
-    return { items: [], run_mode: 'local', note: '板块成分扫描暂未开放（阶段 2 后台任务），BFF 不提供写死成分' };
-  }
-
   async scanSector(code: string): Promise<never> {
-    throw new BadRequestException('板块扫描暂未开放（阶段 2 后台任务），BFF 不提供写死成分股');
+    throw new BadRequestException('请用 POST /api/scan/jobs 并传 sectors（板块 id，见 GET /api/sectors）提交板块扫描');
   }
 
   getSyncConfig(): Record<string, unknown> {

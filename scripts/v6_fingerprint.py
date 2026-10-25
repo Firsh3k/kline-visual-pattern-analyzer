@@ -59,6 +59,25 @@ def core_sha256(ref=None):
     return h.hexdigest()
 
 
+# 服务按 cwd 找的运行时文件（与 deploy-info.ts RUNTIME_FILES 的键一致）；该版本里有哪些，线上就必须都找得到
+RUNTIME_FILE_PATHS = {
+    "page": "client/public/v4/index.html",
+    "analyzer": "python_analyzer.py",
+    "core": "core/__init__.py",
+    "sector_catalog": "sector_data/catalog.json",
+}
+
+
+def runtime_files(ref=None):
+    names = set(_git("ls-tree", "-r", "--name-only", ref, f"{APP}/").decode().split()) if ref else None
+    out = []
+    for key, rel in RUNTIME_FILE_PATHS.items():
+        full = f"{APP}/{rel}"
+        if (full in names) if ref else (ROOT / full).exists():
+            out.append(key)
+    return out
+
+
 def fingerprint(ref=None):
     commit = _git("rev-parse", ref).decode().strip() if ref else None
     return {
@@ -67,6 +86,7 @@ def fingerprint(ref=None):
         "core_sha256": core_sha256(ref),
         "analyzer_sha256": hashlib.sha256(_read(ref, f"{APP}/python_analyzer.py")).hexdigest(),
         "page_sha256": hashlib.sha256(_read(ref, PAGE)).hexdigest(),
+        "runtime_files": runtime_files(ref),
         "files": {p: hashlib.sha256(_read(ref, p)).hexdigest()[:16] for p in KEY_FILES},
     }
 

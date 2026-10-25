@@ -71,9 +71,11 @@ def verify(health, expected, allow_watchlist_down=False, allow_legacy_health=Fal
             if not isinstance(found, dict):
                 out.append(("runtime_files", "FAIL", f"deploy.files_found 不是对象（{found!r}）"))
             else:
-                bad = [k for k in ("page", "analyzer", "core") if found.get(k) is not True]
+                # 该版本仓库里有的运行时文件（页面 / 执行器 / core / 板块清单），线上都必须严格为 true
+                need = expected.get("runtime_files") or ["page", "analyzer", "core"]
+                bad = [k for k in need if found.get(k) is not True]
                 detail = f"cwd={deploy.get('cwd')!r}"
-                detail += f"，以下不是 true：{ {k: found.get(k) for k in bad} }" if bad else "，页面 / 执行器 / core 均在"
+                detail += f"，以下不是 true：{ {k: found.get(k) for k in bad} }" if bad else f"，{' / '.join(need)} 均在"
                 check("runtime_files", not bad, detail)
 
     wl = health.get("watchlist_store")

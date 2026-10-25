@@ -30,7 +30,7 @@ def _good_health(fp):
             "node_version": "v22.21.0",
             "page_sha256": fp["page_sha256"],
             "page_bytes": 1,
-            "files_found": {"page": True, "analyzer": True, "core": True},
+            "files_found": {"page": True, "analyzer": True, "core": True, "sector_catalog": True},
         },
     }
 
@@ -62,6 +62,20 @@ def test_each_mismatch_fails():
         res = _results(VD.verify(h, fp))
         assert res[key] == "FAIL", (key, res)
         assert [k for k, v in res.items() if v != "PASS"] == [key], (key, res)
+
+
+def test_sector_catalog_required_when_ref_has_it(tmp_path, capsys):
+    """部署时忘了同步 sector_data/：该版本仓库里有 catalog.json，线上 files_found.sector_catalog 必须为 true"""
+    fp = FP.fingerprint("HEAD")
+    assert "sector_catalog" in fp["runtime_files"]
+    h = _good_health(fp)
+    h["deploy"]["files_found"]["sector_catalog"] = False
+    assert _results(VD.verify(h, fp))["runtime_files"] == "FAIL"
+    del h["deploy"]["files_found"]["sector_catalog"]
+    assert _results(VD.verify(h, fp))["runtime_files"] == "FAIL"
+    # 更早的版本（仓库里还没有板块清单）不要求
+    old = dict(fp, runtime_files=["page", "analyzer", "core"])
+    assert _results(VD.verify(h, old))["runtime_files"] == "PASS"
 
 
 def test_watchlist_down_is_warning_when_allowed():

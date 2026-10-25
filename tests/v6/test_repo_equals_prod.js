@@ -183,16 +183,19 @@ test('路径只定义一处：页面控制器用 v4PagePath()，health 带 deplo
 });
 
 console.log('页面指纹（/api/health deploy）');
-test('deploy.page_sha256 = 文件 sha256 = scripts/v6_fingerprint.py 的 page_sha256；文件都找得到', () => {
+test('deploy.page_sha256 = 文件 sha256 = scripts/v6_fingerprint.py 的 page_sha256；文件都找得到；运行时文件键与指纹脚本一致', () => {
   const info = D.collectDeployInfo(APP);
   const buf = fs.readFileSync(path.join(APP, 'client', 'public', 'v4', 'index.html'));
   assert.strictEqual(info.page_sha256, crypto.createHash('sha256').update(buf).digest('hex'));
   assert.strictEqual(info.page_bytes, buf.length);
-  assert.deepStrictEqual(info.files_found, { page: true, analyzer: true, core: true });
+  assert.deepStrictEqual(info.files_found, { page: true, analyzer: true, core: true, sector_catalog: true });
   assert.strictEqual(info.cwd, APP);
   assert.strictEqual(info.node_version, process.version);
   const fp = JSON.parse(execFileSync('python3', [path.join(ROOT, 'scripts', 'v6_fingerprint.py')], { encoding: 'utf8' }));
   assert.strictEqual(info.page_sha256, fp.page_sha256, 'health 与指纹脚本对同一页面算出的值不同');
+  assert.deepStrictEqual(Object.keys(D.RUNTIME_FILES), fp.runtime_files, 'deploy-info 的运行时文件与指纹脚本列出的不一致');
+  const sc = read('server/modules/stock-analysis/sector-catalog.ts');
+  assert.ok(/SECTOR_CATALOG_REL = path\.join\('sector_data', 'catalog\.json'\)/.test(sc) && D.RUNTIME_FILES.sector_catalog === path.join('sector_data', 'catalog.json'), '板块清单路径与 sector-catalog.ts 不一致');
 });
 
 test('cwd 下缺文件：page_sha256=null，files_found 如实报告', () => {
@@ -201,7 +204,7 @@ test('cwd 下缺文件：page_sha256=null，files_found 如实报告', () => {
     fs.writeFileSync(path.join(tmp, 'python_analyzer.py'), '');
     const info = D.collectDeployInfo(tmp);
     assert.deepStrictEqual([info.page_sha256, info.page_bytes], [null, null]);
-    assert.deepStrictEqual(info.files_found, { page: false, analyzer: true, core: false });
+    assert.deepStrictEqual(info.files_found, { page: false, analyzer: true, core: false, sector_catalog: false });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

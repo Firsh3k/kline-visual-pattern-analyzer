@@ -3,7 +3,7 @@
   "transitive": {
     "postgres": {
       "via": ["@lark-apaas/fullstack-nestjs-core", "@lark-apaas/nestjs-datapaas"],
-      "used_by": ["server/modules/stock-analysis/watchlist-store.ts", "scripts/watchlist-probe.js"],
+      "used_by": ["server/modules/stock-analysis/watchlist-store.ts", "server/modules/stock-analysis/custom-sector-store.ts", "scripts/watchlist-probe.js"],
       "reason": "自选股存储（FIR-41 第 2 项 / FIR-42）。平台的 package.json / lock 是从平台导出的快照，没有直接声明；驱动缺失时自选股 fail-closed（PR #75）。"
     }
   }

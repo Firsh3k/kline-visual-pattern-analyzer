@@ -16,6 +16,7 @@ export const RUNTIME_FILES = {
   page: path.join('client', 'public', 'v4', 'index.html'),
   analyzer: 'python_analyzer.py',
   core: path.join('core', '__init__.py'),
+  sector_catalog: path.join('sector_data', 'catalog.json'),   // FIR-41 第 4 项：板块扫描范围（与 sector-catalog.ts 同一路径）
 } as const;
 
 export interface DeployInfo {
@@ -23,7 +24,7 @@ export interface DeployInfo {
   node_version: string;
   page_sha256: string | null;
   page_bytes: number | null;
-  files_found: { page: boolean; analyzer: boolean; core: boolean };
+  files_found: { page: boolean; analyzer: boolean; core: boolean; sector_catalog: boolean };
 }
 
 export function v4PagePath(cwd: string = process.cwd()): string {
@@ -52,6 +53,9 @@ export function collectDeployInfo(cwd: string = process.cwd()): DeployInfo {
     node_version: process.version,
     page_sha256: pageSha,
     page_bytes: pageBytes,
-    files_found: { page: found(RUNTIME_FILES.page), analyzer: found(RUNTIME_FILES.analyzer), core: found(RUNTIME_FILES.core) },
+    files_found: {
+      page: found(RUNTIME_FILES.page), analyzer: found(RUNTIME_FILES.analyzer), core: found(RUNTIME_FILES.core),
+      sector_catalog: found(RUNTIME_FILES.sector_catalog),
+    },
   };
 }

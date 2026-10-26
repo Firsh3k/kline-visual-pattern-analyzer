@@ -341,6 +341,8 @@ export class UnavailableCustomSectorStore implements CustomSectorStore {
 /** 与 createWatchlistStore 同一选择规则；驱动缺失 / 连接串错误只让自定义板块 fail-closed，原因里去掉连接串 */
 export function createCustomSectorStore(
   env: Record<string, string | undefined>,
+  // postgres 懒加载的原因见 watchlist-store.ts（驱动缺失只让自定义板块 fail-closed）
+  // eslint-disable-next-line import/no-extraneous-dependencies, @typescript-eslint/no-require-imports
   loadDriver: () => any = () => require('postgres'),
 ): CustomSectorStore {
   if (env.WATCHLIST_STORE === 'memory') return new MemoryCustomSectorStore();

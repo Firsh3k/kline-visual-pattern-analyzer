@@ -6,6 +6,7 @@ import { __express as hbsExpressEngine } from 'hbs';
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { createV4PageMiddleware } from './modules/stock-analysis/v4-page';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -22,6 +23,9 @@ async function bootstrap() {
   app.setBaseViewsDir(join(process.cwd(), 'dist/client'));
   app.setViewEngine('html');
   app.engine('html', hbsExpressEngine);
+
+  // V4 页面（/、/v4、/v4/*）：平台不允许根级 @Controller，改用 express 中间件托管，见 v4-page.ts
+  app.use(createV4PageMiddleware());
 
   await app.listen(port, host);
   logger.log(`Server running on ${host}:${port}`);

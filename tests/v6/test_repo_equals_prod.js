@@ -5,8 +5,10 @@
  * 1. package.json 的每个依赖都在 package-lock.json 里，且锁定版本满足声明的范围
  * 2. 服务端运行时导入的每个包：是 dependencies 里的直接依赖，或在 runtime-deps.json 登记且能沿 lock 找到
  * 3. 启动链：run.sh → node server/main.js；build.sh 把 run.sh 拷进 dist；nest sourceRoot=server；prune-smart 入口一致
- * 4. 服务按 cwd 找的运行时文件（页面 / python_analyzer.py / core）在仓库里都在，且代码里只有一处路径定义
- * 5. /api/health 的 deploy 字段：页面 sha256 = scripts/v6_fingerprint.py 的 page_sha256；不泄露环境变量
+ * 4. 平台打包后的运行时文件：服务端不再按 cwd 读 .py / json（引擎、板块清单随模块内嵌）；页面按线上 / 开发布局查找；
+ *    没有根级 @Controller，页面由 main.ts 的中间件托管
+ * 5. /api/health 的 deploy 字段：页面 sha256 = scripts/v6_fingerprint.py 的 page_sha256，引擎包 / 板块清单 sha256 一致；不泄露环境变量
+ * 真实构建 + 模拟平台部署 + 启动服务的检查在 tests/v6/test_platform_package.js。
  *
  * 运行：node tests/v6/test_repo_equals_prod.js（需要 typescript、semver 包）
  */
@@ -31,9 +33,15 @@ const runtimeDeps = JSON.parse(read('runtime-deps.json'));
 const P = lock.packages || {};
 
 let passed = 0, failed = 0;
+const pending = [];
 function test(name, fn) {
-  try { fn(); passed++; console.log('  ✓ ' + name); }
-  catch (e) { failed++; console.log('  ✗ ' + name + '\n      ' + (e && e.stack ? e.stack.split('\n').slice(0, 4).join('\n      ') : e)); }
+  const ok = () => { passed++; console.log('  ✓ ' + name); };
+  const bad = (e) => { failed++; console.log('  ✗ ' + name + '\n      ' + (e && e.stack ? e.stack.split('\n').slice(0, 4).join('\n      ') : e)); };
+  try {
+    const r = fn();
+    if (r && typeof r.then === 'function') pending.push(r.then(ok, bad));
+    else ok();
+  } catch (e) { bad(e); }
 }
 
 function walk(dir, exts, out = []) {
@@ -157,54 +165,141 @@ test('启动链一致：run.sh → node server/main.js；build.sh 拷 run.sh 到
   assert.strictEqual(pkg.scripts.build, './scripts/build.sh');
 });
 
-// deploy-info.ts（转译后直接加载）
-const SRC = path.join(APP, 'server', 'modules', 'stock-analysis', 'deploy-info.ts');
-const outJs = ts.transpileModule(fs.readFileSync(SRC, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true }, reportDiagnostics: true,
-});
-assert.strictEqual((outJs.diagnostics || []).length, 0);
-const mod = { exports: {} };
-vm.runInThisContext(`(function (module, exports, require) {${outJs.outputText}\n})`)(mod, mod.exports, require);
-const D = mod.exports;
+// deploy-info.ts / v4-page.ts（转译后直接加载）
+function loadTs(file, requireMap = {}) {
+  const src = path.join(APP, 'server', 'modules', 'stock-analysis', file);
+  const out = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true }, reportDiagnostics: true,
+  });
+  assert.strictEqual((out.diagnostics || []).length, 0, `${file} TS 诊断非空`);
+  const mod = { exports: {} };
+  vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, (n) => (n in requireMap ? requireMap[n] : require(n)));
+  return mod.exports;
+}
+const D = loadTs('deploy-info.ts');
+const V = loadTs('v4-page.ts', { './deploy-info': D });
+const fp = JSON.parse(execFileSync('python3', [path.join(ROOT, 'scripts', 'v6_fingerprint.py')], { encoding: 'utf8' }));
+const ENGINE_OK = { ready: true, source: 'bundle', bundle_sha256: fp.engine_bundle_sha256, file_count: 36, dir: '/tmp/x', error: null };
+const CATALOG_OK = { ready: true, sha256: fp.sector_catalog_sha256, error: null };
+const PAGE_SRC = path.join(APP, 'client', 'public', 'v4', 'index.html');
+const pageSha = crypto.createHash('sha256').update(fs.readFileSync(PAGE_SRC)).digest('hex');
+/** 模拟线上运行目录（= 构建产物 dist/）：build.sh 把 client/public 拷到 dist/dist/client，cwd=dist */
+function prodLayout() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-info-'));
+  fs.mkdirSync(path.join(tmp, 'dist', 'client', 'v4'), { recursive: true });
+  fs.copyFileSync(PAGE_SRC, path.join(tmp, 'dist', 'client', 'v4', 'index.html'));
+  return tmp;
+}
 
-console.log('运行时文件');
-test('服务按 cwd 找的页面 / python_analyzer.py / core 在仓库里都在', () => {
-  for (const [k, rel] of Object.entries(D.RUNTIME_FILES)) assert.ok(fs.existsSync(path.join(APP, rel)), `${k}: ${rel} 不存在`);
+console.log('运行时文件（平台打包后：.py 被过滤、只部署 main.js 能追踪到的模块）');
+test('build.sh 把 client/public 拷进 dist/dist/client（线上页面 = 仓库页面）；页面候选先线上布局、后开发布局', () => {
+  assert.ok(read('scripts/build.sh').includes('cp -R "$ROOT_DIR/client/public/." "$DIST_DIR/dist/client/"'), 'build.sh 不再拷 client/public');
+  assert.deepStrictEqual([...D.V4_PAGE_CANDIDATES], [path.join('dist', 'client', 'v4', 'index.html'), path.join('client', 'public', 'v4', 'index.html')]);
+  assert.ok(fs.existsSync(PAGE_SRC));
 });
 
-test('路径只定义一处：页面控制器用 v4PagePath()，health 带 deploy；执行器与 core 路径与 RUNTIME_FILES 一致', () => {
-  const page = read('server/modules/stock-analysis/v4-page.controller.ts');
-  assert.ok(page.includes('v4PagePath()') && !/'client',\s*'public'/.test(page), '页面控制器又写了一份路径');
-  const ctl = read('server/modules/stock-analysis/stock-analysis.controller.ts');
-  assert.ok(/deploy:\s*collectDeployInfo\(\)/.test(ctl), '/api/health 没有 deploy 字段');
+test('服务端代码不再按 cwd 读 .py / json：引擎与板块清单都静态 import 内嵌模块', () => {
+  const offenders = serverFiles.filter((f) => {
+    const src = fs.readFileSync(f, 'utf8');
+    return /process\.cwd\(\)[^;\n]*['"](?:python_analyzer\.py|core|sector_data)['"]/.test(src) || /['"]sector_data['"]/.test(src);
+  }).map((f) => path.relative(APP, f));
+  assert.deepStrictEqual(offenders, []);
   const svc = read('server/modules/stock-analysis/stock-analysis.service.ts');
-  assert.ok(svc.includes(`path.join(process.cwd(), '${D.RUNTIME_FILES.analyzer}')`), '执行器路径与 RUNTIME_FILES 不一致');
-  assert.ok(svc.includes("path.join(process.cwd(), 'core')") && D.RUNTIME_FILES.core === path.join('core', '__init__.py'), 'core 路径与 RUNTIME_FILES 不一致');
+  assert.ok(/new EngineResolver\(\)/.test(svc) && /new SectorCatalogStore\(\)/.test(svc));
+  assert.ok(/from '\.\/sector-catalog\.data'/.test(read('server/modules/stock-analysis/sector-catalog.ts')));
 });
 
-console.log('页面指纹（/api/health deploy）');
-test('deploy.page_sha256 = 文件 sha256 = scripts/v6_fingerprint.py 的 page_sha256；文件都找得到；运行时文件键与指纹脚本一致', () => {
-  const info = D.collectDeployInfo(APP);
-  const buf = fs.readFileSync(path.join(APP, 'client', 'public', 'v4', 'index.html'));
-  assert.strictEqual(info.page_sha256, crypto.createHash('sha256').update(buf).digest('hex'));
-  assert.strictEqual(info.page_bytes, buf.length);
-  assert.deepStrictEqual(info.files_found, { page: true, analyzer: true, core: true, sector_catalog: true });
-  assert.strictEqual(info.cwd, APP);
-  assert.strictEqual(info.node_version, process.version);
-  const fp = JSON.parse(execFileSync('python3', [path.join(ROOT, 'scripts', 'v6_fingerprint.py')], { encoding: 'utf8' }));
-  assert.strictEqual(info.page_sha256, fp.page_sha256, 'health 与指纹脚本对同一页面算出的值不同');
-  assert.deepStrictEqual(Object.keys(D.RUNTIME_FILES), fp.runtime_files, 'deploy-info 的运行时文件与指纹脚本列出的不一致');
-  const sc = read('server/modules/stock-analysis/sector-catalog.ts');
-  assert.ok(/SECTOR_CATALOG_REL = path\.join\('sector_data', 'catalog\.json'\)/.test(sc) && D.RUNTIME_FILES.sector_catalog === path.join('sector_data', 'catalog.json'), '板块清单路径与 sector-catalog.ts 不一致');
+test('页面托管：没有根级 @Controller（平台要求 api/ 或 openapi/ 开头）；main.ts 注册页面中间件，与 health 用同一个 v4PagePath', () => {
+  const bad = [];
+  for (const f of serverFiles) {
+    for (const m of fs.readFileSync(f, 'utf8').matchAll(/@Controller\(\s*(?:'([^']*)'|"([^"]*)")?\s*\)/g)) {
+      const p = (m[1] ?? m[2] ?? '').replace(/^\//, '');
+      if (!/^(api|openapi)(\/|$)/.test(p)) bad.push(`${path.relative(APP, f)}: @Controller(${JSON.stringify(p)})`);
+    }
+  }
+  assert.deepStrictEqual(bad, []);
+  assert.ok(/app\.use\(createV4PageMiddleware\(\)\)/.test(read('server/main.ts')));
+  const page = read('server/modules/stock-analysis/v4-page.ts');
+  assert.ok(page.includes('v4PagePath()') && !/'client',\s*'public'/.test(page), '页面中间件又写了一份路径');
+  const ctl = read('server/modules/stock-analysis/stock-analysis.controller.ts');
+  assert.ok(/deploy:\s*collectDeployInfo\(process\.cwd\(\), this\.service\.getEngineStatus\(\), this\.service\.getSectorCatalogStatus\(\)\)/.test(ctl), '/api/health 的 deploy 没带引擎 / 板块清单状态');
 });
 
-test('cwd 下缺文件：page_sha256=null，files_found 如实报告', () => {
+test('页面路由：/、/v4、/v4/* 且 Accept 含 text/html；平台子路径前缀 /app/<appId> 先去掉；/api 与非 GET 一律放行', () => {
+  const html = 'text/html,application/xhtml+xml';
+  for (const u of ['/', '/?code=603068', '/v4', '/v4/', '/v4/x', '/app/app_17fr2txmwp3', '/app/app_17fr2txmwp3/', '/app/app_17fr2txmwp3/v4?x=1']) assert.ok(V.isV4PageRequest('GET', u, html, undefined), u);
+  for (const u of ['/api/health', '/app/a/api/health', '/v40', '/favicon.ico', '/app/a/assets/x.js']) assert.ok(!V.isV4PageRequest('GET', u, html, undefined), u);
+  assert.ok(!V.isV4PageRequest('POST', '/', html, undefined));
+  assert.ok(!V.isV4PageRequest('GET', '/', 'application/json', undefined));
+  assert.strictEqual(V.pageRoute('/base/v4?x', '/base/'), '/v4');
+  assert.strictEqual(V.pageRoute('/base', '/base'), '/');
+});
+
+test('页面中间件：返回 v4PagePath 找到的文件（与 deploy.page_sha256 同一个）；找不到 → 404；非页面请求 next()', async () => {
+  const run = (url, accept, resolvePage) => new Promise((resolve) => {
+    const chunks = [];
+    const { Writable } = require('stream');
+    const res = new Writable({ write(c, _e, cb) { chunks.push(c); cb(); } });
+    res.headers = {}; res.statusCode = 200;
+    res.setHeader = (k, v) => { res.headers[k.toLowerCase()] = v; };
+    res.status = (c) => { res.statusCode = c; return res; };
+    res.send = (b) => resolve({ status: res.statusCode, body: String(b), headers: res.headers });
+    res.on('finish', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks), headers: res.headers }));
+    V.createV4PageMiddleware(resolvePage)({ method: 'GET', url, headers: { accept } }, res, () => resolve('next'));
+  });
+  const tmp = prodLayout();
+  try {
+    const r = await run('/app/app_x/', 'text/html', () => D.v4PagePath(tmp));
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(crypto.createHash('sha256').update(r.body).digest('hex'), pageSha);
+    assert.strictEqual(r.headers['content-type'], 'text/html; charset=utf-8');
+    const miss = await run('/', 'text/html', () => null);
+    assert.deepStrictEqual([miss.status, miss.body], [404, 'V4 page not found']);
+    assert.strictEqual(await run('/api/health', 'text/html', () => D.v4PagePath(tmp)), 'next');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+console.log('/api/health deploy');
+test('线上布局（cwd=dist 产物）：page_path=dist/client/v4/index.html，page_sha256 = 指纹脚本；files_found 的键 = 指纹脚本的 runtime_files', () => {
+  const tmp = prodLayout();
+  try {
+    const info = D.collectDeployInfo(tmp, ENGINE_OK, CATALOG_OK);
+    assert.strictEqual(info.page_path, 'dist/client/v4/index.html');
+    assert.strictEqual(info.page_sha256, pageSha);
+    assert.strictEqual(info.page_sha256, fp.page_sha256, 'health 与指纹脚本对同一页面算出的值不同');
+    assert.strictEqual(info.page_bytes, fs.statSync(PAGE_SRC).size);
+    assert.deepStrictEqual(info.files_found, { page: true, engine: true, sector_catalog: true });
+    assert.deepStrictEqual(Object.keys(info.files_found), fp.runtime_files);
+    assert.deepStrictEqual(info.engine, { source: 'bundle', bundle_sha256: fp.engine_bundle_sha256, file_count: 36, error: null });
+    assert.strictEqual(info.sector_catalog_sha256, fp.sector_catalog_sha256);
+    assert.deepStrictEqual([info.cwd, info.node_version], [tmp, process.version]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('开发布局（cwd=项目根）用 client/public/v4/index.html；两种布局都在时用线上布局', () => {
+  assert.strictEqual(D.collectDeployInfo(APP, ENGINE_OK, CATALOG_OK).page_path, 'client/public/v4/index.html');
+  const tmp = prodLayout();
+  try {
+    fs.mkdirSync(path.join(tmp, 'client', 'public', 'v4'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'client', 'public', 'v4', 'index.html'), 'dev');
+    assert.strictEqual(D.collectDeployInfo(tmp, ENGINE_OK, CATALOG_OK).page_path, 'dist/client/v4/index.html');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('页面缺失 / 引擎不可用 / 板块清单不可用：如实报告 false 与原因，不报 sha256', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-info-'));
   try {
-    fs.writeFileSync(path.join(tmp, 'python_analyzer.py'), '');
-    const info = D.collectDeployInfo(tmp);
-    assert.deepStrictEqual([info.page_sha256, info.page_bytes], [null, null]);
-    assert.deepStrictEqual(info.files_found, { page: false, analyzer: true, core: false, sector_catalog: false });
+    const info = D.collectDeployInfo(tmp, { ...ENGINE_OK, ready: false, dir: null, error: '引擎包解压失败' }, { ready: false, sha256: null, error: 'x' });
+    assert.deepStrictEqual([info.page_path, info.page_sha256, info.page_bytes], [null, null, null]);
+    assert.deepStrictEqual(info.files_found, { page: false, engine: false, sector_catalog: false });
+    assert.strictEqual(info.engine.error, '引擎包解压失败');
+    assert.strictEqual(info.sector_catalog_sha256, null);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -214,13 +309,15 @@ test('deploy 字段只含路径 / 版本 / 哈希，不带环境变量或连接�
   const before = process.env.SUDA_DATABASE_URL;
   process.env.SUDA_DATABASE_URL = 'postgres://u:SeCrEt@h:5432/d';
   try {
-    const info = D.collectDeployInfo(APP);
-    assert.deepStrictEqual(Object.keys(info).sort(), ['cwd', 'files_found', 'node_version', 'page_bytes', 'page_sha256']);
+    const info = D.collectDeployInfo(APP, ENGINE_OK, CATALOG_OK);
+    assert.deepStrictEqual(Object.keys(info).sort(), ['cwd', 'engine', 'files_found', 'node_version', 'page_bytes', 'page_path', 'page_sha256', 'sector_catalog_sha256']);
     assert.ok(!JSON.stringify(info).includes('SeCrEt'));
   } finally {
     if (before === undefined) delete process.env.SUDA_DATABASE_URL; else process.env.SUDA_DATABASE_URL = before;
   }
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+Promise.all(pending).then(() => {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+});

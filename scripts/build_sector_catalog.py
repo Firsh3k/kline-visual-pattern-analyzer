@@ -20,7 +20,7 @@ local_refresh_date 是合法日期，否则生成失败。是否“已核对”�
    load_authoritative_snapshot），执行 --adopt-snapshot：把快照里各板块的成分写回 new_sectors.js；
 2. python3 scripts/refresh_sector_membership.py --reconcile-with-snapshot snap.json：与快照对账，
    写入 provenance 的权威核对日期与结果（matched / local_only / source_only）；
-3. 重新执行本脚本生成 catalog.json，提 PR → QA → 部署。完全一致（local_only=0, source_only=0）
+3. 重新执行本脚本生成 catalog.json（同时更新服务内嵌的 sector-catalog.data.ts），提 PR → QA → 部署。完全一致（local_only=0, source_only=0）
    且核对日期在 30 天内的板块才会显示“已核对”。
 """
 import argparse
@@ -204,7 +204,19 @@ def main(argv=None):
     out_path.write_text(out, encoding="utf-8")
     cat = json.loads(out)
     print(f"已生成 {out_path}：{len(cat['sectors'])} 个板块")
+    if out_path.resolve() == OUT.resolve():
+        # 服务从内嵌模块读清单（平台不部署按 cwd 读的 json），这里一起更新；--check 由 build_runtime_bundles.py 负责
+        _runtime_bundles().write_catalog_module()
+        print("已同步 server/modules/stock-analysis/sector-catalog.data.ts")
     return 0
+
+
+def _runtime_bundles():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("build_runtime_bundles", ROOT / "scripts" / "build_runtime_bundles.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 if __name__ == "__main__":

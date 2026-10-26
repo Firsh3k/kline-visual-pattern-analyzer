@@ -36,7 +36,19 @@
 - `tests/v6/test_bff_pure.js`：asOf 校验与扫描列表透传 Python 确认。
 - `tests/v6/test_repo_equals_prod.js`（FIR-41 第 5 项）：仓库里的平台快照自洽——依赖与 lock 版本一致；服务端运行时导入
   都是直接依赖或在 `runtime-deps.json` 登记的间接依赖；启动链（`run.sh` / `build.sh` / nest / prune-smart）一致；
-  运行时文件都在；`/api/health` 的页面指纹算法与 `scripts/v6_fingerprint.py` 一致。
+  服务端不再按 cwd 读 .py / json；没有根级 `@Controller`；`/api/health` 的页面 / 引擎包 / 板块清单指纹算法与 `scripts/v6_fingerprint.py` 一致。
+- `tests/v6/test_engine_bundle.js` + `tests/v5/test_runtime_bundles.py`（平台打包问题）：内嵌引擎包与 `core/**/*.py`、`python_analyzer.py`
+  逐字节一致（`scripts/build_runtime_bundles.py --check`，改了 core 忘记重新生成即红）；在没有任何 .py 的目录里解压后 Python health 为
+  `real_core`、指纹与仓库一致；目录被改 / 多文件 / 缺文件会重建，包被篡改 / 路径穿越一律拒绝，并发解压安全。
+
+### 平台打包（CI 的 platform-package job，2026-10-26 事故的回归）
+- 按 `package-lock.json` `npm ci` 装全套平台依赖。
+- 平台同款 ESLint：`@lark-apaas/fullstack-presets` 的 `eslintPresetsOfSimple.server`（`tests/v6/platform-eslint.config.cjs`），0 错误 0 警告；
+  平台 commit_task 会拦的提交在这里先拦住。`tsc` 类型检查 server。
+- `tests/v6/test_platform_package.js`：真实 `nest build` → 用 `@vercel/nft` 从 `dist/server/main.js` 追踪（同 `prune-smart.js`），
+  只把追踪到的文件放进部署目录、不放任何 .py → 在该目录启动服务 → `/api/health` 必须 `real_core`，
+  `scripts/v6_verify_deploy.py` 判定全部 PASS（自选股用内存实现，只此一项 WARN）；根路径（含平台子路径前缀）返回仓库页面，`/api/sectors` 可用。
+  在 6a41532 上跑这个测试会复现线上的 `core_analyzer=not_configured` 与 “V4 page not found”。
 - `tests/v6/test_sector_catalog.js` + `tests/v5/test_fir41_sector_catalog.py`（FIR-41 第 4 项）：板块扫描范围来自服务端清单 `sector_data/catalog.json`（与仓库 `sector_data/` 一致）；同花顺板块必须有来源和数据日期；只有与权威快照完全一致、核对日期在 30 天内的才显示“已核对”（新鲜度规则与 Python `core.sector_validation` 逐日比对）；人工样例永远标“人工样例”；页面不写死板块成分，清单不可用时不兜底。
 - `tests/v6/test_custom_sectors.js`（FIR-41 第 4 项）：自定义板块存服务端——内存与真实 PostgreSQL 同一组用例；删除不复活、迁入只加服务器没有的；运行时不建表；两连接并发写 rev 连续；页面一次性迁入旧数据、多端同步、503 不在本机兜底、迟到旧响应不回退。
 - `tests/v6/test_mobile_layout.js`（FIR-41 第 6 项）：真实 Chrome 在 320 / 390 / 768 / 1280px 打开实际页面（接口用真实 Core doc 打桩），首页、个股分析、自选股、市场扫描都不能横向滚动；多列卡片网格必须带 `m-stack`。
@@ -49,7 +61,9 @@
 - [ ] 在已登录的浏览器打开线上 `/api/health`，把返回的 JSON 存成 `health.json`
 - [ ] 运行 `python3 scripts/v6_verify_deploy.py --ref <本次部署的标签或提交> --health health.json`，结论必须是“通过”：
   `core_sha256` / `analyzer_sha256`（Python Core 与执行器）、`deploy.page_sha256`（浏览器实际拿到的页面）与该版本一致，
-  `core_analyzer=real_core`，页面 / 执行器 / core 都在服务的 `cwd` 下，`watchlist_store` 为 `postgres` 且 `ready=true`
+  `core_analyzer=real_core`，`deploy.files_found` 里该版本应有的项都为 true（内嵌引擎包之后：page / engine / sector_catalog；
+  之前的版本：page / analyzer / core 在 `cwd` 下），内嵌引擎包之后的版本还要 `deploy.engine.source=bundle` 且 `bundle_sha256`、
+  `deploy.sector_catalog_sha256` 与该版本一致，`watchlist_store` 为 `postgres` 且 `ready=true`
   （FIR-41 第 5 项；只想看指纹时仍可用 `python3 scripts/v6_fingerprint.py --ref <版本>`）
   退出码：0 通过；1 不通过（字段缺失、类型不对也算）；3 部分核对——只在部署的确是第 5 项之前的版本、显式加
   `--allow-legacy-health` 时出现，页面与运行时文件未核对，**不能当作 PRODUCTION GATE PASS**

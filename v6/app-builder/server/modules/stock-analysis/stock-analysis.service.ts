@@ -1,14 +1,13 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { execSync } from 'child_process';
-import * as path from 'path';
-import * as fs from 'fs';
+import { execFileSync, execSync } from 'child_process';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
-import { SectorCatalogStore } from './sector-catalog';
+import { SectorCatalogStatus, SectorCatalogStore } from './sector-catalog';
 import { CustomSectors, CustomSectorStatus, CustomSectorView, createCustomSectorStore } from './custom-sector-store';
 import { runProcess } from './run-process';
+import { EngineLocation, EngineResolver, EngineStatus, engineEnv } from './engine';
 
 dotenv.config();
 
@@ -47,6 +46,8 @@ export class StockAnalysisService implements OnModuleInit {
     maxParallel: Number(process.env.SCAN_MAX_PARALLEL ?? 3) || 3,
   });
   private readonly sectorCatalog = new SectorCatalogStore();
+  /** Python 引擎：线上从内嵌包解压（平台不部署 .py），见 engine.ts */
+  private readonly engine = new EngineResolver();
   private readonly customSectors = new CustomSectors(createCustomSectorStore(process.env));
 
   onModuleInit(): void {
@@ -81,41 +82,47 @@ export class StockAnalysisService implements OnModuleInit {
     return null;
   }
 
-  private checkCoreInstalled(): boolean {
-    const coreDir = path.join(process.cwd(), 'core');
-    const initFile = path.join(coreDir, '__init__.py');
-    return fs.existsSync(coreDir) && fs.existsSync(initFile);
-  }
-
   private async setupCoreModule(): Promise<void> {
     if (!this.pythonBinary) return;
 
-    if (this.checkCoreInstalled()) {
-      try {
-        const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-        const output = execSync(
-          `${this.pythonBinary.path} ${scriptPath} --mode health`,
-          { encoding: 'utf8', timeout: 5000, cwd: process.cwd() }
-        );
-        const data = JSON.parse(output.trim()) as {
-          core_installed?: boolean; analyzer?: string; core_version?: string;
-          core_sha256?: string | null; analyzer_sha256?: string | null;
-        };
-        this.coreInstalled = data.core_installed ?? true;
-        this.coreAnalyzer = data.analyzer || 'unknown';
-        this.coreSource = data.core_version || 'github_api';
-        this.coreSha256 = data.core_sha256 ?? null;
-        this.analyzerSha256 = data.analyzer_sha256 ?? null;
-      } catch (err) {
-        this.coreInstalled = true;
-        this.coreAnalyzer = 'error';
-        this.coreInstallError = err instanceof Error ? err.message : String(err);
-      }
+    let engine: EngineLocation;
+    try {
+      engine = this.engine.resolve();
+    } catch (err) {
+      this.coreInstalled = false;
+      this.coreAnalyzer = 'not_configured';
+      this.coreInstallError = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Python 引擎不可用：${this.coreInstallError}`);
       return;
     }
+    try {
+      const output = execFileSync(
+        this.pythonBinary.path, [engine.script, '--mode', 'health'],
+        { encoding: 'utf8', timeout: 8000, cwd: engine.workdir, env: engineEnv(process.env) }
+      );
+      const data = JSON.parse(output.trim()) as {
+        core_installed?: boolean; analyzer?: string; core_version?: string;
+        core_sha256?: string | null; analyzer_sha256?: string | null;
+      };
+      this.coreInstalled = data.core_installed ?? true;
+      this.coreAnalyzer = data.analyzer || 'unknown';
+      this.coreSource = data.core_version || 'github_api';
+      this.coreSha256 = data.core_sha256 ?? null;
+      this.analyzerSha256 = data.analyzer_sha256 ?? null;
+    } catch (err) {
+      this.coreInstalled = true;
+      this.coreAnalyzer = 'error';
+      this.coreInstallError = err instanceof Error ? err.message : String(err);
+    }
+  }
 
-    this.coreInstalled = false;
-    this.coreAnalyzer = 'not_configured';
+  /** /api/health deploy.engine：引擎来源、包 sha256、是否可用（真实解压 / 校验一次） */
+  getEngineStatus(): EngineStatus {
+    return this.engine.status();
+  }
+
+  getSectorCatalogStatus(): SectorCatalogStatus {
+    return this.sectorCatalog.status();
   }
 
   getPythonInfo(): { available: boolean; version: string | null; path: string | null } {
@@ -162,8 +169,13 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       return Promise.reject(new Error('本地Python环境不可用'));
     }
-    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-    const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
+    let engine: EngineLocation;
+    try {
+      engine = this.engine.resolve();   // 引擎不可用直接报错，绝不降级
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    const args = [engine.script, code, '--adjustment', opts.adjustment ?? 'qfq'];
     let asOf: string | undefined;
     try {
       asOf = assertAsOf(opts.asOf);
@@ -173,10 +185,10 @@ export class StockAnalysisService implements OnModuleInit {
     if (asOf) args.push('--as-of', asOf);
     // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
     return runProcess(this.pythonBinary.path, args, {
-      cwd: process.cwd(),
+      cwd: engine.workdir,
       timeoutMs: PY_TIMEOUT_MS,
       signal: opts.signal,
-      env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
+      env: engineEnv({ ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined }),
     }).then((r) => {
       if (r.killed === 'timeout') throw new Error(`Python 分析超时（>${PY_TIMEOUT_MS / 1000} 秒），已终止进程`);
       if (r.killed === 'aborted') throw new Error('分析已中止，Python 进程已终止');
@@ -217,8 +229,13 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       return Promise.reject(new Error('本地Python环境不可用'));
     }
-    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-    const args = [scriptPath, '--mode', 'market'];
+    let engine: EngineLocation;
+    try {
+      engine = this.engine.resolve();
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    const args = [engine.script, '--mode', 'market'];
     let checked: string | undefined;
     try {
       checked = assertAsOf(asOf);
@@ -227,9 +244,9 @@ export class StockAnalysisService implements OnModuleInit {
     }
     if (checked) args.push('--as-of', checked);
     return runProcess(this.pythonBinary.path, args, {
-      cwd: process.cwd(),
+      cwd: engine.workdir,
       timeoutMs: PY_TIMEOUT_MS,
-      env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
+      env: engineEnv({ ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined }),
     }).then((r) => {
       if (r.killed) throw new Error(`大盘分析超时（>${PY_TIMEOUT_MS / 1000} 秒），已终止进程`);
       if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `大盘分析退出码 ${r.exitCode}`);

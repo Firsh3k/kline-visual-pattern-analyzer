@@ -236,7 +236,8 @@ export class PostgresWatchlistStore implements WatchlistStore {
     if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`非法表名：${table}`);
     this.metaTable = `${table}_meta`;
     if (typeof urlOrSql === 'string') {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // postgres 是平台包带进来的间接依赖（runtime-deps.json 登记），必须懒加载：驱动缺失时只让自选股 fail-closed，不能改成静态 import（模块加载期就会崩）
+      // eslint-disable-next-line import/no-extraneous-dependencies, @typescript-eslint/no-require-imports
       const postgres = require('postgres');
       this.sql = postgres(urlOrSql, PG_CLIENT_OPTIONS);
     } else {
@@ -398,6 +399,8 @@ export class UnavailableWatchlistStore implements WatchlistStore {
  */
 export function createWatchlistStore(
   env: Record<string, string | undefined>,
+  // 懒加载 postgres 的原因同上（平台 lint 禁止 require，这里有意保留并注明）
+  // eslint-disable-next-line import/no-extraneous-dependencies, @typescript-eslint/no-require-imports
   loadDriver: () => any = () => require('postgres'),
 ): WatchlistStore {
   if (env.WATCHLIST_STORE === 'memory') return new MemoryWatchlistStore();

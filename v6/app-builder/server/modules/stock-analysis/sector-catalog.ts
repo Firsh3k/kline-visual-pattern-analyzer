@@ -2,17 +2,19 @@
  * FIR-41 第 4 项：板块扫描范围（服务端统一维护，无 Nest 依赖，tests/v6/test_sector_catalog.js 直接测试）。
  *
  * - 清单来自 sector_data/catalog.json（scripts/build_sector_catalog.py 从仓库 sector_data/ 生成，CI 校验一致）。
+ *   服务读的是它的内嵌副本 sector-catalog.data.ts：平台只部署 main.js 沿 import 能追踪到的文件，
+ *   按 cwd 读 json 在线上会找不到（2026-10-26 诊断）。sha256 与 catalog.json 字节一致，/api/health 报告。
  * - 同花顺板块都带来源、数据日期；是否“已核对”按权威核对日期与今天（Asia/Shanghai）实时计算：
  *   与 core.sector_validation 的 SectorProvenance.get_freshness_level 同一规则（≤7 天 / ≤30 天 / 更久），
  *   有跨运行时测试。从未核对、核对有差异、核对已过期的，一律不显示“已核对”。
  * - 人工样例没有来源，永远标“人工样例”。
  * - 板块成分只是“扫描哪些股票”，每只股票的结论仍 100% 来自 Python Core（与个股页同源）。
  */
+import { createHash } from 'crypto';
 import * as fs from 'fs';
-import * as path from 'path';
 import { InvalidRequestError } from './stock-analysis.pure';
+import { SECTOR_CATALOG_JSON, SECTOR_CATALOG_SHA256 } from './sector-catalog.data';
 
-export const SECTOR_CATALOG_REL = path.join('sector_data', 'catalog.json');
 export const MAX_SCAN_CODES = 200;          // 与 ScanJobManager 默认 maxCodes 一致
 
 export type SectorStatus = 'verified' | 'unverified' | 'mismatch' | 'stale' | 'sample';
@@ -140,16 +142,40 @@ export function sectorView(s: CatalogSector, today: string, fd = { fresh: 7, agi
   };
 }
 
+/** 清单原文：内嵌副本（线上）或指定文件（测试） */
+export interface SectorCatalogSource {
+  json: string;
+  sha256: string;
+}
+
+export const EMBEDDED_SECTOR_CATALOG: SectorCatalogSource = { json: SECTOR_CATALOG_JSON, sha256: SECTOR_CATALOG_SHA256 };
+
+export interface SectorCatalogStatus {
+  ready: boolean;
+  sha256: string | null;
+  error: string | null;
+}
+
 export class SectorCatalogStore {
   private catalog: SectorCatalog | null = null;
   private error: string | null = null;
+  private sha: string | null = null;
 
-  constructor(private readonly file: string = path.join(process.cwd(), SECTOR_CATALOG_REL)) {}
+  /** source：默认内嵌副本；传文件路径时读该文件（测试用） */
+  constructor(private readonly source: SectorCatalogSource | string = EMBEDDED_SECTOR_CATALOG) {}
 
   /** 读取并校验；失败只影响板块扫描（fail-closed），不影响服务启动 */
   load(): void {
     try {
-      const data = JSON.parse(fs.readFileSync(this.file, 'utf8')) as SectorCatalog;
+      let text: string;
+      if (typeof this.source === 'string') {
+        text = fs.readFileSync(this.source, 'utf8');
+      } else {
+        text = this.source.json;
+        if (createHash('sha256').update(text, 'utf8').digest('hex') !== this.source.sha256) throw new Error('内嵌清单与 SECTOR_CATALOG_SHA256 不符');
+      }
+      this.sha = createHash('sha256').update(text, 'utf8').digest('hex');
+      const data = JSON.parse(text) as SectorCatalog;
       if (data.schema !== 'sector-catalog-1' || !Array.isArray(data.sectors)) throw new Error('板块清单格式不对');
       for (const s of data.sectors) {
         if (s.kind === 'ths_concept' && (!s.source || !s.as_of)) throw new Error(`同花顺板块 ${s.name} 缺少来源或数据日期`);
@@ -159,8 +185,15 @@ export class SectorCatalogStore {
       this.error = null;
     } catch (err) {
       this.catalog = null;
+      this.sha = null;
       this.error = `板块清单不可用：${err instanceof Error ? err.message : String(err)}`;
     }
+  }
+
+  /** /api/health 用：清单能否使用、内容 sha256（与仓库 sector_data/catalog.json 比对） */
+  status(): SectorCatalogStatus {
+    if (!this.catalog) this.load();
+    return { ready: !!this.catalog, sha256: this.catalog ? this.sha : null, error: this.catalog ? null : this.error };
   }
 
   private need(): SectorCatalog {

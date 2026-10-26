@@ -1171,15 +1171,311 @@ function ind_vma20(data) {
   return data.slice(-20).reduce((s, d) => s + d.volume, 0) / 20;
 }
 
-// ============ 形态匹配（细化版） ============
+// ============ V5 Swing Pivot Engine（与Python端一致） ============
+const PIVOT_LEFT_BARS = 5;
+const PIVOT_RIGHT_BARS = 5;
+const MIN_HS_HEAD_PROMINENCE = 0.03; // FIR-24: 头部突出度最小3%
+
+function detectSwingPivots(data, leftBars = PIVOT_LEFT_BARS, rightBars = PIVOT_RIGHT_BARS) {
+  const pivots = [];
+  const n = data.length;
+  for (let i = leftBars; i < n - rightBars; i++) {
+    // Swing High
+    let isHigh = true;
+    for (let j = i - leftBars; j <= i + rightBars; j++) {
+      if (j !== i && data[j].high >= data[i].high) { isHigh = false; break; }
+    }
+    if (isHigh) {
+      pivots.push({ index: i, date: data[i].day, price: data[i].high, type: 'swing_high', confirmed: true });
+      continue;
+    }
+    // Swing Low
+    let isLow = true;
+    for (let j = i - leftBars; j <= i + rightBars; j++) {
+      if (j !== i && data[j].low <= data[i].low) { isLow = false; break; }
+    }
+    if (isLow) {
+      pivots.push({ index: i, date: data[i].day, price: data[i].low, type: 'swing_low', confirmed: true });
+    }
+  }
+  return pivots;
+}
+
+// V5: W底检测（基于Swing Pivot，与Python端一致）
+function detectWBottomV5(data, pivots) {
+  const results = [];
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < lows.length - 1; i++) {
+    const l1 = lows[i], l2 = lows[i + 1];
+    // 两底差异 ≤5%
+    if (l1.price <= 0 || Math.abs(l2.price - l1.price) / l1.price > 0.05) continue;
+    // 第二底不创新低
+    if (l2.price < l1.price * 0.97) continue;
+    // 颈线：两底之间的最高点（用high pivot）
+    const betweenHighs = highs.filter(h => l1.index < h.index && h.index < l2.index);
+    if (betweenHighs.length === 0) continue;
+    const neck = betweenHighs.reduce((max, h) => h.price > max.price ? h : max, betweenHighs[0]);
+    const neckline = neck.price;
+
+    // 突破状态
+    const broken = curPrice > neckline * 0.98;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      if (data[j-1].close <= neckline && data[j].close > neckline) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentLow = Math.min(...data.slice(breakoutDay, last+1).map(d => d.low));
+      const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+      let belowCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close < neckline) belowCount++;
+      if (belowCount >= 3 && curPrice < neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = (l2.price >= l1.price ? 30 : 10) + (broken ? 40 : 15) + (breakoutDay !== null ? 30 : 15);
+    const target = neckline + (neckline - Math.min(l1.price, l2.price));
+    const stopLoss = Math.min(l1.price, l2.price) * 0.98;
+
+    results.push({
+      pattern_id: 'w_bottom', pattern_name: 'W底', direction: 'bull',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左底', date: l1.date, price: l1.price },
+        { name: '右底', date: l2.date, price: l2.price },
+        { name: '颈线点', date: neck.date, price: neck.price },
+      ],
+      notes: `W底：左底${l1.price.toFixed(2)} 右底${l2.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: 头肩底检测（基于Swing Pivot，与Python端一致）
+function detectHSBottomV5(data, pivots) {
+  const results = [];
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < lows.length - 2; i++) {
+    const ls = lows[i], head = lows[i+1], rs = lows[i+2];
+    // 头部低于左肩
+    if (head.price >= ls.price) continue;
+    // 右肩高于头部
+    if (rs.price <= head.price) continue;
+    // 左右肩对称 ≤20%
+    if (ls.price <= 0 || Math.abs(ls.price - rs.price) / ls.price > 0.20) continue;
+    // FIR-24: 头部突出度 ≥3%
+    const avgShoulder = (ls.price + rs.price) / 2;
+    const headProminence = Math.abs(head.price - avgShoulder) / avgShoulder;
+    if (headProminence < MIN_HS_HEAD_PROMINENCE) continue;
+
+    // 颈线两点
+    const leftBetween = highs.filter(h => ls.index < h.index && h.index < head.index);
+    if (leftBetween.length === 0) continue;
+    const ln = leftBetween.reduce((max, h) => h.price > max.price ? h : max, leftBetween[0]);
+    const rightBetween = highs.filter(h => head.index < h.index && h.index < rs.index);
+    if (rightBetween.length === 0) continue;
+    const rn = rightBetween.reduce((max, h) => h.price > max.price ? h : max, rightBetween[0]);
+
+    // 倾斜颈线
+    const slope = rn.index !== ln.index ? (rn.price - ln.price) / (rn.index - ln.index) : 0;
+    const neckline = ln.price + slope * (last - ln.index);
+
+    const broken = curPrice > neckline * 0.98;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      const prevNeck = ln.price + slope * (j-1 - ln.index);
+      const curNeck = ln.price + slope * (j - ln.index);
+      if (data[j-1].close <= prevNeck && data[j].close > curNeck) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentLow = Math.min(...data.slice(breakoutDay, last+1).map(d => d.low));
+      const isRetest = recentLow <= neckline * 1.02 && curPrice <= neckline * 1.08;
+      let belowCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close < neckline) belowCount++;
+      if (belowCount >= 3 && curPrice < neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = 20 + 20 + 20 + (broken ? 40 : 10);
+    const target = neckline + (neckline - head.price);
+    const stopLoss = head.price * 0.98;
+
+    results.push({
+      pattern_id: 'hs_bottom', pattern_name: '头肩底', direction: 'bull',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左肩', date: ls.date, price: ls.price },
+        { name: '头', date: head.date, price: head.price },
+        { name: '右肩', date: rs.date, price: rs.price },
+        { name: '左颈线点', date: ln.date, price: ln.price },
+        { name: '右颈线点', date: rn.date, price: rn.price },
+      ],
+      notes: `头肩底：左肩${ls.price.toFixed(2)} 头${head.price.toFixed(2)} 右肩${rs.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: M头检测（基于Swing Pivot）
+function detectMTopV5(data, pivots) {
+  const results = [];
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < highs.length - 1; i++) {
+    const h1 = highs[i], h2 = highs[i+1];
+    if (h1.price <= 0 || Math.abs(h2.price - h1.price) / h1.price > 0.05) continue;
+    if (h2.price > h1.price * 1.03) continue;
+    const betweenLows = lows.filter(l => h1.index < l.index && l.index < h2.index);
+    if (betweenLows.length === 0) continue;
+    const neck = betweenLows.reduce((min, l) => l.price < min.price ? l : min, betweenLows[0]);
+    const neckline = neck.price;
+
+    const broken = curPrice < neckline * 1.02;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      if (data[j-1].close >= neckline && data[j].close < neckline) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentHigh = Math.max(...data.slice(breakoutDay, last+1).map(d => d.high));
+      const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+      let aboveCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close > neckline) aboveCount++;
+      if (aboveCount >= 3 && curPrice > neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = (h2.price <= h1.price ? 30 : 10) + (broken ? 40 : 15) + (breakoutDay !== null ? 30 : 15);
+    const target = neckline - (Math.max(h1.price, h2.price) - neckline);
+    const stopLoss = Math.max(h1.price, h2.price) * 1.02;
+
+    results.push({
+      pattern_id: 'm_top', pattern_name: 'M头', direction: 'bear',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左顶', date: h1.date, price: h1.price },
+        { name: '右顶', date: h2.date, price: h2.price },
+        { name: '颈线点', date: neck.date, price: neck.price },
+      ],
+      notes: `M头：左顶${h1.price.toFixed(2)} 右顶${h2.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// V5: 头肩顶检测（基于Swing Pivot）
+function detectHSTopV5(data, pivots) {
+  const results = [];
+  const highs = pivots.filter(p => p.type === 'swing_high').sort((a, b) => a.index - b.index);
+  const lows = pivots.filter(p => p.type === 'swing_low').sort((a, b) => a.index - b.index);
+  const n = data.length;
+  const last = n - 1;
+  const curPrice = data[last].close;
+
+  for (let i = 0; i < highs.length - 2; i++) {
+    const ls = highs[i], head = highs[i+1], rs = highs[i+2];
+    if (head.price <= ls.price) continue;
+    if (rs.price >= head.price) continue;
+    if (ls.price <= 0 || Math.abs(ls.price - rs.price) / ls.price > 0.20) continue;
+    const avgShoulder = (ls.price + rs.price) / 2;
+    const headProminence = Math.abs(head.price - avgShoulder) / avgShoulder;
+    if (headProminence < MIN_HS_HEAD_PROMINENCE) continue;
+
+    const leftBetween = lows.filter(l => ls.index < l.index && l.index < head.index);
+    if (leftBetween.length === 0) continue;
+    const ln = leftBetween.reduce((min, l) => l.price < min.price ? l : min, leftBetween[0]);
+    const rightBetween = lows.filter(l => head.index < l.index && l.index < rs.index);
+    if (rightBetween.length === 0) continue;
+    const rn = rightBetween.reduce((min, l) => l.price < min.price ? l : min, rightBetween[0]);
+
+    const slope = rn.index !== ln.index ? (rn.price - ln.price) / (rn.index - ln.index) : 0;
+    const neckline = ln.price + slope * (last - ln.index);
+
+    const broken = curPrice < neckline * 1.02;
+    let stage = 'PRE_BREAK';
+    let breakoutDay = null;
+    for (let j = Math.max(1, last - 10); j <= last; j++) {
+      const prevNeck = ln.price + slope * (j-1 - ln.index);
+      const curNeck = ln.price + slope * (j - ln.index);
+      if (data[j-1].close >= prevNeck && data[j].close < curNeck) {
+        breakoutDay = j; break;
+      }
+    }
+    if (broken && breakoutDay !== null) {
+      const daysSince = last - breakoutDay;
+      const recentHigh = Math.max(...data.slice(breakoutDay, last+1).map(d => d.high));
+      const isRetest = recentHigh >= neckline * 0.98 && curPrice >= neckline * 0.92;
+      let aboveCount = 0;
+      for (let j = breakoutDay+1; j <= last; j++) if (data[j].close > neckline) aboveCount++;
+      if (aboveCount >= 3 && curPrice > neckline) stage = 'FAILED_BREAK';
+      else if (isRetest) stage = 'RETEST';
+      else stage = daysSince === 0 ? 'BREAKOUT_DAY' : 'POST_BREAK';
+    }
+
+    const score = 20 + 20 + 20 + (broken ? 40 : 10);
+    const target = neckline - (head.price - neckline);
+    const stopLoss = head.price * 1.02;
+
+    results.push({
+      pattern_id: 'hs_top', pattern_name: '头肩顶', direction: 'bear',
+      stage, score: Math.min(100, score), confidence: score >= 80 ? 'S' : score >= 60 ? 'A' : 'B',
+      neckline_price: neckline, breakout_price: breakoutDay !== null ? data[breakoutDay].close : null,
+      target_price: target, stop_loss: stopLoss,
+      key_points: [
+        { name: '左肩', date: ls.date, price: ls.price },
+        { name: '头', date: head.date, price: head.price },
+        { name: '右肩', date: rs.date, price: rs.price },
+        { name: '左颈线点', date: ln.date, price: ln.price },
+        { name: '右颈线点', date: rn.date, price: rn.price },
+      ],
+      notes: `头肩顶：左肩${ls.price.toFixed(2)} 头${head.price.toFixed(2)} 右肩${rs.price.toFixed(2)} 颈线${neckline.toFixed(2)}`,
+    });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
+// ============ 形态匹配（V5统一版，与Python端一致） ============
 function matchPatterns(data, ind) {
   const n = data.length;
   const last = n - 1;
   const results = {};
-  const lookback = Math.min(80, n - 1);
+  const lookback = Math.min(250, n);  // V5: 统一使用250根，与Python端一致
   const seg = data.slice(n - lookback);
-  const lows = seg.map(d => d.low);
-  const highs = seg.map(d => d.high);
+  const lows = seg.map(d => d.low);   // 旧算法fallback仍需要
+  const highs = seg.map(d => d.high); // 旧算法fallback仍需要
   const curPrice = data[last].close;
 
   // ===== 1. 均线多头排列 =====
@@ -1729,6 +2025,54 @@ function matchBearPatterns(data, ind) {
     }
   }
   results.hs_top = hsTop;
+
+  // ===== V5统一算法覆盖（与Python端一致）=====
+  // 所有V5代码集中在此，避免部署环境重构导致跨代码段变量丢失
+  try {
+    const v5Lookback = Math.min(250, n);
+    const v5Seg = data.slice(n - v5Lookback);
+    const v5Pivots = detectSwingPivots(v5Seg);
+    const v5GlobalPivots = v5Pivots.map(p => ({ ...p, index: p.index + (n - v5Lookback) }));
+    const v5W = detectWBottomV5(data, v5GlobalPivots);
+    const v5HS = detectHSBottomV5(data, v5GlobalPivots);
+    const v5M = detectMTopV5(data, v5GlobalPivots);
+    const v5HSTop = detectHSTopV5(data, v5GlobalPivots);
+
+    function applyV5Result(oldDetail, v5Patterns) {
+      if (!v5Patterns || v5Patterns.length === 0) return oldDetail;
+      const p = v5Patterns[0];
+      return {
+        score: p.score,
+        stage: `${p.pattern_name} - ${p.stage} (V5)`,
+        outlook: p.notes,
+        action: p.stage === 'BREAKOUT_DAY' || p.stage === 'POST_BREAK' ?
+                (p.direction === 'bull' ? '持股待涨' : '建议止盈止损') :
+                p.stage === 'RETEST' ? (p.direction === 'bull' ? '回踩确认，可加仓' : '回抽确认，减仓') :
+                p.stage === 'PRE_BREAK' ? (p.direction === 'bull' ? '关注颈线突破' : '警惕跌破颈线') : '观望',
+        points: [
+          ...p.key_points.map(kp => ({ label: kp.name, value: kp.price.toFixed(2) })),
+          { label: '当前颈线', value: p.neckline_price.toFixed(2) },
+          { label: '目标价', value: p.target_price.toFixed(2) },
+          { label: '止损价', value: p.stop_loss.toFixed(2) },
+        ],
+        markers: {
+          points: p.key_points.map(kp => ({
+            idx: data.findIndex(d => d.day === kp.date),
+            price: kp.price,
+            label: kp.name,
+            color: kp.name === '头' ? '#e74c3c' : kp.name.includes('颈') ? '#f39c12' : '#3498db'
+          })).filter(m => m.idx >= 0),
+          lines: [{ price: p.neckline_price, label: `${p.pattern_name}颈线(V5)`, color: '#f39c12' }]
+        }
+      };
+    }
+    results.w_bottom = applyV5Result(results.w_bottom, v5W);
+    results.hs_bottom = applyV5Result(results.hs_bottom, v5HS);
+    results.m_top = applyV5Result(results.m_top, v5M);
+    results.hs_top = applyV5Result(results.hs_top, v5HSTop);
+  } catch(v5Err) {
+    console.warn('V5形态检测失败，使用旧算法结果:', v5Err);
+  }
 
   // ===== 4. 平台破位 =====
   let pbDown = { score: 0, stage: '', points: [], outlook: '', action: '', markers: { points: [], lines: [] } };
@@ -2616,14 +2960,20 @@ function handleCSV(e) {
 function calcAttentionScore(data, ind, matches, vol, bearMatches, macdDiv, volDiv, neckConfirm) {
   const n = data.length;
   const last = n - 1;
-  const sorted = Object.entries(matches).sort((a, b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a, b) => b[1].score - a[1].score);
-  const bestId = sorted[0][0];
-  const bestDetail = sorted[0][1];
-  const bestScore = bestDetail.score;
+  // 空值保护：如果没有任何形态匹配，返回默认低分
+  const matchEntries = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0);
+  const bearMatchEntries = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0);
+  if (matchEntries.length === 0 && bearMatchEntries.length === 0) {
+    return { score: 0, grade: 'D', label: '无明显形态', breakdown: [], advice: '观望', bullScore: 0, bearScore: 0, bestId: '', bestStage: '' };
+  }
+  const sorted = matchEntries.sort((a, b) => b[1].score - a[1].score);
+  const bearSorted = bearMatchEntries.sort((a, b) => b[1].score - a[1].score);
+  const bestId = sorted[0] ? sorted[0][0] : (bearSorted[0] ? bearSorted[0][0] : '');
+  const bestDetail = sorted[0] ? sorted[0][1] : (bearSorted[0] ? bearSorted[0][1] : { score: 0, stage: '' });
+  const bestScore = bestDetail.score || 0;
   const bestStage = bestDetail.stage || '';
-  const bearBestScore = bearSorted[0][1].score;
-  const bearBestId = bearSorted[0][0];
+  const bearBestScore = bearSorted[0] ? bearSorted[0][1].score : 0;
+  const bearBestId = bearSorted[0] ? bearSorted[0][0] : '';
   const breakdown = [];
 
   // 1. 基础分：形态匹配度
@@ -2744,22 +3094,32 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   const cls = change >= 0 ? 'up' : 'down';
 
   // 最佳匹配（综合上升和下降形态）
-  const sorted = Object.entries(matches).sort((a, b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a, b) => b[1].score - a[1].score);
-  const bullBestScore = sorted[0][1].score;
-  const bearBestScore = bearSorted[0][1].score;
+  const sorted = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0).sort((a, b) => b[1].score - a[1].score);
+  const bearSorted = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0).sort((a, b) => b[1].score - a[1].score);
+  const bullBestScore = sorted[0] ? sorted[0][1].score : 0;
+  const bearBestScore = bearSorted[0] ? bearSorted[0][1].score : 0;
   const isBearDominant = bearBestScore > bullBestScore && bearBestScore >= 50;
   let best, bestDetail, bestScore, bestInterp, bestType;
-  if (isBearDominant) {
+  if (isBearDominant && bearSorted.length > 0) {
+    best = BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]);
+    bestDetail = bearMatches[bearSorted[0][0]];
+    bestScore = bestDetail.score;
+    bestType = 'bear';
+  } else if (sorted.length > 0) {
+    best = PATTERNS.find(p => p.id === sorted[0][0]);
+    bestDetail = matches[sorted[0][0]];
+    bestScore = bestDetail.score;
+    bestType = 'bull';
+  } else if (bearSorted.length > 0) {
     best = BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]);
     bestDetail = bearMatches[bearSorted[0][0]];
     bestScore = bestDetail.score;
     bestType = 'bear';
   } else {
-    best = PATTERNS.find(p => p.id === sorted[0][0]);
-    bestDetail = matches[sorted[0][0]];
-    bestScore = bestDetail.score;
-    bestType = 'bull';
+    best = { id: 'none', name: '无明显形态' };
+    bestDetail = { score: 0, stage: '' };
+    bestScore = 0;
+    bestType = 'none';
   }
 
   // 增强信号检测（依赖bestDetail）
@@ -2784,15 +3144,15 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
   }
 
   // 分别计算底部（买入）和顶部（卖出）的环境适配度
-  const bullBestId = sorted[0][0];
-  const bullBestPattern = PATTERNS.find(p => p.id === bullBestId);
-  const bearBestId = bearSorted[0][0];
-  const bearBestPattern = BEAR_PATTERNS.find(p => p.id === bearBestId);
-  const bullEnvAccuracy = calcEnvAccuracy(bullBestId, bullBestScore, marketEnv);
-  const bearEnvAccuracy = calcEnvAccuracy(bearBestId, bearBestScore, marketEnv);
+  const bullBestId = sorted.length > 0 ? sorted[0][0] : 'none';
+  const bullBestPattern = sorted.length > 0 ? PATTERNS.find(p => p.id === bullBestId) : null;
+  const bearBestId = bearSorted.length > 0 ? bearSorted[0][0] : 'none';
+  const bearBestPattern = bearSorted.length > 0 ? BEAR_PATTERNS.find(p => p.id === bearBestId) : null;
+  const bullEnvAccuracy = sorted.length > 0 ? calcEnvAccuracy(bullBestId, bullBestScore, marketEnv) : { historicalAccuracy: 0, scoreBonus: 0 };
+  const bearEnvAccuracy = bearSorted.length > 0 ? calcEnvAccuracy(bearBestId, bearBestScore, marketEnv) : { historicalAccuracy: 0, scoreBonus: 0 };
   // 综合买卖信号可信度 = 信号分 × 环境适配率
-  const buyAccuracy = Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100);
-  const sellAccuracy = Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100);
+  const buyAccuracy = sorted.length > 0 ? Math.round(bullBestScore * bullEnvAccuracy.historicalAccuracy / 100) : 0;
+  const sellAccuracy = bearSorted.length > 0 ? Math.round(bearBestScore * bearEnvAccuracy.historicalAccuracy / 100) : 0;
 
   // ===== 形态完成度与当前阶段 =====
   const patternReliability = best.reliability_pct || 75;
@@ -4679,10 +5039,13 @@ function calculateStockResult(result, marketEnv = null) {
   const matches = matchPatterns(result.data, ind);
   const bearMatches = matchBearPatterns(result.data, ind);
   const vol = analyzeVolume(result.data, ind);
-  const sorted = Object.entries(matches).sort((a,b) => b[1].score - a[1].score);
-  const bearSorted = Object.entries(bearMatches).sort((a,b) => b[1].score - a[1].score);
-  const isBearDom = bearSorted[0][1].score > sorted[0][1].score && bearSorted[0][1].score >= 50;
-  const bestDetail = isBearDom ? bearMatches[bearSorted[0][0]] : matches[sorted[0][0]];
+  // 空值保护：过滤掉score为0或无效的形态
+  const sorted = Object.entries(matches || {}).filter(([_, v]) => v && v.score > 0).sort((a,b) => b[1].score - a[1].score);
+  const bearSorted = Object.entries(bearMatches || {}).filter(([_, v]) => v && v.score > 0).sort((a,b) => b[1].score - a[1].score);
+  const hasBull = sorted.length > 0;
+  const hasBear = bearSorted.length > 0;
+  const isBearDom = hasBear && hasBull && bearSorted[0][1].score > sorted[0][1].score && bearSorted[0][1].score >= 50;
+  const bestDetail = isBearDom ? bearMatches[bearSorted[0][0]] : (hasBull ? matches[sorted[0][0]] : (hasBear ? bearMatches[bearSorted[0][0]] : { score: 0, stage: '' }));
   const bestType = isBearDom ? 'bear' : 'bull';
   const macdDiv = detectMACDDivergence(result.data, ind);
   const volDiv = detectVolumeDivergence(result.data, ind);
@@ -4694,21 +5057,23 @@ function calculateStockResult(result, marketEnv = null) {
 
   // 买卖信号可信度（需要大盘环境）
   let buyAccuracy = 0, sellAccuracy = 0, bullEnvRate = 0, bearEnvRate = 0;
-  if (marketEnv) {
+  if (marketEnv && hasBull) {
     const bullEnv = calcEnvAccuracy(sorted[0][0], sorted[0][1].score, marketEnv);
-    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
     bullEnvRate = bullEnv.historicalAccuracy;
-    bearEnvRate = bearEnv.historicalAccuracy;
     buyAccuracy = Math.round(sorted[0][1].score * bullEnv.historicalAccuracy / 100);
+  }
+  if (marketEnv && hasBear) {
+    const bearEnv = calcEnvAccuracy(bearSorted[0][0], bearSorted[0][1].score, marketEnv);
+    bearEnvRate = bearEnv.historicalAccuracy;
     sellAccuracy = Math.round(bearSorted[0][1].score * bearEnv.historicalAccuracy / 100);
   }
 
   return {
     code, name: result.name, price: last.close, pct,
-    bullScore: sorted[0][1].score,
-    bullName: PATTERNS.find(p => p.id === sorted[0][0]).name,
-    bearScore: bearSorted[0][1].score,
-    bearName: BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]).name,
+    bullScore: hasBull ? sorted[0][1].score : 0,
+    bullName: hasBull ? (PATTERNS.find(p => p.id === sorted[0][0]) || { name: sorted[0][0] }).name : '无',
+    bearScore: hasBear ? bearSorted[0][1].score : 0,
+    bearName: hasBear ? (BEAR_PATTERNS.find(p => p.id === bearSorted[0][0]) || { name: bearSorted[0][0] }).name : '无',
     buyAccuracy, sellAccuracy, bullEnvRate, bearEnvRate,
     attention: attention.score,
     level: attention.level,

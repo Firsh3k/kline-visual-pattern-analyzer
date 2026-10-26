@@ -1,0 +1,13 @@
+{
+  "name": "kline-v6-node-bff",
+  "version": "6.0.0",
+  "description": "K线形态分析 V6 Node.js BFF (App Builder)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  }
+}

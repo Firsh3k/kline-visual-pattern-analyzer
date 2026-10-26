@@ -32,7 +32,8 @@ export class StockAnalysisController {
       engine_commit: coreStatus.engineCommit,
       watchlist_store: await this.service.checkWatchlist(),
       custom_sectors_store: await this.service.checkCustomSectors(),
-      deploy: collectDeployInfo(),   // FIR-41 第 5 项：实际 cwd、运行时文件、页面 sha256（scripts/v6_verify_deploy.py 比对）
+      // FIR-41 第 5 项：实际 cwd、页面 sha256、内嵌引擎包 / 板块清单 sha256（scripts/v6_verify_deploy.py 比对）
+      deploy: collectDeployInfo(process.cwd(), this.service.getEngineStatus(), this.service.getSectorCatalogStatus()),
       timestamp: new Date().toISOString(),
     };
   }

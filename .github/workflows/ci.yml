@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # 部署核对测试要按历史版本（如 6a41532）算指纹
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -199,6 +201,7 @@ jobs:
         node tests/v6/test_bff_pure.js
         node tests/v6/test_scan_jobs.js
         node tests/v6/test_sector_catalog.js
+        node tests/v6/test_engine_bundle.js
 
     - name: Run FIR-19 multi-device sync regression tests
       run: |
@@ -233,6 +236,44 @@ jobs:
         node tests/v6/test_watchlist_store.js
         node tests/v6/test_watchlist_page.js
         node tests/v6/test_custom_sectors.js
+
+  # 2026-10-26 事故回归：妙搭部署过滤 .py、服务端只部署 main.js 能追踪到的文件、commit_task 强制 ESLint
+  platform-package:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js (platform runtime is Node 22)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Set up Python (platform runtime is Python 3.13)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install app dependencies from package-lock.json (same versions as the platform build)
+      working-directory: v6/app-builder
+      run: |
+        # lock 里的 resolved 是 npmmirror；换成 npmjs 公共源（包与版本不变，integrity 照样校验）
+        npm ci --ignore-scripts --no-audit --no-fund --replace-registry-host=registry.npmmirror.com --registry=https://registry.npmjs.org
+
+    - name: Runtime bundles match sources (engine-bundle.ts / sector-catalog.data.ts)
+      run: python scripts/build_runtime_bundles.py --check
+
+    - name: Platform ESLint (server, strict, same presets as Miaoda commit_task)
+      working-directory: v6/app-builder
+      run: npx eslint -c ../../tests/v6/platform-eslint.config.cjs server --max-warnings 0
+
+    - name: Typecheck server
+      working-directory: v6/app-builder
+      run: npx tsc -p tsconfig.node.json --noEmit
+
+    - name: Real nest build + platform-style deploy (nft trace, no .py) + boot + /api/health
+      run: |
+        npm install --prefix "$RUNNER_TEMP/nft" --no-audit --no-fund @vercel/nft@1.10.2
+        NFT_PATH="$RUNNER_TEMP/nft/node_modules" node tests/v6/test_platform_package.js
 
   cross-runtime-parity:
     runs-on: ubuntu-latest

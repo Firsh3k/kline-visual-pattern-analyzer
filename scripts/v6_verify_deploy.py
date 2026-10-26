@@ -10,7 +10,10 @@ V6 部署核对（FIR-41 第 5 项）：把线上 /api/health 的返回与“这
 - status=ok，core_analyzer=real_core
 - core_sha256 / analyzer_sha256 与 --ref 算出的一致（Python Core 与执行器）
 - deploy.page_sha256 与 --ref 的 client/public/v4/index.html 一致（浏览器实际拿到的页面）
-- deploy.files_found：页面、python_analyzer.py、core/ 都在服务的 cwd 下
+- deploy.files_found：该版本应有的运行时项都为 true（内嵌引擎包之后的版本：page / engine / sector_catalog；
+  之前的版本：page / analyzer / core / sector_catalog 在 cwd 下）
+- 内嵌引擎包之后的版本：deploy.engine.source=bundle 且 bundle_sha256 与 --ref 算出的一致；
+  deploy.sector_catalog_sha256 与 --ref 的 sector_data/catalog.json 一致
 - watchlist_store：kind=postgres 且 ready=true（--allow-watchlist-down 时只提示不判失败）
 
 退出码：0 完整通过；1 不通过（缺字段、类型不对也算）；3 部分核对（只在显式 --allow-legacy-health、
@@ -35,7 +38,7 @@ def _load_fingerprint():
 def verify(health, expected, allow_watchlist_down=False, allow_legacy_health=False):
     """返回 [(检查项, 结果 PASS/FAIL/WARN/SKIP, 说明)]
 
-    QA R77-1：结构必须严格——deploy 必须是对象、files_found 必须是对象且三个值严格为 true，
+    QA R77-1：结构必须严格——deploy 必须是对象、files_found 必须是对象且应有的键严格为 true，
     缺字段或类型不对一律 FAIL（逐项报告，不抛异常）。旧版本 health（没有 deploy）只有显式
     allow_legacy_health 时才把页面 / 运行时文件记为 SKIP，此时结论是“部分核对”，不是完整通过。
     """
@@ -77,6 +80,17 @@ def verify(health, expected, allow_watchlist_down=False, allow_legacy_health=Fal
                 detail = f"cwd={deploy.get('cwd')!r}"
                 detail += f"，以下不是 true：{ {k: found.get(k) for k in bad} }" if bad else f"，{' / '.join(need)} 均在"
                 check("runtime_files", not bad, detail)
+            want_engine = expected.get("engine_bundle_sha256")
+            if want_engine:
+                eng = deploy.get("engine")
+                eng = eng if isinstance(eng, dict) else {}
+                got = eng.get("bundle_sha256")
+                ok = eng.get("source") == "bundle" and isinstance(got, str) and got == want_engine
+                check("engine_bundle", ok, f"source={eng.get('source')!r} 线上 {got!r} / 应为 {want_engine}")
+                want_cat = expected.get("sector_catalog_sha256")
+                if want_cat:
+                    got = deploy.get("sector_catalog_sha256")
+                    check("sector_catalog_sha256", isinstance(got, str) and got == want_cat, f"线上 {got!r} / 应为 {want_cat}")
 
     wl = health.get("watchlist_store")
     wl = wl if isinstance(wl, dict) else {}

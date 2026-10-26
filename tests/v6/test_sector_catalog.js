@@ -35,7 +35,8 @@ function compile(file, requireMap) {
   return mod.exports;
 }
 const pure = compile('stock-analysis.pure.ts', {});
-const C = compile('sector-catalog.ts', { './stock-analysis.pure': pure });
+const DATA = compile('sector-catalog.data.ts', {});
+const C = compile('sector-catalog.ts', { './stock-analysis.pure': pure, './sector-catalog.data': DATA });
 const { ScanJobManager } = compile('scan-jobs.ts', { './stock-analysis.pure': pure });
 const WL = compile('watchlist-store.ts', {});
 const CS = compile('custom-sector-store.ts', { './watchlist-store': WL });
@@ -84,6 +85,30 @@ const ths = (over) => ({
     assert.ok(t.length >= 7 && sm.length >= 1);
     for (const s of t) assert.ok(s.source && /^\d{4}-\d{2}-\d{2}$/.test(s.as_of) && /^\d{6}$/.test(s.sector_code), s.name);
     for (const s of sm) assert.ok(!s.source && !s.as_of && !s.reconciled_at, s.name);
+  });
+
+  await test('服务默认读内嵌副本 sector-catalog.data.ts：与 catalog.json 逐字节一致（平台不部署按 cwd 读的 json）', () => {
+    const text = fs.readFileSync(CATALOG, 'utf8');
+    assert.strictEqual(DATA.SECTOR_CATALOG_JSON, text);
+    const sha = require('crypto').createHash('sha256').update(text).digest('hex');
+    assert.strictEqual(DATA.SECTOR_CATALOG_SHA256, sha);
+    const embedded = new C.SectorCatalogStore();
+    assert.deepStrictEqual(plain(embedded.list('2026-10-25')), plain(new C.SectorCatalogStore(CATALOG).list('2026-10-25')));
+    assert.deepStrictEqual(plain(embedded.status()), { ready: true, sha256: sha, error: null });
+    // 与 cwd 无关：换一个没有 sector_data/ 的工作目录照样可用
+    const cwd = process.cwd();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-cwd-'));
+    try { process.chdir(tmp); assert.strictEqual(new C.SectorCatalogStore().list('2026-10-25').sectors.length, embedded.list('2026-10-25').sectors.length); }
+    finally { process.chdir(cwd); fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  await test('内嵌副本被改过（sha256 对不上）→ 板块扫描 503，health 报不可用', () => {
+    const bad = new C.SectorCatalogStore({ json: DATA.SECTOR_CATALOG_JSON.replace('CRO', 'CR0'), sha256: DATA.SECTOR_CATALOG_SHA256 });
+    assert.throws(() => bad.list('2026-10-25'), (e) => e instanceof C.SectorCatalogUnavailableError && /SECTOR_CATALOG_SHA256/.test(e.message));
+    const st = bad.status();
+    assert.strictEqual(st.ready, false);
+    assert.strictEqual(st.sha256, null);
+    assert.ok(/不符/.test(st.error));
   });
 
   console.log('核对状态（服务端）');

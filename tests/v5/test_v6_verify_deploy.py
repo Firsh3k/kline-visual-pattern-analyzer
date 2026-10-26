@@ -26,11 +26,14 @@ def _good_health(fp):
         "analyzer_sha256": fp["analyzer_sha256"],
         "watchlist_store": {"kind": "postgres", "ready": True, "error": None},
         "deploy": {
-            "cwd": "/srv/app",
+            "cwd": "/opt/bytefaas",
             "node_version": "v22.21.0",
+            "page_path": "dist/client/v4/index.html",
             "page_sha256": fp["page_sha256"],
             "page_bytes": 1,
-            "files_found": {"page": True, "analyzer": True, "core": True, "sector_catalog": True},
+            "engine": {"source": "bundle", "bundle_sha256": fp["engine_bundle_sha256"], "file_count": 36, "error": None},
+            "sector_catalog_sha256": fp["sector_catalog_sha256"],
+            "files_found": {k: True for k in fp["runtime_files"]},
         },
     }
 
@@ -51,7 +54,7 @@ def test_each_mismatch_fails():
         "core_sha256": lambda h: h.update(core_sha256="0" * 64),
         "analyzer_sha256": lambda h: h.update(analyzer_sha256="0" * 64),
         "page_sha256": lambda h: h["deploy"].update(page_sha256="0" * 64),
-        "runtime_files": lambda h: h["deploy"]["files_found"].update(core=False),
+        "runtime_files": lambda h: h["deploy"]["files_found"].update(page=False),
         "core_analyzer": lambda h: h.update(core_analyzer="error"),
         "status": lambda h: h.update(status="degraded"),
         "watchlist_store": lambda h: h["watchlist_store"].update(ready=False),
@@ -74,8 +77,40 @@ def test_sector_catalog_required_when_ref_has_it(tmp_path, capsys):
     del h["deploy"]["files_found"]["sector_catalog"]
     assert _results(VD.verify(h, fp))["runtime_files"] == "FAIL"
     # 更早的版本（仓库里还没有板块清单）不要求
-    old = dict(fp, runtime_files=["page", "analyzer", "core"])
+    old = dict(fp, runtime_files=["page", "engine"])
     assert _results(VD.verify(h, old))["runtime_files"] == "PASS"
+
+
+def test_engine_bundle_must_match_ref_and_come_from_bundle():
+    """平台打包修复之后的版本：引擎必须来自内嵌包且 sha256 与该版本源码算出的一致；板块清单 sha256 一致"""
+    fp = FP.fingerprint("HEAD")
+    assert fp["engine_bundle_sha256"] and fp["runtime_files"] == ["page", "engine", "sector_catalog"]
+    cases = {
+        "引擎包 sha256 不对": ("engine_bundle", lambda h: h["deploy"]["engine"].update(bundle_sha256="0" * 64)),
+        "引擎来自 cwd 文件": ("engine_bundle", lambda h: h["deploy"]["engine"].update(source="files", bundle_sha256=None)),
+        "deploy.engine 缺失": ("engine_bundle", lambda h: h["deploy"].pop("engine")),
+        "引擎不可用": ("runtime_files", lambda h: h["deploy"]["files_found"].update(engine=False)),
+        "板块清单 sha256 不对": ("sector_catalog_sha256", lambda h: h["deploy"].update(sector_catalog_sha256="1" * 64)),
+        "板块清单不可用": ("sector_catalog_sha256", lambda h: h["deploy"].update(sector_catalog_sha256=None)),
+    }
+    for label, (key, mutate) in cases.items():
+        h = _good_health(fp)
+        mutate(h)
+        res = _results(VD.verify(h, fp))
+        assert res[key] == "FAIL", (label, res)
+        assert [k for k, v in res.items() if v != "PASS"] == [key], (label, res)
+
+
+def test_legacy_ref_keeps_cwd_file_checks():
+    """内嵌引擎包之前的版本（如 6a41532）仍按 cwd 文件核对，不要求 deploy.engine"""
+    old = FP.fingerprint("6a41532")
+    assert old["engine_bundle_sha256"] is None
+    assert old["runtime_files"] == ["page", "analyzer", "core", "sector_catalog"]
+    h = _good_health(old)
+    del h["deploy"]["engine"], h["deploy"]["sector_catalog_sha256"]
+    assert set(_results(VD.verify(h, old)).values()) == {"PASS"}
+    h["deploy"]["files_found"]["core"] = False
+    assert _results(VD.verify(h, old))["runtime_files"] == "FAIL"
 
 
 def test_watchlist_down_is_warning_when_allowed():
@@ -99,7 +134,7 @@ def test_r77_1_missing_or_broken_deploy_is_fail_not_pass(tmp_path, capsys):
     h = _good_health(fp); h["deploy"] = "BROKEN"; cases["deploy 不是对象"] = h
     h = _good_health(fp); h["deploy"]["files_found"]["page"] = "false"; cases["files_found.page 是字符串"] = h
     h = _good_health(fp); h["deploy"]["files_found"] = ["page"]; cases["files_found 不是对象"] = h
-    h = _good_health(fp); h["deploy"]["files_found"]["core"] = 1; cases["files_found.core 是 1"] = h
+    h = _good_health(fp); h["deploy"]["files_found"]["engine"] = 1; cases["files_found.engine 是 1"] = h
     h = _good_health(fp); h["deploy"]["page_sha256"] = None; cases["page_sha256 为空"] = h
     for label, health in cases.items():
         assert _cli(tmp_path, health) == 1, label

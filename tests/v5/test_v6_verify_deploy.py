@@ -77,7 +77,7 @@ def test_sector_catalog_required_when_ref_has_it(tmp_path, capsys):
     del h["deploy"]["files_found"]["sector_catalog"]
     assert _results(VD.verify(h, fp))["runtime_files"] == "FAIL"
     # 更早的版本（仓库里还没有板块清单）不要求
-    old = dict(fp, runtime_files=["page", "analyzer", "core"])
+    old = dict(fp, runtime_files=["page", "engine"])
     assert _results(VD.verify(h, old))["runtime_files"] == "PASS"
 
 
@@ -134,7 +134,7 @@ def test_r77_1_missing_or_broken_deploy_is_fail_not_pass(tmp_path, capsys):
     h = _good_health(fp); h["deploy"] = "BROKEN"; cases["deploy 不是对象"] = h
     h = _good_health(fp); h["deploy"]["files_found"]["page"] = "false"; cases["files_found.page 是字符串"] = h
     h = _good_health(fp); h["deploy"]["files_found"] = ["page"]; cases["files_found 不是对象"] = h
-    h = _good_health(fp); h["deploy"]["files_found"]["core"] = 1; cases["files_found.core 是 1"] = h
+    h = _good_health(fp); h["deploy"]["files_found"]["engine"] = 1; cases["files_found.engine 是 1"] = h
     h = _good_health(fp); h["deploy"]["page_sha256"] = None; cases["page_sha256 为空"] = h
     for label, health in cases.items():
         assert _cli(tmp_path, health) == 1, label

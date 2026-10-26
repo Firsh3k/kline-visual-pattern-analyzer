@@ -41,7 +41,7 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
 | `python_analyzer.py` | Python 执行器：health / analyze，调用 core，fail-closed（线上从内嵌包解压后运行，见下面“平台打包约束”） |
 | `server/main.ts` | NestJS 启动；注册 V4 页面中间件（`v4-page.ts`） |
 | `server/modules/stock-analysis/engine-bundle.ts` | **生成物，不要手改**：`core/**/*.py` + `python_analyzer.py` 的内嵌包（gzip + base64），由仓库根 `python3 scripts/build_runtime_bundles.py` 生成，CI 用 `--check` 校验与源码一致。改了 core 或执行器必须重新生成并一起提交 |
-| `server/modules/stock-analysis/engine.ts` | Python 引擎定位：把内嵌包解压到 `<TMPDIR>/kline-engine-<uid>/<bundle_sha256>/`（目录 0700、逐个文件校验 sha256、多一个文件也重建、并发安全），再 spawn python；失败直接报错，不降级。本地开发要直接跑工作区的 .py：设 `KLINE_ENGINE_SOURCE=files` |
+| `server/modules/stock-analysis/engine.ts` | Python 引擎定位：把内嵌包解压到 `<TMPDIR>/kline-engine-<uid>/`（父目录 0700）下的代号目录 `<bundle_sha256>.<代号>/`，由指针 `<bundle_sha256>.current` 指向；代号目录发布后不再改动或移动，并发修复不会挪走别人正在用的目录。每次调用 Python 前都完整校验当前目录（文件集合与每个文件 sha256，多一个文件也不行），不符就删掉这个坏目录、重新解压发布；失败直接报错，不降级。本地开发要直接跑工作区的 .py：设 `KLINE_ENGINE_SOURCE=files` |
 | `server/app.module.ts` | 根模块 |
 | `server/modules/stock-analysis/stock-analysis.controller.ts` | health/analyze/watchlist/scan 等 API |
 | `server/modules/stock-analysis/stock-analysis.service.ts` | child_process 调用 Python（核心） |
@@ -128,9 +128,15 @@ Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）
   内容与仓库里的 .py / catalog.json 逐字节一致（CI `--check`），Python 仍是唯一算法源。
 - `postgres` 驱动保持懒加载（缺失时只让自选股 / 自定义板块 fail-closed），`require` 处有注明原因的 eslint-disable。
 - CI `platform-package` 任务：`npm ci` → 平台同款 ESLint（`tests/v6/platform-eslint.config.cjs`）→ `tsc` →
-  `tests/v6/test_platform_package.js`（真实 `nest build`，按 nft 追踪结果裁剪出部署目录、删掉所有 .py，
-  在该目录里启动服务，`/api/health` 必须 `real_core` 且指纹全对、根路径返回仓库页面）。旧做法在这个测试里会复现
-  线上的 `not_configured` 和 “V4 page not found”。
+  `tests/v6/test_platform_package.js`：
+  - 构建：原样执行 `scripts/build.sh`。真实执行的有清理 dist、`nest build`、第 5 步产物准备（client/public → dist/dist/client、
+    run.sh）、第 6 步 `prune-smart.js` 依赖裁剪；用替身跳过、CI 不验证的只有平台专用的 4 步：`fullstack-cli action-plugin init`、
+    `gen:openapi`、`generate-api-routes` / `generate-page-routes`、vite 前端构建（`client/src` 是平台模板，不在仓库；本应用页面是静态页）。
+  - 部署：服务端只放 nft 从 `dist/server/main.js` 追踪到的文件，加上构建产出的 `dist/client`、`run.sh`、裁剪后的
+    `node_modules` / `package.json`（复制，不链接回源码依赖），没有任何 .py。
+  - 只用部署产物执行 `run.sh` 启动：`/api/health` 必须 `real_core` 且指纹全对、根路径返回仓库页面；
+    负例：裁剪产物缺一个运行时依赖 → 起不来；缺页面 → 核对判 FAIL、根路径 404。
+  旧做法在这个测试里会复现线上的 `not_configured` 和 “V4 page not found”。
 
 ## 板块核对流程（FIR-41 第 4 项）
 

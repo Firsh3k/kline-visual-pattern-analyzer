@@ -95,59 +95,150 @@ const fp = JSON.parse(execFileSync(PY, [path.join(ROOT, 'scripts', 'v6_fingerpri
   });
 
   console.log('解压与校验');
-  await test('在没有任何 .py 的 cwd 下：解压到 <root>/<sha256>/，Python health = real_core，core / 执行器指纹与指纹脚本一致', () => {
+  const FILES = E.decodeBundle(E.EMBEDDED_ENGINE_BUNDLE);
+  const SHA = B.ENGINE_BUNDLE_SHA256;
+  const GEN_RE = new RegExp(`^${SHA}\\.[0-9a-z]+-[0-9]+-[0-9a-f]{8}$`);
+  /** 父目录里的代号目录（不含指针、临时文件） */
+  const gens = (root) => fs.readdirSync(root).filter((n) => GEN_RE.test(n)).sort();
+  const pointer = (root) => path.join(root, fs.readlinkSync(path.join(root, `${SHA}.current`)));
+  const pyHealth = (loc) => JSON.parse(execFileSync(PY, [loc.script, '--mode', 'health'], { cwd: loc.workdir, env: E.engineEnv(process.env), encoding: 'utf8' }));
+  // 编译后的两个模块写到临时目录，子进程直接 require（与线上一样是普通 CommonJS 模块）
+  const modDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-mod-'));
+  tmpRoots.push(modDir);
+  fs.writeFileSync(path.join(modDir, 'engine-bundle.js'), compileSource('engine-bundle.ts'));
+  fs.writeFileSync(path.join(modDir, 'engine.js'), compileSource('engine.ts'));
+  const ENGINE_JS = JSON.stringify(path.join(modDir, 'engine.js'));
+  const childRun = (script) => new Promise((resolve) => {
+    const p = spawn(process.execPath, ['-e', script]);
+    let out = '', err = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => resolve({ code, out, err }));
+  });
+  const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+  await test('在没有任何 .py 的 cwd 下：解压到 <root>/<sha256>.<代号>/ 并由指针指向它，Python health = real_core，core / 执行器指纹与指纹脚本一致', () => {
     const root = freshRoot();
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-cwd-'));
     tmpRoots.push(cwd);
     const r = new E.EngineResolver({ cwd, root, env: {} });
     const loc = r.resolve();
     assert.strictEqual(loc.source, 'bundle');
-    assert.strictEqual(loc.workdir, path.join(root, B.ENGINE_BUNDLE_SHA256));
-    assert.strictEqual(loc.bundle_sha256, B.ENGINE_BUNDLE_SHA256);
+    assert.ok(GEN_RE.test(path.basename(loc.workdir)) && path.dirname(loc.workdir) === root, loc.workdir);
+    assert.strictEqual(pointer(root), loc.workdir);
+    assert.strictEqual(loc.bundle_sha256, SHA);
     assert.strictEqual(fs.statSync(root).mode & 0o777, 0o700);
-    const out = JSON.parse(execFileSync(PY, [loc.script, '--mode', 'health'], { cwd: loc.workdir, env: E.engineEnv(process.env), encoding: 'utf8' }));
+    const out = pyHealth(loc);
     assert.strictEqual(out.analyzer, 'real_core');
     assert.strictEqual(out.core_sha256, fp.core_sha256);
     assert.strictEqual(out.analyzer_sha256, fp.analyzer_sha256);
     // PYTHONDONTWRITEBYTECODE：跑过之后目录仍与包完全一致（没有 __pycache__）
-    assert.strictEqual(E.verifyEngineDir(loc.workdir, E.decodeBundle(E.EMBEDDED_ENGINE_BUNDLE)), null);
+    assert.strictEqual(E.verifyEngineDir(loc.workdir, FILES), null);
     const st = r.status();
-    assert.deepStrictEqual([st.ready, st.source, st.bundle_sha256, st.file_count, st.error], [true, 'bundle', B.ENGINE_BUNDLE_SHA256, B.ENGINE_BUNDLE_FILE_COUNT, null]);
+    assert.deepStrictEqual([st.ready, st.source, st.bundle_sha256, st.file_count, st.error], [true, 'bundle', SHA, B.ENGINE_BUNDLE_FILE_COUNT, null]);
   });
 
-  await test('第二次直接用缓存；目录被清掉（/tmp 清理）后下次调用自动重建', () => {
+  await test('同一 resolver 再次调用：目录完好 → 同一目录、不重写；目录被清掉（/tmp 清理）→ 自动重建', () => {
     const root = freshRoot();
     const r = new E.EngineResolver({ root, env: {} });
     const a = r.resolve();
     const mtime = fs.statSync(a.script).mtimeMs;
-    assert.strictEqual(r.resolve().script, a.script);
+    assert.strictEqual(r.resolve().workdir, a.workdir);
     assert.strictEqual(fs.statSync(a.script).mtimeMs, mtime);
     fs.rmSync(a.workdir, { recursive: true, force: true });
     const b = r.resolve();
-    assert.strictEqual(b.workdir, a.workdir);
-    assert.ok(fs.existsSync(b.script));
+    assert.strictEqual(E.verifyEngineDir(b.workdir, FILES), null);
+    assert.strictEqual(pointer(root), b.workdir);
   });
 
-  await test('已有目录被改过 / 多出同名模块 / 缺文件 → 校验不过，移走重建（不会用被动过的文件）', () => {
+  await test('QA R81-1：同一 resolver 第二次调用前目录被改（改内容 / 多出同名模块 json.py / 缺模块 / __pycache__ / 换成符号链接）→ 不会用被动过的目录：重建并返回校验通过的新目录', () => {
     const root = freshRoot();
-    const dir = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);
-    const files = E.decodeBundle(E.EMBEDDED_ENGINE_BUNDLE);
+    const r = new E.EngineResolver({ root, env: {} });
+    let loc = r.resolve();
     const tamper = [
-      () => fs.appendFileSync(path.join(dir, 'core', 'analysis.py'), '\n# x'),
-      () => fs.writeFileSync(path.join(dir, 'json.py'), 'raise SystemExit("hijack")'),
-      () => fs.unlinkSync(path.join(dir, 'core', 'signals.py')),
-      () => { fs.mkdirSync(path.join(dir, 'core', '__pycache__')); fs.writeFileSync(path.join(dir, 'core', '__pycache__', 'x.pyc'), 'x'); },
-      () => { fs.unlinkSync(path.join(dir, 'python_analyzer.py')); fs.symlinkSync('/etc/hostname', path.join(dir, 'python_analyzer.py')); },
+      (d) => fs.appendFileSync(path.join(d, 'core', 'analysis.py'), '\n# x'),
+      (d) => fs.writeFileSync(path.join(d, 'json.py'), 'raise SystemExit("QA_UNVERIFIED_MODULE_EXECUTED")'),
+      (d) => fs.unlinkSync(path.join(d, 'core', 'signals.py')),
+      (d) => { fs.mkdirSync(path.join(d, 'core', '__pycache__')); fs.writeFileSync(path.join(d, 'core', '__pycache__', 'x.pyc'), 'x'); },
+      (d) => { fs.unlinkSync(path.join(d, 'python_analyzer.py')); fs.symlinkSync('/etc/hostname', path.join(d, 'python_analyzer.py')); },
     ];
     for (const t of tamper) {
-      t();
-      assert.notStrictEqual(E.verifyEngineDir(dir, files), null);
-      assert.strictEqual(E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root), dir);
-      assert.strictEqual(E.verifyEngineDir(dir, files), null);
-      assert.ok(!fs.existsSync(path.join(dir, 'json.py')));
+      const before = loc.workdir;
+      t(before);
+      assert.notStrictEqual(E.verifyEngineDir(before, FILES), null);
+      loc = r.resolve();                      // 与线上一样：同一个长期存在的 resolver
+      assert.notStrictEqual(loc.workdir, before);
+      assert.strictEqual(E.verifyEngineDir(loc.workdir, FILES), null);
+      assert.strictEqual(r.status().ready, true);
+      assert.ok(!fs.existsSync(before), '被改过的目录应删除');
+      const out = pyHealth(loc);               // json.py 不会被执行
+      assert.strictEqual(out.analyzer, 'real_core');
+      assert.strictEqual(out.core_sha256, fp.core_sha256);
     }
-    // 只留下正式目录，临时 / 移走的目录都清理了
-    assert.deepStrictEqual(fs.readdirSync(root), [B.ENGINE_BUNDLE_SHA256]);
+    // 只留下一个有效目录和指针，临时目录都清理了
+    assert.deepStrictEqual(gens(root), [path.basename(loc.workdir)]);
+    assert.deepStrictEqual(fs.readdirSync(root).filter((n) => n.startsWith('.tmp-')), []);
+  });
+
+  await test('QA R81-2（确定性交错）：A 判定目录损坏后暂停 → 子进程 B 修好、发布并启动 Python → A 继续：A 不会挪走 / 删除 B 发布的有效目录，B 的消费者正常运行', () => {
+    const root = freshRoot();
+    const first = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);
+    fs.writeFileSync(path.join(first, 'json.py'), 'raise SystemExit(1)');   // 已有坏目录
+    let bPath = null;
+    const aPath = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root, {
+      afterVerifyFailed: (dir, reason) => {
+        assert.strictEqual(dir, first);
+        assert.ok(/多出文件/.test(reason), reason);
+        // A 暂停在这里：真实子进程 B 完成修复并发布，然后按返回的路径启动 Python（消费者）
+        const outB = execFileSync(process.execPath, ['-e', `
+          const { execFileSync } = require('child_process');
+          const E = require(${ENGINE_JS});
+          const dir = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, ${JSON.stringify(root)});
+          process.stdout.write(dir);`], { encoding: 'utf8' });
+        bPath = outB;
+        assert.notStrictEqual(bPath, first);
+        assert.strictEqual(E.verifyEngineDir(bPath, FILES), null);
+      },
+    });
+    // A 恢复后：看到 B 已发布的有效目录，直接用它，不另建、不移动
+    assert.strictEqual(aPath, bPath);
+    assert.strictEqual(pointer(root), bPath);
+    assert.strictEqual(E.verifyEngineDir(bPath, FILES), null);
+    assert.ok(!fs.existsSync(first));
+    const out = pyHealth({ script: path.join(bPath, 'python_analyzer.py'), workdir: bPath });
+    assert.strictEqual(out.analyzer, 'real_core');
+    assert.deepStrictEqual(gens(root), [path.basename(bPath)]);
+  });
+
+  await test('QA R81-2（真实并发）：坏目录上 B 暂停在“判定损坏之后”，A 修好并启动 Python；B 继续 → 用 A 的目录；A 的消费者全程不受影响', async () => {
+    const root = freshRoot();
+    const first = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);
+    fs.appendFileSync(path.join(first, 'core', 'signals.py'), '\n# tampered');
+    const marker = path.join(path.dirname(root), 'b-paused');
+    const go = path.join(path.dirname(root), 'b-go');
+    const pB = childRun(`
+      const fs = require('fs');
+      const E = require(${ENGINE_JS});
+      const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      const dir = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, ${JSON.stringify(root)}, {
+        afterVerifyFailed: () => { fs.writeFileSync(${JSON.stringify(marker)}, '1'); for (let i = 0; i < 400 && !fs.existsSync(${JSON.stringify(go)}); i++) sleep(25); },
+      });
+      process.stdout.write(dir);`);
+    for (let i = 0; i < 400 && !fs.existsSync(marker); i++) sleepSync(25);
+    assert.ok(fs.existsSync(marker), 'B 没有走到修复分支');
+    const aPath = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);       // A 修复并发布
+    const consumer = spawn(PY, [path.join(aPath, 'python_analyzer.py'), '--mode', 'health'], { cwd: aPath, env: E.engineEnv(process.env) });
+    let cOut = '';
+    consumer.stdout.on('data', (d) => { cOut += d; });
+    const cDone = new Promise((r) => consumer.on('close', r));
+    fs.writeFileSync(go, '1');                                               // B 继续
+    const b = await pB;
+    assert.strictEqual(b.code, 0, b.err);
+    assert.strictEqual(b.out, aPath, 'B 应直接用 A 已发布的有效目录');
+    assert.strictEqual(await cDone, 0);
+    assert.strictEqual(JSON.parse(cOut).analyzer, 'real_core');
+    assert.strictEqual(E.verifyEngineDir(aPath, FILES), null);
+    assert.deepStrictEqual(gens(root), [path.basename(aPath)]);
   });
 
   await test('父目录是符号链接 / 别人可写（权限不是 700）→ 拒绝，不往里解压', () => {
@@ -163,6 +254,17 @@ const fp = JSON.parse(execFileSync(PY, [path.join(ROOT, 'scripts', 'v6_fingerpri
     assert.throws(() => E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, wide), (e) => e instanceof E.EngineUnavailableError && /权限过宽/.test(e.message));
     assert.deepStrictEqual(fs.readdirSync(real), []);
     assert.deepStrictEqual(fs.readdirSync(wide), []);
+  });
+
+  await test('指针被改成指向父目录以外 / 别的名字 → 不跟随，重新发布', () => {
+    const root = freshRoot();
+    const outside = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, freshRoot());   // 一个内容有效但不在本父目录的目录
+    E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);
+    fs.unlinkSync(path.join(root, `${SHA}.current`));
+    fs.symlinkSync(outside, path.join(root, `${SHA}.current`));
+    const dir = E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, root);
+    assert.strictEqual(path.dirname(dir), root);
+    assert.strictEqual(pointer(root), dir);
   });
 
   console.log('包本身被改过 → 拒绝');
@@ -198,26 +300,16 @@ const fp = JSON.parse(execFileSync(PY, [path.join(ROOT, 'scripts', 'v6_fingerpri
   });
 
   console.log('并发与来源');
-  await test('4 个进程同时解压同一个包：都成功，拿到同一个目录，目录校验通过', async () => {
+  await test('冷启动 4 个进程同时解压：都成功，各自返回的目录都存在且校验通过，指针指向其中之一', async () => {
     const root = freshRoot();
-    // 编译后的两个模块写到临时目录，子进程直接 require（与线上一样是普通 CommonJS 模块）
-    const modDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-mod-'));
-    tmpRoots.push(modDir);
-    fs.writeFileSync(path.join(modDir, 'engine-bundle.js'), compileSource('engine-bundle.ts'));
-    fs.writeFileSync(path.join(modDir, 'engine.js'), compileSource('engine.ts'));
-    const script = `const E = require(${JSON.stringify(path.join(modDir, 'engine.js'))});
+    const script = `const E = require(${ENGINE_JS});
       process.stdout.write(E.materializeBundle(E.EMBEDDED_ENGINE_BUNDLE, ${JSON.stringify(root)}));`;
-    const runs = await Promise.all([0, 1, 2, 3].map(() => new Promise((resolve) => {
-      const p = spawn(process.execPath, ['-e', script]);
-      let out = '', err = '';
-      p.stdout.on('data', (d) => { out += d; });
-      p.stderr.on('data', (d) => { err += d; });
-      p.on('close', (code) => resolve({ code, out, err }));
-    })));
+    const runs = await Promise.all([0, 1, 2, 3].map(() => childRun(script)));
     for (const r of runs) assert.strictEqual(r.code, 0, r.err);
-    assert.deepStrictEqual([...new Set(runs.map((r) => r.out))], [path.join(root, B.ENGINE_BUNDLE_SHA256)]);
-    assert.strictEqual(E.verifyEngineDir(runs[0].out, E.decodeBundle(E.EMBEDDED_ENGINE_BUNDLE)), null);
-    assert.deepStrictEqual(fs.readdirSync(root), [B.ENGINE_BUNDLE_SHA256]);
+    for (const r of runs) assert.strictEqual(E.verifyEngineDir(r.out, FILES), null, r.out);
+    assert.ok(runs.some((r) => r.out === pointer(root)));
+    assert.ok(gens(root).length >= 1 && gens(root).length <= 4);
+    assert.deepStrictEqual(fs.readdirSync(root).filter((n) => n.startsWith('.tmp-') || n.startsWith('.ptr-')), []);
   });
 
   await test('KLINE_ENGINE_SOURCE=files：只用 cwd 下的文件（本地开发）；cwd 下没有就报错，不会悄悄改用内嵌包', () => {

@@ -6,10 +6,13 @@
  * 引擎因此以 engine-bundle.ts 常量随模块部署（scripts/build_runtime_bundles.py 生成，CI 校验与仓库一致），
  * 运行时在这里解压到临时目录后再 spawn python：
  *
- * - 目录 <tmp>/kline-engine-<uid>/<bundle_sha256>/：先写到同级临时目录、逐个文件校验 sha256，
- *   再整体 rename；多个进程同时解压时只有一个 rename 成功，其余校验已有目录后直接用。
- * - 已有目录也要校验：文件集合必须与包完全一致（多一个文件也不行，防止同名模块被抢先放进去）、
- *   每个文件 sha256 一致；不一致的目录移走重建。父目录必须是本用户的、权限 0700、不是符号链接。
+ * - 父目录 <tmp>/kline-engine-<uid>/ 必须是本用户的真实目录、权限 0700。
+ * - 每个解压好的目录 <bundle_sha256>.<代号>/ 发布后就不再改动、不再移动：先写到临时目录、逐个文件校验，
+ *   再 rename 成唯一的代号目录，最后原子替换指针 <bundle_sha256>.current（符号链接）。所以任何进程拿到的
+ *   有效目录都不会被别的进程挪走或删除（QA R81-2）；并发修复最多多出一个有效目录，不需要锁。
+ * - 每次调用 Python 前都完整校验当前目录：文件集合必须与包完全一致（多一个文件也不行，防止同名模块被
+ *   抢先放进去）、每个文件 sha256 一致（QA R81-1：不再只看入口文件是否存在）。不一致 → 删掉这个已损坏的
+ *   目录，重新解压发布新代号。校验与 spawn 之间仍有极短窗口，目录只有本用户可写。
  * - spawn 时设 PYTHONDONTWRITEBYTECODE=1，目录里不会长出 __pycache__。
  * - 失败一律抛 EngineUnavailableError（个股分析报错、health 显示 not_configured），绝不退回 JS 计算。
  * - 本地开发要直接跑工作区里的 .py：设 KLINE_ENGINE_SOURCE=files（只认 cwd 下的文件，找不到就报错，不会悄悄改用包）。
@@ -160,24 +163,48 @@ export function defaultEngineRoot(): string {
   return path.join(os.tmpdir(), `kline-engine-${uid}`);
 }
 
-/** 把包解压成 <root>/<bundle_sha256>/，返回目录；已有且一致就直接用 */
-export function materializeBundle(bundle: EngineBundle, root: string = defaultEngineRoot()): string {
+const GEN_RE = /^[0-9a-f]{64}\.[0-9a-z]+-[0-9]+-[0-9a-f]{8}$/;
+
+function pointerPath(root: string, sha: string): string {
+  return path.join(root, `${sha}.current`);
+}
+
+/** 指针当前指向的代号目录（只接受同一父目录下、本包 sha 的代号名）；没有 / 不合法返回 null */
+function readPointer(root: string, sha: string): string | null {
+  try {
+    const target = fs.readlinkSync(pointerPath(root, sha));
+    if (!GEN_RE.test(target) || !target.startsWith(`${sha}.`)) return null;
+    return path.join(root, target);
+  } catch {
+    return null;
+  }
+}
+
+/** 测试用的插入点：在“发现目录损坏之后、开始修复之前”暂停，构造与别的进程交错的场景 */
+export interface MaterializeHooks {
+  afterVerifyFailed?: (dir: string | null, reason: string) => void;
+}
+
+/**
+ * 返回一个已完整校验、内容与包完全一致的引擎目录。
+ * 当前目录有效 → 直接返回；无效（缺失、被改、多文件）→ 解压成新的代号目录并替换指针。
+ * 已发布的有效目录不会被任何进程移动或删除；只删除自己刚校验为损坏的目录。
+ */
+export function materializeBundle(bundle: EngineBundle, root: string = defaultEngineRoot(), hooks: MaterializeHooks = {}): string {
   const files = decodeBundle(bundle);
   ensurePrivateRoot(root);
-  const final = path.join(root, bundle.sha256);
-  if (fs.existsSync(final)) {
-    const bad = verifyEngineDir(final, files);
-    if (!bad) return final;
-    // 被改过或不完整：移走后重建（rename 是原子的，不会删到别人正在用的新目录）
-    const aside = path.join(root, `.bad-${bundle.sha256.slice(0, 12)}-${process.pid}-${randomBytes(4).toString('hex')}`);
-    try {
-      fs.renameSync(final, aside);
-      fs.rmSync(aside, { recursive: true, force: true });
-    } catch {
-      // 别的进程先处理了；下面重建后再校验
-    }
-  }
-  const tmp = path.join(root, `.tmp-${bundle.sha256.slice(0, 12)}-${process.pid}-${randomBytes(4).toString('hex')}`);
+  const current = readPointer(root, bundle.sha256);
+  const bad = current ? verifyEngineDir(current, files) : '尚未解压';
+  if (current && bad === null) return current;
+  if (hooks.afterVerifyFailed) hooks.afterVerifyFailed(current, bad || '');
+
+  // 别的进程可能已经修好并换了指针：再看一次，指针变了且新目录有效就直接用
+  const latest = readPointer(root, bundle.sha256);
+  if (latest && latest !== current && verifyEngineDir(latest, files) === null) return latest;
+
+  const tag = `${Date.now().toString(36)}-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const tmp = path.join(root, `.tmp-${bundle.sha256.slice(0, 12)}-${tag}`);
+  const gen = path.join(root, `${bundle.sha256}.${tag}`);
   fs.mkdirSync(tmp, { mode: 0o700 });
   try {
     for (const f of files) {
@@ -185,21 +212,23 @@ export function materializeBundle(bundle: EngineBundle, root: string = defaultEn
       fs.mkdirSync(path.dirname(full), { recursive: true, mode: 0o700 });
       fs.writeFileSync(full, f.data, { mode: 0o600, flag: 'wx' });
     }
-    const bad = verifyEngineDir(tmp, files);
-    if (bad) throw new EngineUnavailableError(`解压后校验失败：${bad}`);
-    try {
-      fs.renameSync(tmp, final);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw err;
-      // 并发：别的进程已经放好了，校验它
-    }
+    const badTmp = verifyEngineDir(tmp, files);
+    if (badTmp) throw new EngineUnavailableError(`解压后校验失败：${badTmp}`);
+    fs.renameSync(tmp, gen);   // 代号唯一，不会与别人的目录冲突
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-  const bad = verifyEngineDir(final, files);
-  if (bad) throw new EngineUnavailableError(`引擎目录校验失败：${bad}`);
-  return final;
+  // 原子替换指针：先建临时符号链接再 rename 覆盖
+  const link = path.join(root, `.ptr-${tag}`);
+  fs.symlinkSync(path.basename(gen), link);
+  fs.renameSync(link, pointerPath(root, bundle.sha256));
+  // 只删除自己校验过、确认已损坏的旧目录（有效目录从不删除）
+  if (current && current !== gen && verifyEngineDir(current, files) !== null) {
+    fs.rmSync(current, { recursive: true, force: true });
+  }
+  const badGen = verifyEngineDir(gen, files);
+  if (badGen) throw new EngineUnavailableError(`引擎目录校验失败：${badGen}`);
+  return gen;
 }
 
 export interface EngineResolverOptions {
@@ -209,7 +238,7 @@ export interface EngineResolverOptions {
   root?: string;
 }
 
-/** 每次调用 Python 前取引擎位置；包模式解压一次后缓存，目录被清掉（如 /tmp 清理）会自动重建 */
+/** 每次调用 Python 前取引擎位置；包模式每次都完整校验目录（QA R81-1），损坏或被清掉会自动重建 */
 export class EngineResolver {
   private readonly bundle: EngineBundle;
   private readonly source: EngineSource;
@@ -266,8 +295,7 @@ export class EngineResolver {
   }
 
   private fromBundle(): EngineLocation {
-    const c = this.cached;
-    if (c && fs.existsSync(c.script) && fs.existsSync(path.join(c.workdir, 'core', '__init__.py'))) return c;
+    // 不走“入口文件还在就直接用”的捷径：每次都完整校验文件集合与内容（约 36 个文件、几百 KB，毫秒级）
     const dir = materializeBundle(this.bundle, this.root);
     this.cached = { source: 'bundle', script: path.join(dir, 'python_analyzer.py'), workdir: dir, bundle_sha256: this.bundle.sha256 };
     return this.cached;

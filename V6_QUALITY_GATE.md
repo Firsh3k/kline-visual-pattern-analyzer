@@ -39,15 +39,19 @@
   服务端不再按 cwd 读 .py / json；没有根级 `@Controller`；`/api/health` 的页面 / 引擎包 / 板块清单指纹算法与 `scripts/v6_fingerprint.py` 一致。
 - `tests/v6/test_engine_bundle.js` + `tests/v5/test_runtime_bundles.py`（平台打包问题）：内嵌引擎包与 `core/**/*.py`、`python_analyzer.py`
   逐字节一致（`scripts/build_runtime_bundles.py --check`，改了 core 忘记重新生成即红）；在没有任何 .py 的目录里解压后 Python health 为
-  `real_core`、指纹与仓库一致；目录被改 / 多文件 / 缺文件会重建，包被篡改 / 路径穿越一律拒绝，并发解压安全。
+  `real_core`、指纹与仓库一致；同一 resolver 每次调用都完整校验，目录被改 / 多文件 / 缺文件会重建（QA R81-1）；
+  已发布的有效目录不会被并发修复的进程挪走（确定性交错 + 真实并发，QA R81-2）；包被篡改 / 路径穿越一律拒绝。
 
 ### 平台打包（CI 的 platform-package job，2026-10-26 事故的回归）
 - 按 `package-lock.json` `npm ci` 装全套平台依赖。
 - 平台同款 ESLint：`@lark-apaas/fullstack-presets` 的 `eslintPresetsOfSimple.server`（`tests/v6/platform-eslint.config.cjs`），0 错误 0 警告；
   平台 commit_task 会拦的提交在这里先拦住。`tsc` 类型检查 server。
-- `tests/v6/test_platform_package.js`：真实 `nest build` → 用 `@vercel/nft` 从 `dist/server/main.js` 追踪（同 `prune-smart.js`），
-  只把追踪到的文件放进部署目录、不放任何 .py → 在该目录启动服务 → `/api/health` 必须 `real_core`，
+- `tests/v6/test_platform_package.js`：原样执行 `scripts/build.sh`（真实执行 nest build、产物准备、prune-smart 依赖裁剪；
+  只用替身跳过平台专用的 fullstack-cli 插件初始化、openapi / 路由代码生成、vite 前端构建，这 4 步 CI 不验证）→
+  服务端只放 `@vercel/nft` 从 `dist/server/main.js` 追踪到的文件（同 `prune-smart.js`），依赖只用裁剪后的 `dist/node_modules`
+  （复制，不链接源码依赖），不放任何 .py → 只用部署产物执行 `run.sh` → `/api/health` 必须 `real_core`，
   `scripts/v6_verify_deploy.py` 判定全部 PASS（自选股用内存实现，只此一项 WARN）；根路径（含平台子路径前缀）返回仓库页面，`/api/sectors` 可用。
+  负例：裁剪产物缺运行时依赖 → 服务起不来；缺页面 → 核对 FAIL、根路径 404。
   在 6a41532 上跑这个测试会复现线上的 `core_analyzer=not_configured` 与 “V4 page not found”。
 - `tests/v6/test_sector_catalog.js` + `tests/v5/test_fir41_sector_catalog.py`（FIR-41 第 4 项）：板块扫描范围来自服务端清单 `sector_data/catalog.json`（与仓库 `sector_data/` 一致）；同花顺板块必须有来源和数据日期；只有与权威快照完全一致、核对日期在 30 天内的才显示“已核对”（新鲜度规则与 Python `core.sector_validation` 逐日比对）；人工样例永远标“人工样例”；页面不写死板块成分，清单不可用时不兜底。
 - `tests/v6/test_custom_sectors.js`（FIR-41 第 4 项）：自定义板块存服务端——内存与真实 PostgreSQL 同一组用例；删除不复活、迁入只加服务器没有的；运行时不建表；两连接并发写 rev 连续；页面一次性迁入旧数据、多端同步、503 不在本机兜底、迟到旧响应不回退。

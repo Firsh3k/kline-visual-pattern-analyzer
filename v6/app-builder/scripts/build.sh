@@ -32,6 +32,10 @@ npm run gen:openapi
 print_time $STEP_START
 echo ""
 
+# 确保 Python 引擎包 engine-bundle.ts 在 nest build 前就位（被 service 静态 import）
+ensure_engine_bundle
+echo ""
+
 # ==================== 步骤 2 ====================
 echo "🗑️  [2/6] 清理 dist 目录"
 STEP_START=$(node -e "console.log(Date.now())")
@@ -142,6 +146,34 @@ echo ""
 echo "📦 [5/6] 准备产物"
 STEP_START=$(node -e "console.log(Date.now())")
 
+# Python Canonical Core 引擎打包（独立于 only_frontend_change，server 构建时必须执行）。
+# 经线上诊断确认：① 妙搭部署过滤所有 .py（运行时 /opt/bytefaas 内 py_count=0）；
+# ② server/ 只部署 nest 编译“模块依赖图”跟踪的文件，build.sh 后加的孤立 .js 不会上线。
+# 因此引擎以 engine-bundle.ts（gzip+base64 常量）入库并被 service 静态 import，
+# nest build 会跟踪编译到 dist/server/modules/stock-analysis/engine-bundle.js，随模块部署；
+# 运行时 materializeEngine 解压到 /tmp（已确认可写）再 spawn python。Python 仍是唯一算法源。
+# 本函数在 nest build 之后核对编译产物；真正的兜底生成在 nest build 之前（见 ensure_engine_bundle）。
+bundle_python_engine() {
+  local compiled="$DIST_DIR/server/modules/stock-analysis/engine-bundle.js"
+  if [ -f "$compiled" ]; then
+    echo "   ✅ engine-bundle 随 nest 模块编译 → $compiled（运行时 materialize 解压到 /tmp）"
+  else
+    echo "   ❌ 未找到编译产物 $compiled；线上形态分析将不可用"
+  fi
+}
+
+# nest build 之前确保 engine-bundle.ts 存在（正常已入库；缺失则用真实 core 兜底生成）
+ensure_engine_bundle() {
+  local ts="$ROOT_DIR/server/modules/stock-analysis/engine-bundle.ts"
+  if [ ! -f "$ts" ]; then
+    if [ -d "$ROOT_DIR/core" ] && [ -f "$ROOT_DIR/python_analyzer.py" ]; then
+      echo "   [warn] engine-bundle.ts 缺失，构建前临时生成"
+      python3 "$ROOT_DIR/scripts/build_engine_bundle.py" || true
+    fi
+  fi
+  [ -f "$ts" ] && echo "   ✅ engine-bundle.ts 就位" || echo "   ❌ engine-bundle.ts 缺失"
+}
+
 # 移动 client 下的 HTML 文件到 dist/dist/client，保证 views 路径在 dev/prod 下一致
 # 使用 mv 而非 cp：HTML 不能上传到公网 CDN，移走后 dist/client 中不再包含 HTML
 if [ -d "$DIST_DIR/client" ]; then
@@ -154,7 +186,10 @@ if [ -d "$DIST_DIR/client" ]; then
   find "$DIST_DIR/client" -maxdepth 1 -name "*.html" -exec mv {} "$DIST_DIR/dist/client/" \;
 fi
 
-# server 相关产物准备（only_frontend_change=true 时跳过）
+# 引擎归集总是执行（不允许被 only_frontend_change 跳过）
+bundle_python_engine
+
+# server 相关产物准备（only_frontend_change=true 时跳过 run.sh/.env）
 if [[ "${only_frontend_change:-false}" == "true" ]]; then
   echo "   [skip] 跳过 run.sh/.env 复制 (only_frontend_change=true)"
 else

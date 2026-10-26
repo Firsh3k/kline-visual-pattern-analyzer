@@ -3,6 +3,9 @@ node_modules/
 dist/
 build/
 
+# 引擎包 engine-bundle.ts 需入库（随 nest 编译跟踪部署）；仅忽略万一产生的 .js 副本
+server/modules/stock-analysis/engine-bundle.js
+
 # Python 字节码
 __pycache__/
 *.py[cod]

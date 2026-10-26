@@ -2,11 +2,14 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as zlib from 'zlib';
 import * as dotenv from 'dotenv';
 import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { runProcess } from './run-process';
+import { ENGINE_BUNDLE_PAYLOAD, ENGINE_BUNDLE_FILE_COUNT } from './engine-bundle';
 
 dotenv.config();
 
@@ -77,21 +80,100 @@ export class StockAnalysisService implements OnModuleInit {
     return null;
   }
 
+  /**
+   * 定位 Python 引擎包：python_analyzer.py 与 core/ 必须同目录（analyzer 用 __file__ 定位并 import core）。
+   * 兼容多种部署/打包布局：
+   *  - 运行根：/opt/bytefaas（rsync 全量或标准构建把引擎放 dist 根）
+   *  - 运行根 server/：/opt/bytefaas/server（云端构建 dist/server 被整体打包进运行时）
+   *  - 静态资源兜底目录：/opt/bytefaas/dist/client/_engine
+   *  - 以及编译产物 __dirname 相对路径（dist/server/modules/stock-analysis）
+   */
+  private resolveEngine(): { script: string; workdir: string } | null {
+    const cwd = process.cwd();
+    const here = __dirname;
+    // 1) 真实文件系统候选（本地开发 / rsync 直传，.py 直接可达）
+    const bases = Array.from(
+      new Set([
+        cwd,
+        path.join(cwd, 'server'),
+        path.join(cwd, 'dist', 'client', '_engine'),
+        path.resolve(here, '..', '..'),
+        path.resolve(here, '..', '..', '..'),
+      ]),
+    );
+    for (const base of bases) {
+      const script = path.join(base, 'python_analyzer.py');
+      const initFile = path.join(base, 'core', '__init__.py');
+      if (fs.existsSync(script) && fs.existsSync(initFile)) {
+        return { script, workdir: base };
+      }
+    }
+    // 2) 生产：妙搭部署排除 .py，从内嵌 engine-bundle.js 解压到临时目录
+    return this.materializeEngine();
+  }
+
+  /**
+   * 从被静态 import 的 engine-bundle.ts（gzip+base64 文件映射常量）解压 Python 引擎到
+   * 临时目录。妙搭运行时 /opt/bytefaas 不含 .py（平台过滤），且 server 只部署 nest
+   * 模块图跟踪的文件，故引擎必须是被 import 的 .ts 模块（随编译部署）；运行时同步
+   * 解压到 os.tmpdir（已确认可写），再 spawn python。用 payload 指纹做幂等：同一实例
+   * 只解压一次，bundle 变更（payload 前缀变化）才重写。
+   */
+  private materializeEngine(): { script: string; workdir: string } | null {
+    const payload: string = ENGINE_BUNDLE_PAYLOAD;
+    if (!payload) {
+      this.coreInstallError = 'engine-bundle 为空';
+      return null;
+    }
+
+    const workdir = path.join(os.tmpdir(), 'kline_engine');
+    const stamp = path.join(workdir, '.materialized');
+    const fingerprint = payload.slice(0, 40);
+    let needWrite = true;
+    try {
+      needWrite = !(fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === fingerprint);
+    } catch {
+      needWrite = true;
+    }
+
+    if (needWrite) {
+      let files: Record<string, string>;
+      try {
+        const json = zlib.gunzipSync(Buffer.from(payload, 'base64')).toString('utf8');
+        files = JSON.parse(json) as Record<string, string>;
+      } catch (err) {
+        this.coreInstallError = 'engine-bundle 解压失败: ' + (err instanceof Error ? err.message : String(err));
+        return null;
+      }
+      fs.mkdirSync(workdir, { recursive: true });
+      for (const [rel, b64] of Object.entries(files)) {
+        const full = path.join(workdir, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, Buffer.from(b64, 'base64'));
+      }
+      fs.writeFileSync(stamp, fingerprint);
+    }
+
+    const script = path.join(workdir, 'python_analyzer.py');
+    if (fs.existsSync(script) && fs.existsSync(path.join(workdir, 'core', '__init__.py'))) {
+      return { script, workdir };
+    }
+    return null;
+  }
+
   private checkCoreInstalled(): boolean {
-    const coreDir = path.join(process.cwd(), 'core');
-    const initFile = path.join(coreDir, '__init__.py');
-    return fs.existsSync(coreDir) && fs.existsSync(initFile);
+    return this.resolveEngine() !== null;
   }
 
   private async setupCoreModule(): Promise<void> {
     if (!this.pythonBinary) return;
 
-    if (this.checkCoreInstalled()) {
+    const engine = this.resolveEngine();
+    if (engine) {
       try {
-        const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
         const output = execSync(
-          `${this.pythonBinary.path} ${scriptPath} --mode health`,
-          { encoding: 'utf8', timeout: 5000, cwd: process.cwd() }
+          `"${this.pythonBinary.path}" "${engine.script}" --mode health`,
+          { encoding: 'utf8', timeout: 8000, cwd: engine.workdir }
         );
         const data = JSON.parse(output.trim()) as {
           core_installed?: boolean; analyzer?: string; core_version?: string;
@@ -158,8 +240,14 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       return Promise.reject(new Error('本地Python环境不可用'));
     }
-    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-    const args = [scriptPath, code, '--adjustment', opts.adjustment ?? 'qfq'];
+    const engine = this.resolveEngine();
+    if (!engine) {
+      // fail-closed：引擎文件缺失不允许静默降级，直接报错并在 health 暴露 not_configured
+      return Promise.reject(
+        new Error('Python 引擎未部署：运行目录找不到 python_analyzer.py 或 core/，请检查构建归集'),
+      );
+    }
+    const args = [engine.script, code, '--adjustment', opts.adjustment ?? 'qfq'];
     let asOf: string | undefined;
     try {
       asOf = assertAsOf(opts.asOf);
@@ -169,7 +257,7 @@ export class StockAnalysisService implements OnModuleInit {
     if (asOf) args.push('--as-of', asOf);
     // 生产路径不传任何降级开关：Python 侧 fail-closed，拿不到 qfq / core 失败直接非零退出。
     return runProcess(this.pythonBinary.path, args, {
-      cwd: process.cwd(),
+      cwd: engine.workdir,
       timeoutMs: PY_TIMEOUT_MS,
       signal: opts.signal,
       env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
@@ -213,8 +301,13 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       return Promise.reject(new Error('本地Python环境不可用'));
     }
-    const scriptPath = path.join(process.cwd(), 'python_analyzer.py');
-    const args = [scriptPath, '--mode', 'market'];
+    const engine = this.resolveEngine();
+    if (!engine) {
+      return Promise.reject(
+        new Error('Python 引擎未部署：运行目录找不到 python_analyzer.py 或 core/，请检查构建归集'),
+      );
+    }
+    const args = [engine.script, '--mode', 'market'];
     let checked: string | undefined;
     try {
       checked = assertAsOf(asOf);
@@ -223,7 +316,7 @@ export class StockAnalysisService implements OnModuleInit {
     }
     if (checked) args.push('--as-of', checked);
     return runProcess(this.pythonBinary.path, args, {
-      cwd: process.cwd(),
+      cwd: engine.workdir,
       timeoutMs: PY_TIMEOUT_MS,
       env: { ...process.env, ENGINE_COMMIT: process.env.ENGINE_COMMIT ?? undefined },
     }).then((r) => {

@@ -2,6 +2,25 @@
 
 后台算法核心统一为 Python `core/`（V5）。前端只读取这里输出的 JSON 并渲染，不做任何形态判断。
 
+**单一实现（FIR-38）**：本管线、Python 分析 API、自选股扫描、市场扫描都调用同一个 `core.analysis.analyze()`
+（校验 → asOf 截断 → 250 根窗口 → 8 种形态 + 指标），同一输入得到逐字节相同的结果与 `data_hash`。
+
+## 数据合同（schema 3.0）
+
+| 字段 | 含义 |
+|---|---|
+| `input.data_hash` | 窗口内规范化 K 线的 sha256 |
+| `input.adjustment` / `input.provenance` | 复权方式（qfq / none；离线 CSV 未声明时为 unknown）与来源 |
+| `session_state` | `close_confirmed` 已收盘确认 / `intraday` 盘中（最后一根未收盘）/ `unknown` 日历未核实 |
+| `calendar` | `status` 仅在权威交易日历覆盖时为 `verified`；`expected_trade_date`、`stale`、`calendar_id` |
+| `core.result_sha256` | 计算结果的 sha256 |
+
+输入校验（任何一处不合格整只股票拒绝，不修补、不去重）：日期格式与存在性、严格递增（重复 / 乱序拒绝）、
+OHLC 为有限正数且满足高低不变量、成交量为有限非负数、最后一根不晚于当前日期。
+
+失败后旧结果：若本次失败而输出目录中有上次成功的同版本结果，文件保留，`index.json` 中该股
+`status = "stale_previous"`、`stale = true` 并附错误；否则删除旧文件，只记入 `errors`。
+
 ## 计算内容
 
 | 类别 | 内容 | 实现 |
@@ -46,7 +65,8 @@ V4 的综合“推荐度”评分不再计算（PO 决策 D4）。
 ```bash
 # 本地 CSV（列：date,open,high,low,close,volume）
 python3 pipeline/run_daily.py --csv-dir <目录> --index-csv <上证CSV> \
-    --provenance-json <来源说明.json> --expect-date 2026-10-13 --out site/data
+    --provenance-json <来源说明.json> --out site/data [--expect-date 2026-10-13] [--now 2026-10-13T16:00:00+08:00]
+# --calendar 已移除：日历状态由权威交易日历推导，不再默认 verified
 # 测试
 python3 -m pytest tests/pipeline tests/v5 -k "not Integration"
 ```

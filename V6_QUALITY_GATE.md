@@ -26,9 +26,12 @@
 - 用仓库内冻结的真实行情（002436 最新 / 002436 asOf=2026-09-30 / 002594 / 600519 / 上证指数），
   固定“当前时间”，逐字段比对 data_hash、阶段、分数、确认、主导形态、线段、summary 与大盘环境。
 - 行情每天变也不影响这个基准；不再写死任何股票“当天”的结果。
-- 有意的算法变更：经 QA 同意后用 Python 3.10 运行 `python3.10 tests/v6/frozen_snapshot.py --write`，PR 中说明差异。
-- `core.result_sha256` 依赖 Python 小版本（3.12 起 `sum()` 改为补偿求和），快照按线上 Python 3.10 生成；
-  其它版本只跳过这一项。
+- 有意的算法变更：经 QA 同意后用线上同版本 Python 运行 `python3.13 tests/v6/frozen_snapshot.py --write`，PR 中说明差异。
+- `core.result_sha256` 依赖 Python 小版本（3.12 起 `sum()` 改为补偿求和），快照按线上 Python 生成
+  （`tests/v6/frozen_snapshot.py` 的 `PROD_PYTHON`，当前 3.13，2026-10-26 实测线上 3.13.5）；CI 的 python-tests
+  用同一版本跑，所以 `result_sha256` 每次都核对（测试同时检查 ci.yml / README 的版本与 `PROD_PYTHON` 一致）。
+  其它版本本地运行时只跳过这一项。线上 Python 再升级时：改 `PROD_PYTHON` 与 CI 版本、重新生成快照，并证明
+  除 `python` / `result_sha256` 外没有任何字段变化（FIR-45 的做法）。
 
 ### 实际部署页面与 BFF（CI 的 JS job）
 - `tests/v6/test_v4_adapter_r67.js`：加载实际部署的 V4 页面脚本，验证确认 / 主导只来自 Python、斜颈线绘制、坏数据报错。

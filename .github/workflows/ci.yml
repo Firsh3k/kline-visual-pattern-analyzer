@@ -15,10 +15,10 @@ jobs:
       with:
         fetch-depth: 0   # 部署核对测试要按历史版本（如 6a41532）算指纹
 
-    - name: Set up Python
+    - name: Set up Python (same minor as the platform runtime, see tests/v6/frozen_snapshot.py PROD_PYTHON)
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.13'
 
     - name: Install dependencies
       run: |
@@ -284,7 +284,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.13'
 
     - name: Set up Node.js
       uses: actions/setup-node@v4

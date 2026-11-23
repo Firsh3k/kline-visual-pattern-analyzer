@@ -1,0 +1,15 @@
+{
+  "sector_name": "美股标普500",
+  "sector_code": "SP500",
+  "source": "us_index_constituents",
+  "source_url": "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
+  "fetched_at": "2026-11-23T16:02:03.245216+00:00",
+  "local_refresh_date": "2026-11-24",
+  "authoritative_reconciliation_date": "2026-11-24",
+  "reconciliation_method": "dual_source_cross_check",
+  "reconciliation_result": "github_datasets与stockanalysis清单503只完全一致，零差异",
+  "total_constituents": 503,
+  "verified_count": 503,
+  "version": "2.0",
+  "notes": "全部成分股代码已通过 qt.gtimg.cn 美股行情接口逐一验证（名称/交易所后缀/现价非空）"
+}

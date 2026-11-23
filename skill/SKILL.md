@@ -1,13 +1,13 @@
 ---
 name: kline-pattern-analyzer
-description: A股K线形态量化分析工具。基于250日K线数据，自动识别8种高可靠性经典形态（4种上升：均线多头/W底/头肩底/平台突破；4种下降：均线空头/M头/头肩顶/平台破位），计算底部信号分/顶部信号分/推荐度指数，标注关键点位（颈线/左右肩/双底等）并解读形成原因。适用于：个股形态分析、批量选股形态确认、复盘报告中的形态判断、止盈止损信号识别、自选股池扫描。当用户要求分析K线形态、判断股票趋势阶段、识别底部/顶部信号、计算形态匹配度时使用。
+description: A股+美股K线形态量化分析工具。基于250日K线数据，自动识别8种高可靠性经典形态（4种上升：均线多头/W底/头肩底/平台突破；4种下降：均线空头/M头/头肩顶/平台破位），计算底部信号分/顶部信号分/推荐度指数，标注关键点位（颈线/左右肩/双底等）并解读形成原因。美股支持标普500/纳指100成分股扫描池，大盘基准自动切换（上证↔标普500）。适用于：个股形态分析、批量选股形态确认、复盘报告中的形态判断、止盈止损信号识别、自选股池扫描。当用户要求分析K线形态、判断股票趋势阶段、识别底部/顶部信号、计算形态匹配度时使用。
 ---
 
 # K线形态分析器
 
 ## 核心能力
 
-对单只或批量A股股票，基于250日K线数据进行量化形态识别：
+对单只或批量A股/美股股票，基于250日K线数据进行量化形态识别（两个市场同一套算法与评分口径，推荐度可横向比较）：
 
 - **8种形态识别**：4种上升（均线多头/W底/头肩底/平台突破）+ 4种下降（均线空头/M头/头肩顶/平台破位）
 - **多空信号评分**：底部信号分(0-100) + 顶部信号分(0-100)，同时检测上升中见顶风险
@@ -16,7 +16,7 @@ description: A股K线形态量化分析工具。基于250日K线数据，自动�
 - **点位解读**：每个关键点的形成原因、判断理由、市场含义
 - **五大增强指标**：RSI/KDJ、布林带、相对强度、ATR动态止损、周线形态确认
 - **三大增强信号**：MACD顶/底背离、量价背离（4种细分）、颈线确认度
-- **大盘环境判断**：上证指数技术面评分，影响个股置信度
+- **大盘环境判断**：A股=上证指数 / 美股=标普500(.INX) 技术面评分，影响个股置信度
 - **形态可靠性**：8种形态经典可靠性 + 完成度 + 综合置信度
 
 > **v4.0 与网页端100%一致**：Python脚本(analyze_stock.py)与在线网页应用(app_17f40r564tw)使用完全相同的算法逻辑——相同的指标计算、相同的8形态检测规则、相同的推荐度评分公式、相同的评级标准。可用于数据回测。
@@ -34,6 +34,16 @@ https://quotes.sina.cn/cn/api/jsonp_v2.php/{callback}/CN_MarketDataService.getKL
 
 **上证指数**：代码用 `sh000001`（注意000001会被误判为平安银行）
 
+**美股K线数据**（字母代码自动识别为美股，如 AAPL、NVDA、BRK.B）：
+- 主数据源：腾讯美股前复权日K `https://ifzq.gtimg.cn/appstock/app/usfqkline/get?param=us{完整代码},day,,,250,qfq`（需交易所后缀，如 NVDA.OQ / SPY.AM，支持CORS）
+- 完整代码与中文名：`https://qt.gtimg.cn/q=us{TICKER}`（parts[2]为带后缀代码，parts[1]为中文名）
+- 备用数据源：新浪美股 `https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/{callback}/US_MinKService.getDailyK?symbol={小写ticker}`（返回全量历史**原始未复权价**，必须经 adjust_us_splits 拆股复权后使用，否则NVDA/TSLA等拆股会产生假形态）
+- 拆股复权算法 detect_split_ratio/adjust_us_splits 与网页端100%一致（tests/us_split_fixtures.json 共享fixture双端验证）
+
+**标普500指数**：新浪美股 `symbol=.inx`（美股大盘环境基准）
+
+**美股扫描池**：`sector_data/us_pools.json`（标普500=503只、纳指100=101只，2026-11-24双源核对+全量行情验证，provenance见 sector_data/provenance/）
+
 ## 使用方式
 
 ### 方式一：Python脚本（批量/自动化场景）
@@ -41,8 +51,9 @@ https://quotes.sina.cn/cn/api/jsonp_v2.php/{callback}/CN_MarketDataService.getKL
 **单股快速分析（推荐，自动拉取数据）**：
 ```bash
 python3 scripts/analyze_stock.py <股票代码> [股票名称]
-# 示例: python3 scripts/analyze_stock.py 002436 兴森科技
-# 输出JSON：当前形态、底部/顶部信号分、推荐度评级、关键点位、均线/MACD/RSI
+# A股: python3 scripts/analyze_stock.py 002436 兴森科技
+# 美股: python3 scripts/analyze_stock.py AAPL   （字母代码自动识别，中文名自动获取）
+# 输出JSON：当前形态、底部/顶部信号分、推荐度评级、关键点位、均线/MACD/RSI、market字段(cn/us)
 ```
 
 **完整分析（需先准备CSV，含图表生成）**：
@@ -55,17 +66,24 @@ python3 scripts/pattern_scanner.py <csv路径> <股票名称> <股票代码>
 **批量扫描**：
 ```bash
 python3 scripts/batch_scan.py [--days N] [--data DIR] [--output DIR]
+# A股（CSV离线模式）：
 # -d/--days: 扫描最近N个交易日的信号（默认10）
 # --data: 指定数据目录（默认自动向上查找data/目录）
 # --output: 指定输出目录（默认data目录同级的output/）
-# 输出：每只股票的推荐度排序表格
+# 美股（实时拉取模式）：
+python3 scripts/batch_scan.py --us-pool sp500                  # 标普500全池503只
+python3 scripts/batch_scan.py --us-pool nasdaq100 --min-score 60  # 纳指100，推荐度≥60
+# 输出：JSON明细 + Markdown推荐度排序表格（含标普500大盘环境）
 ```
 
 ### 方式二：在线网页工具（交互式分析）
 
 在线应用（含K线图可视化标注、形态知识库、自选股池、市场扫描）：
 - app_id: app_17f40r564tw
-- 支持输入股票代码自动拉取数据、250日+60日双图、点位标注解读、自选股持久化、17个预置板块批量扫描
+- 顶部 🇨🇳A股 / 🇺🇸美股 切换按钮：切换后输入框/快捷示例/大盘基准/扫描池/自选股池全部跟随市场
+- A股：17个预置板块批量扫描；美股：标普500(503只)/纳指100(101只)扫描池
+- 美股自选股独立本地存储（GitHub云同步当前仅覆盖A股自选股）
+- URL参数：?code=AAPL&market=us（字母代码自动识别为美股）
 
 ### 方式三：嵌入其他任务（如每日复盘）
 
@@ -122,6 +140,17 @@ python3 scripts/batch_scan.py [--days N] [--data DIR] [--output DIR]
 - 平台突破/破位需配合放量确认，假突破概率约20%
 
 ## 版本更新记录
+
+### v4.4（2026-11-24）— 美股市场支持（US Market）
+
+- **网页端市场切换**：顶部 🇨🇳A股 / 🇺🇸美股 按钮，输入框/快捷示例/大盘基准/扫描池/自选股池跟随市场；URL支持 ?code=AAPL&market=us
+- **美股数据层**：腾讯前复权日K主源（usfqkline+交易所后缀解析）+ 新浪美股备用源（原始价本地拆股复权 detect_split_ratio/adjust_us_splits，双端算法一致）
+- **大盘基准**：美股=标普500(.INX)，评分算法与A股完全一致，推荐度可跨市场比较
+- **美股扫描池**：标普500(503只)/纳指100(101只)，双源核对+全量行情验证（sector_data/us_pools.json + provenance）
+- **Python**：analyze_stock.py 字母代码自动识别美股；batch_scan.py 新增 --us-pool sp500|nasdaq100 实时扫描
+- **美股自选股**：独立本地存储（kline_watchlist_us_v1），不参与A股GitHub云同步（后续版本支持）
+- **顺带修复**：analyzeSingleStock 引用的 fetchMarketEnv() 此前未定义（被try/catch吞掉导致单股添加时大盘环境缺失）
+- **测试**：tests/test_us_market.py（250断言）+ tests/test_us_market.js（417断言，含JS↔Python共享fixture跨端一致性）；全部既有回归通过（FIR-19 33/33、FIR-20 58/58、cross-parity 10/10、parity fixtures 10组）
 
 ### v4.0（2026-10-01）— 与网页端100%对齐
 

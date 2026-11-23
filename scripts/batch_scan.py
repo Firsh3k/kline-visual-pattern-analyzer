@@ -202,15 +202,98 @@ a:hover {{ text-decoration:underline; }}
     return report_path
 
 
+def scan_us_pool(pool_key, output_dir, min_score=0, workers=5):
+    """美股指数成分股批量扫描（实时拉取K线，与网页端/analyze_stock同一算法）。
+    pool_key: 'sp500'（标普500）或 'nasdaq100'（纳指100），成分股来自 sector_data/us_pools.json。
+    """
+    import concurrent.futures
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        from analyze_stock import analyze, fetch_market_env
+    except ImportError:
+        # 根目录 legacy 副本运行时，回退到 scripts/ 目录
+        sys.path.insert(0, os.path.join(script_dir, 'scripts'))
+        from analyze_stock import analyze, fetch_market_env
+
+    pools_path = None
+    for candidate in [
+        os.path.join(os.path.dirname(script_dir), 'sector_data', 'us_pools.json'),
+        os.path.join(script_dir, 'sector_data', 'us_pools.json'),
+    ]:
+        if os.path.isfile(candidate):
+            pools_path = candidate
+            break
+    if pools_path is None:
+        raise FileNotFoundError('未找到 sector_data/us_pools.json')
+    with open(pools_path, encoding='utf-8') as f:
+        pools = json.load(f)
+    pool_map = {'sp500': '标普500', 'nasdaq100': '纳指100'}
+    pool_name = pool_map[pool_key]
+    tickers = pools['pools'][pool_name]['tickers']
+    names = pools.get('names', {})
+
+    print(f"美股扫描池: {pool_name}（{len(tickers)}只，数据日期 {pools.get('updatedAt')}）")
+    market_env = fetch_market_env('us')
+    if market_env:
+        print(f"大盘环境: 标普500 {market_env['score']}分 {market_env['stage']}")
+    else:
+        print("警告: 标普500大盘数据获取失败，个股置信度将不含大盘环境")
+
+    results, errors = [], []
+
+    def work(ticker):
+        try:
+            return analyze(ticker, names.get(ticker), market_env=market_env)
+        except Exception as e:
+            return {'code': ticker, 'error': str(e)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, r in enumerate(ex.map(work, tickers), 1):
+            if 'error' in r:
+                errors.append(r)
+            else:
+                results.append(r)
+            if i % 25 == 0 or i == len(tickers):
+                print(f"进度 {i}/{len(tickers)}，成功 {len(results)}，失败 {len(errors)}")
+
+    results.sort(key=lambda r: r.get('attention_score', 0), reverse=True)
+    filtered = [r for r in results if r.get('attention_score', 0) >= min_score]
+    os.makedirs(output_dir, exist_ok=True)
+    stamp = datetime.now().strftime('%Y-%m-%d')
+    json_path = os.path.join(output_dir, f'us_scan_{pool_key}_{stamp}.json')
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump({'pool': pool_name, 'date': stamp, 'market_env': market_env,
+                   'total': len(tickers), 'success': len(results), 'failed': len(errors),
+                   'min_score': min_score, 'results': filtered, 'errors': errors},
+                  f, ensure_ascii=False, indent=1)
+
+    md_path = os.path.join(output_dir, f'us_scan_{pool_key}_{stamp}.md')
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write(f"# 美股{pool_name}形态扫描 {stamp}\n\n")
+        f.write(f"扫描 {len(tickers)} 只，成功 {len(results)}，失败 {len(errors)}，推荐度≥{min_score} 共 {len(filtered)} 只\n\n")
+        if market_env:
+            f.write(f"大盘环境：标普500 {market_env['score']}分 {market_env['stage']}\n\n")
+        f.write("| 排名 | 代码 | 名称 | 现价$ | 涨跌% | 最佳形态 | 推荐度 | 等级 | 买入可信度 | 卖出可信度 |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|---|\n")
+        for i, r in enumerate(filtered, 1):
+            f.write(f"| {i} | {r['code']} | {r['name']} | {r['close']} | {r['change_pct']} | "
+                    f"{r.get('best_pattern_name', '')} | {r.get('attention_score', '')} | {r.get('attention_level', '')} | "
+                    f"{r.get('buy_accuracy', '')}% | {r.get('sell_accuracy', '')}% |\n")
+    print(f"\n扫描完成: {json_path}\n报告: {md_path}")
+    return json_path
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(
-        description='批量K线形态扫描器 - 扫描data目录下所有CSV文件，汇总近期上涨形态信号',
+        description='批量K线形态扫描器 - A股扫描data目录CSV；美股实时扫描标普500/纳指100成分股',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''示例：
-  python3 batch_scan.py                    # 扫描最近10个交易日
-  python3 batch_scan.py --days 20         # 扫描最近20个交易日
-  python3 batch_scan.py -d 5 --data ./mydata  # 指定数据目录
+  python3 batch_scan.py                    # A股：扫描最近10个交易日
+  python3 batch_scan.py --days 20         # A股：扫描最近20个交易日
+  python3 batch_scan.py -d 5 --data ./mydata  # A股：指定数据目录
+  python3 batch_scan.py --us-pool sp500      # 美股：标普500成分股实时扫描
+  python3 batch_scan.py --us-pool nasdaq100 --min-score 60  # 美股：纳指100，推荐度≥60
 '''
     )
     parser.add_argument('-d', '--days', type=int, default=10,
@@ -219,7 +302,21 @@ if __name__ == '__main__':
                         help='指定数据目录（默认自动向上查找data/目录）')
     parser.add_argument('--output', type=str, default=None,
                         help='指定输出目录（默认data目录同级的output/）')
+    parser.add_argument('--us-pool', type=str, choices=['sp500', 'nasdaq100'], default=None,
+                        help='美股扫描池：sp500=标普500，nasdaq100=纳指100（实时拉取K线）')
+    parser.add_argument('--min-score', type=int, default=0,
+                        help='美股扫描最低推荐度过滤（默认0不过滤）')
     args = parser.parse_args()
+
+    # 美股扫描模式
+    if args.us_pool:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        default_out = os.path.join(os.path.dirname(script_dir), 'output')
+        if os.path.isdir(os.path.join(script_dir, 'sector_data')):
+            default_out = os.path.join(script_dir, 'output')
+        output_dir = args.output or default_out
+        scan_us_pool(args.us_pool, output_dir, args.min_score)
+        sys.exit(0)
 
     # 查找data目录
     if args.data:

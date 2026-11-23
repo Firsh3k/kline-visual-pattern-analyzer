@@ -11,6 +11,7 @@ matchBearPatterns + calcAttentionScore + renderAnalysis 完全对齐。
 """
 
 import sys
+import os
 import json
 import urllib.request
 import re
@@ -37,8 +38,203 @@ def fetch_kline(code, datalen=250):
     return None
 
 
-def fetch_market_env():
-    """拉取上证指数计算大盘环境（与网页端analyzeMarketEnv一致）"""
+# ============ 美股数据层 ============
+# 主数据源：腾讯美股前复权日K（usfqkline，qfq，需交易所后缀如 NVDA.OQ / SPY.AM）
+# 备用数据源：新浪美股日K（US_MinKService.getDailyK，原始未复权价，需本地拆股复权）
+# 与网页端 kline_analyzer.html 的 fetchUSKline / adjustUSSplits / detectSplitRatio 逻辑一致
+
+US_SPLIT_RATIOS_FWD = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 50, 100]
+US_SPLIT_RATIOS_REV = [2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 40, 50, 100]
+
+
+def is_us_code(code):
+    """美股代码：字母开头，可含数字/点/连字符，1-6位（如 AAPL、BRK.B）"""
+    return bool(re.match(r'^[A-Za-z][A-Za-z0-9.\-]{0,5}$', code or ''))
+
+
+def detect_split_ratio(prev_close, day):
+    """检测相邻两日间是否发生拆股（与网页端detectSplitRatio完全一致）。
+    r>1 正向拆股（价格除以r），r<1 合股。判定条件：
+    1) 前收盘/今开盘 与某拆股比例误差≤1%（交易所拆股开盘价按精确比例计算）
+    2) 前收盘/今收盘 与同一比例误差≤15%
+    3) 当日日内波动 |close/open-1| ≤25%（排除崩盘/暴涨日误判）
+    """
+    if not prev_close or not day or not day.get('open') or not day.get('close'):
+        return None
+    gap = prev_close / day['open']
+    if abs(day['close'] / day['open'] - 1) > 0.25:
+        return None
+    candidates = list(US_SPLIT_RATIOS_FWD) + [1.0 / r for r in US_SPLIT_RATIOS_REV]
+    for r in candidates:
+        if abs(gap - r) / r <= 0.01 and abs(prev_close / day['close'] - r) / r <= 0.15:
+            return r
+    return None
+
+
+def adjust_us_splits(data):
+    """新浪美股原始价 → 前复权（与网页端adjustUSSplits完全一致）。
+    从最新日向前回溯，检测到拆股则把之前所有OHLC除以累计比例、成交量乘以累计比例。
+    data: [{day, open, high, low, close, volume}, ...] 按日期升序，数值为float。
+    """
+    if not data or len(data) < 2:
+        return data or []
+    out = [dict(d) for d in data]
+    factor = 1.0
+    for i in range(len(data) - 1, 0, -1):
+        r = detect_split_ratio(data[i - 1]['close'], data[i])
+        if r:
+            factor *= r
+        if factor != 1:
+            out[i - 1]['open'] = data[i - 1]['open'] / factor
+            out[i - 1]['high'] = data[i - 1]['high'] / factor
+            out[i - 1]['low'] = data[i - 1]['low'] / factor
+            out[i - 1]['close'] = data[i - 1]['close'] / factor
+            out[i - 1]['volume'] = data[i - 1]['volume'] * factor
+    return out
+
+
+def fetch_us_quote(ticker):
+    """腾讯美股实时行情：返回 (中文名, 带交易所后缀的完整代码)，失败返回 (None, None)"""
+    t = ticker.upper()
+    url = f'https://qt.gtimg.cn/q=us{t}'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        text = urllib.request.urlopen(req, timeout=10).read().decode('gbk', errors='replace')
+        m = re.search(r'v_us' + re.escape(t) + r'="([^"]*)"', text)
+        if m:
+            parts = m.group(1).split('~')
+            if len(parts) > 3 and parts[1] and parts[2]:
+                return parts[1], parts[2]
+    except Exception:
+        pass
+    return None, None
+
+
+def fetch_sina_us_kline(symbol):
+    """新浪美股日K（全量历史原始价）。symbol为小写ticker（aapl）或指数（.inx）。
+    返回 [{day, open, high, low, close, volume}, ...] 升序，失败返回None。
+    """
+    url = (f'https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/callback/'
+           f'US_MinKService.getDailyK?symbol={symbol}&___qn=3')
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        text = urllib.request.urlopen(req, timeout=20).read().decode('utf-8')
+        match = re.search(r'\((.*)\)', text, re.DOTALL)
+        if not match:
+            return None
+        raw = json.loads(match.group(1))
+        data = [{
+            'day': r['d'], 'open': float(r['o']), 'high': float(r['h']),
+            'low': float(r['l']), 'close': float(r['c']), 'volume': float(r['v'])
+        } for r in raw]
+        data.sort(key=lambda d: d['day'])
+        return data
+    except Exception:
+        return None
+
+
+_US_POOL_META = None
+
+
+def _us_pool_meta():
+    """懒加载扫描池元数据（交易所后缀/中文名映射），避免每只股票都依赖实时行情请求"""
+    global _US_POOL_META
+    if _US_POOL_META is None:
+        _US_POOL_META = {'fullSymbols': {}, 'names': {}}
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        for candidate in [
+            os.path.join(os.path.dirname(script_dir), 'sector_data', 'us_pools.json'),
+            os.path.join(script_dir, 'sector_data', 'us_pools.json'),
+        ]:
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, encoding='utf-8') as f:
+                        pools = json.load(f)
+                    _US_POOL_META = {
+                        'fullSymbols': pools.get('fullSymbols', {}),
+                        'names': pools.get('names', {}),
+                    }
+                except Exception:
+                    pass
+                break
+    return _US_POOL_META
+
+
+def fetch_us_kline(code, datalen=250):
+    """美股K线统一入口：腾讯前复权优先，新浪原始价+拆股复权兜底。
+    扫描池内代码直接用内嵌后缀映射，不依赖实时行情请求。
+    返回 (name, rows)，rows格式与fetch_kline一致（day/open/high/low/close/volume）。
+    """
+    t = code.upper()
+    meta = _us_pool_meta()
+    full_symbol = meta['fullSymbols'].get(t)
+    name = meta['names'].get(t)
+    if not full_symbol:
+        q_name, full_symbol = fetch_us_quote(t)
+        name = name or q_name
+    if not name:
+        name = t
+
+    # 主数据源：腾讯前复权
+    if full_symbol:
+        full = 'us' + full_symbol
+        url = f'https://ifzq.gtimg.cn/appstock/app/usfqkline/get?param={full},day,,,{datalen},qfq'
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            payload = json.loads(urllib.request.urlopen(req, timeout=15).read().decode('utf-8'))
+            sd = (payload.get('data') or {}).get(full) or {}
+            rows = sd.get('qfqday') or sd.get('day') or []
+            if rows:
+                data = [{
+                    'day': r[0], 'open': float(r[1]), 'close': float(r[2]),
+                    'high': float(r[3]), 'low': float(r[4]), 'volume': float(r[5])
+                } for r in rows]
+                data.sort(key=lambda d: d['day'])
+                return name, data
+        except Exception:
+            pass
+
+    # 备用数据源：新浪美股（原始价，本地拆股复权后截取最近datalen根）
+    raw = fetch_sina_us_kline(t.lower())
+    if not raw:
+        return name, None
+    adjusted = adjust_us_splits(raw)
+    return name, adjusted[-datalen:]
+
+
+def fetch_us_index_kline(datalen=250):
+    """标普500指数日K：腾讯 us.INX 主源（仅取datalen根，快），新浪 .inx 全量历史兜底"""
+    try:
+        url = f'https://ifzq.gtimg.cn/appstock/app/usfqkline/get?param=us.INX,day,,,{datalen},qfq'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            j = json.loads(resp.read().decode('utf-8'))
+        sd = (j.get('data') or {}).get('us.INX') or {}
+        rows = sd.get('qfqday') or sd.get('day') or []
+        if len(rows) > 60:
+            data = [{
+                'day': r[0], 'open': float(r[1]), 'close': float(r[2]),
+                'high': float(r[3]), 'low': float(r[4]), 'volume': float(r[5]),
+            } for r in rows]
+            data.sort(key=lambda x: x['day'])
+            return data
+    except Exception:
+        pass
+    raw = fetch_sina_us_kline('.inx')
+    if not raw:
+        return None
+    return raw[-datalen:]
+
+
+def fetch_market_env(market='cn'):
+    """拉取大盘指数计算大盘环境（与网页端analyzeMarketEnv一致）。
+    market='cn'：上证指数sh000001；market='us'：标普500（.INX）。
+    """
+    if market == 'us':
+        data = fetch_us_index_kline(250)
+        if data and len(data) >= 60:
+            return calc_market_env_from_data(data)
+        return None
     try:
         url = 'https://quotes.sina.cn/cn/api/jsonp_v2.php/callback/CN_MarketDataService.getKLineData?symbol=sh000001&scale=240&ma=no&datalen=250'
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -1598,7 +1794,14 @@ def calculate_backtest_horizons(data, cutoff_date):
 def analyze(code, name=None, market_env=None, backtest_date=None):
     # 回测模式下拉取500天数据
     datalen = 500 if backtest_date else 250
-    kline = fetch_kline(code, datalen=datalen)
+    us_market = is_us_code(code)
+    if us_market:
+        code = code.upper()
+        us_name, kline = fetch_us_kline(code, datalen=datalen)
+        if name is None or name == code:
+            name = us_name
+    else:
+        kline = fetch_kline(code, datalen=datalen)
     if not kline or len(kline) < 60:
         return {'error': f'K线数据不足（{len(kline) if kline else 0}根），无法分析'}
 
@@ -1628,28 +1831,31 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     n = len(data)
     last = n - 1
 
-    # 大盘环境（回测模式下也用截取后的数据）
+    # 大盘环境（回测模式下也用截取后的数据；A股=上证指数，美股=标普500）
     if market_env is None:
         if backtest_date:
-            # 直接拉取上证指数sh000001，避免被误判为平安银行
-            market_url = f'https://quotes.sina.cn/cn/api/jsonp_v2.php/callback/CN_MarketDataService.getKLineData?symbol=sh000001&scale=240&ma=no&datalen=500'
-            req = urllib.request.Request(market_url, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=10)
-            text = resp.read().decode('utf-8')
-            match = re.search(r'\((.*)\)', text, re.DOTALL)
-            market_raw = json.loads(match.group(1)) if match else []
-            market_data = []
-            for d in market_raw:
-                market_data.append({
-                    'day': d['day'], 'open': float(d['open']), 'high': float(d['high']),
-                    'low': float(d['low']), 'close': float(d['close']), 'volume': float(d['volume'])
-                })
+            if us_market:
+                market_data = fetch_us_index_kline(500) or []
+            else:
+                # 直接拉取上证指数sh000001，避免被误判为平安银行
+                market_url = f'https://quotes.sina.cn/cn/api/jsonp_v2.php/callback/CN_MarketDataService.getKLineData?symbol=sh000001&scale=240&ma=no&datalen=500'
+                req = urllib.request.Request(market_url, headers={'User-Agent': 'Mozilla/5.0'})
+                resp = urllib.request.urlopen(req, timeout=10)
+                text = resp.read().decode('utf-8')
+                match = re.search(r'\((.*)\)', text, re.DOTALL)
+                market_raw = json.loads(match.group(1)) if match else []
+                market_data = []
+                for d in market_raw:
+                    market_data.append({
+                        'day': d['day'], 'open': float(d['open']), 'high': float(d['high']),
+                        'low': float(d['low']), 'close': float(d['close']), 'volume': float(d['volume'])
+                    })
             market_cut = [d for d in market_data if d['day'][:10] <= backtest_date]
             if len(market_cut) > 250:
                 market_cut = market_cut[-250:]
             market_env = calc_market_env_from_data(market_cut)
         else:
-            market_env = fetch_market_env()
+            market_env = fetch_market_env('us' if us_market else 'cn')
 
     # 指标计算
     ind = calc_indicators(data)
@@ -1788,6 +1994,7 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
     return {
         'code': code,
         'name': name or code,
+        'market': 'us' if us_market else 'cn',
         'date': data[last]['day'][:10],
         'close': round(data[last]['close'], 2),
         'change': round(change, 2),
@@ -1850,13 +2057,16 @@ def analyze(code, name=None, market_env=None, backtest_date=None):
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print('用法: python3 analyze_stock.py <股票代码> [股票名称] [回测日期]')
-        print('示例: python3 analyze_stock.py 002436 兴森科技')
+        print('A股: python3 analyze_stock.py 002436 兴森科技')
+        print('美股: python3 analyze_stock.py AAPL（字母代码自动识别为美股，名称自动获取）')
         print('回测: python3 analyze_stock.py 688105 诺唯赞 2026-09-07')
         sys.exit(1)
 
     code = sys.argv[1].strip()
-    name = sys.argv[2] if len(sys.argv) >= 3 else code
+    name = sys.argv[2] if len(sys.argv) >= 3 else None
     backtest_date = sys.argv[3] if len(sys.argv) >= 4 else None
+    if name is None and not is_us_code(code):
+        name = code
 
     try:
         result = analyze(code, name, backtest_date=backtest_date)

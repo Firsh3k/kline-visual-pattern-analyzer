@@ -186,11 +186,18 @@ canvas { width: 100%; display: block; }
       <span class="version-dot"></span>
     </div>
   </div>
-  <div class="tabs">
-    <button class="tab active" onclick="switchTab('patterns')">典型图形库</button>
-    <button class="tab" onclick="switchTab('analyze')">股票分析</button>
-    <button class="tab" onclick="switchTab('watchlist')">自选股池</button>
-    <button class="tab" onclick="switchTab('scanner')">市场扫描</button>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <!-- 市场切换（A股 / 美股） -->
+    <div id="marketSwitch" style="display:inline-flex;background:#0f1419;border:1px solid #2a3441;border-radius:8px;padding:3px;gap:2px;">
+      <button id="marketBtnCn" onclick="switchMarket('cn')" style="padding:6px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;background:#e74c3c;color:#fff;font-weight:600;">🇨🇳 A股</button>
+      <button id="marketBtnUs" onclick="switchMarket('us')" style="padding:6px 16px;border:none;border-radius:6px;font-size:13px;cursor:pointer;background:transparent;color:#8899aa;">🇺🇸 美股</button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('patterns')">典型图形库</button>
+      <button class="tab" onclick="switchTab('analyze')">股票分析</button>
+      <button class="tab" onclick="switchTab('watchlist')">自选股池</button>
+      <button class="tab" onclick="switchTab('scanner')">市场扫描</button>
+    </div>
   </div>
 </div>
 
@@ -305,7 +312,7 @@ canvas { width: 100%; display: block; }
       </div>
       <button onclick="doAnalyze()" id="analyzeBtn">开始分析</button>
     </div>
-    <div class="quick-codes">
+    <div class="quick-codes" id="quickCodes">
       <span class="quick-code" onclick="quickAnalyze('002436')">兴森科技 002436</span>
       <span class="quick-code" onclick="quickAnalyze('600519')">贵州茅台 600519</span>
       <span class="quick-code" onclick="quickAnalyze('002594')">比亚迪 002594</span>
@@ -338,7 +345,10 @@ canvas { width: 100%; display: block; }
       <div id="watchlistTags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;min-height:32px;"></div>
       
       <!-- 云配置同步 -->
-      <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:8px;padding:12px;margin-bottom:12px;">
+      <div id="usWatchlistNote" style="display:none;background:rgba(52,152,219,0.08);border:1px solid rgba(52,152,219,0.3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#5dade2;line-height:1.6;">
+        🇺🇸 美股自选股暂存本地浏览器（与A股自选股分开保存）。GitHub云同步当前仅支持A股自选股，美股云同步将在后续版本支持。
+      </div>
+      <div id="cloudSyncPanel" style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:8px;padding:12px;margin-bottom:12px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
           <span style="font-size:13px;font-weight:600;color:#f39c12;">☁️ 云配置同步（GitHub）</span>
           <div style="display:flex;gap:6px;align-items:center;">
@@ -448,8 +458,8 @@ canvas { width: 100%; display: block; }
         <button onclick="addCustomSector()" style="padding:8px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:13px;cursor:pointer;">添加板块</button>
       </div>
 
-      <!-- 动态同花顺板块指数（FIR-22） -->
-      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+      <!-- 动态同花顺板块指数（FIR-22，仅A股市场显示） -->
+      <div id="thsSectorRow" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
         <span style="font-size:12px;color:#556677;white-space:nowrap;">同花顺板块指数:</span>
         <input type="text" id="thsSectorCode" placeholder="如 886032（固态电池）" style="width:160px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;" maxlength="6">
         <button onclick="resolveTHSSector()" style="padding:8px 14px;background:#1a3a4a;color:#5dade2;border:1px solid #2a5a6a;border-radius:6px;font-size:13px;cursor:pointer;">查询验证</button>
@@ -468,7 +478,7 @@ canvas { width: 100%; display: block; }
 </div>
 
 <div class="footer">
-  数据来源：新浪财经公开接口（前复权日线） | 本工具基于技术形态量化分析，仅供学习参考，不构成投资建议<br>
+  <span id="footerDataSource">数据来源：新浪财经公开接口（前复权日线）</span> | 本工具基于技术形态量化分析，仅供学习参考，不构成投资建议<br>
   股市有风险，投资需谨慎<br>
   <span class="footer-version">
     <span id="footerVersion">Version Unknown</span> ·
@@ -701,8 +711,234 @@ function switchTab(tab) {
   document.getElementById('page-scanner').classList.toggle('active', tab==='scanner');
 }
 
+// ============ 市场切换（A股 / 美股） ============
+const MARKET_KEY = 'kline_market_v1';
+let CURRENT_MARKET = 'cn';
+try { if (localStorage.getItem(MARKET_KEY) === 'us') CURRENT_MARKET = 'us'; } catch(e) {}
+
+const MARKET_CONFIG = {
+  cn: {
+    label: 'A股', indexName: '上证指数', currency: '¥',
+    codePattern: /^\d{6}$/,
+    placeholder: '输入股票代码，如 002436、600519',
+    addPlaceholder: '输入6位股票代码，如 002436',
+    sectorPlaceholder: '股票代码，逗号分隔',
+    quickCodes: [['002436','兴森科技'],['600519','贵州茅台'],['002594','比亚迪'],['300750','宁德时代'],['688105','诺唯赞']],
+    exampleWatchlist: ['002436', '600519', '002594', '300750', '601318', '000858'],
+    defaultCode: '002436'
+  },
+  us: {
+    label: '美股', indexName: '标普500', currency: '$',
+    codePattern: /^[A-Za-z][A-Za-z0-9.\-]{0,5}$/,
+    placeholder: '输入美股代码，如 AAPL、NVDA',
+    addPlaceholder: '输入美股代码，如 AAPL',
+    sectorPlaceholder: '美股代码，逗号分隔，如 AAPL,NVDA',
+    quickCodes: [['AAPL','苹果'],['NVDA','英伟达'],['MSFT','微软'],['TSLA','特斯拉'],['GOOGL','谷歌']],
+    exampleWatchlist: ['AAPL', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META'],
+    defaultCode: 'AAPL'
+  }
+};
+
+function isUSMarket() { return typeof CURRENT_MARKET !== 'undefined' && CURRENT_MARKET === 'us'; }
+function isUSCode(code) { return /^[A-Za-z][A-Za-z0-9.\-]{0,5}$/.test(code || ''); }
+function marketCfg() { return MARKET_CONFIG[isUSMarket() ? 'us' : 'cn']; }
+
+// ============ 美股数据层 ============
+// 主数据源：腾讯美股前复权日K（usfqkline，qfq，支持CORS，需交易所后缀如 NVDA.OQ / SPY.AM）
+// 备用数据源：新浪美股日K（US_MinKService.getDailyK，原始未复权价，需本地拆股复权）
+// 交易所后缀与中文名：腾讯实时行情 qt.gtimg.cn/q=usTICKER（GBK）
+
+// 美股拆股比例表（启发式判定用；主数据源腾讯已前复权，此表仅用于新浪备用源）
+const US_SPLIT_RATIOS_FWD = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 50, 100];
+const US_SPLIT_RATIOS_REV = [2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 40, 50, 100];
+
+// 检测 i-1 日与 i 日之间是否发生拆股。r>1 为正向拆股（价格除以r），r<1 为合股。
+// 判定条件（全部满足）：
+// 1) 前收盘/今开盘 的跳空比例与某拆股比例误差≤1%（交易所拆股开盘价按精确比例计算）
+// 2) 前收盘/今收盘 与同一比例误差≤15%（全天价格整体缩放）
+// 3) 当日日内波动 |close/open-1| ≤25%（排除崩盘/暴涨日的误判）
+function detectSplitRatio(prevClose, day) {
+  if (!prevClose || !day || !day.open || !day.close) return null;
+  const gap = prevClose / day.open;
+  if (Math.abs(day.close / day.open - 1) > 0.25) return null;
+  const candidates = [];
+  for (const r of US_SPLIT_RATIOS_FWD) candidates.push(r);
+  for (const r of US_SPLIT_RATIOS_REV) candidates.push(1 / r);
+  for (const r of candidates) {
+    if (Math.abs(gap - r) / r <= 0.01 && Math.abs(prevClose / day.close - r) / r <= 0.15) return r;
+  }
+  return null;
+}
+
+// 新浪美股原始价 → 前复权：从最新日向前回溯，检测到拆股则把之前所有OHLC除以累计比例、成交量乘以累计比例
+function adjustUSSplits(data) {
+  if (!data || data.length < 2) return data || [];
+  const out = data.map(d => ({ date: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume }));
+  let factor = 1;
+  for (let i = data.length - 1; i >= 1; i--) {
+    const r = detectSplitRatio(data[i - 1].close, data[i]);
+    if (r) factor *= r;
+    if (factor !== 1) {
+      out[i - 1].open = data[i - 1].open / factor;
+      out[i - 1].high = data[i - 1].high / factor;
+      out[i - 1].low = data[i - 1].low / factor;
+      out[i - 1].close = data[i - 1].close / factor;
+      out[i - 1].volume = data[i - 1].volume * factor;
+    }
+  }
+  return out;
+}
+
+// 新浪美股日K（JSONP，返回全量历史原始价；symbol为小写ticker如 aapl，或指数 .inx）
+function fetchSinaUSKlineJSONP(symbol) {
+  return new Promise((resolve, reject) => {
+    const callbackName = '_sina_us_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const url = `https://stock.finance.sina.com.cn/usstock/api/jsonp_v2.php/${callbackName}/US_MinKService.getDailyK?symbol=${encodeURIComponent(symbol)}&___qn=3`;
+    const script = document.createElement('script');
+    // 新浪美股返回全量历史（大票可达1MB+），超时放宽到30秒
+    const timer = setTimeout(() => { cleanup(); reject(new Error('新浪美股接口超时')); }, 30000);
+    function cleanup() {
+      clearTimeout(timer);
+      try { delete window[callbackName]; } catch(e) { window[callbackName] = undefined; }
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    window[callbackName] = function(rows) {
+      cleanup();
+      if (!rows || !Array.isArray(rows) || rows.length === 0) { reject(new Error('新浪美股数据为空')); return; }
+      const data = rows.map(r => ({
+        date: r.d, open: parseFloat(r.o), close: parseFloat(r.c),
+        high: parseFloat(r.h), low: parseFloat(r.l), volume: parseFloat(r.v)
+      }));
+      data.sort((a, b) => a.date.localeCompare(b.date));
+      resolve(data);
+    };
+    script.onerror = () => { cleanup(); reject(new Error('新浪美股接口加载失败')); };
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+// 腾讯美股实时行情：解析中文名与带交易所后缀的完整代码（如 NVDA → NVDA.OQ）
+function fetchUSQuoteJSONP(ticker) {
+  return new Promise((resolve) => {
+    const t = ticker.toUpperCase();
+    const varName = 'v_us' + t;
+    const url = `https://qt.gtimg.cn/q=us${t}`;
+    const script = document.createElement('script');
+    script.charset = 'gbk';
+    const timer = setTimeout(() => { cleanup(); resolve(null); }, 6000);
+    function cleanup() {
+      clearTimeout(timer);
+      try { delete window[varName]; } catch(e) { window[varName] = undefined; }
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    script.onload = () => {
+      try {
+        const val = window[varName];
+        if (val && typeof val === 'string') {
+          const parts = val.split('~');
+          if (parts.length > 3 && parts[1] && parts[2]) {
+            cleanup();
+            resolve({ name: parts[1], fullSymbol: parts[2] });
+            return;
+          }
+        }
+      } catch(e) {}
+      cleanup();
+      resolve(null);
+    };
+    script.onerror = () => { cleanup(); resolve(null); };
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+// 美股K线统一入口：腾讯前复权优先，新浪原始价+拆股复权兜底
+// 扫描池内代码直接使用内嵌后缀/名称映射（US_FULL_SYMBOLS/US_STOCK_NAMES），
+// 不依赖实时行情请求，避免行情接口抖动导致整个数据源被跳过
+async function fetchUSKline(ticker, datalen = 250) {
+  const t = ticker.toUpperCase();
+  const knownFull = (typeof US_FULL_SYMBOLS !== 'undefined' && US_FULL_SYMBOLS[t]) || null;
+  const knownName = (typeof US_STOCK_NAMES !== 'undefined' && US_STOCK_NAMES[t]) || null;
+  let quote = null;
+  if (!knownFull) quote = await fetchUSQuoteJSONP(t).catch(() => null);
+  const name = knownName || (quote && quote.name) || t;
+  const fullSymbol = knownFull || (quote && quote.fullSymbol);
+
+  // 主数据源：腾讯前复权（需要完整代码含交易所后缀；瞬时网络错误重试1次）
+  if (fullSymbol) {
+    const full = 'us' + fullSymbol;
+    const url = `https://ifzq.gtimg.cn/appstock/app/usfqkline/get?param=${full},day,,,${datalen},qfq`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const resp = await fetch(url, { signal: controller.signal });
+        const json = await resp.json();
+        const sd = json.data && json.data[full];
+        const rows = sd && (sd.qfqday || sd.day);
+        if (rows && rows.length > 0) {
+          const data = rows.map(r => ({
+            date: r[0], open: parseFloat(r[1]), close: parseFloat(r[2]),
+            high: parseFloat(r[3]), low: parseFloat(r[4]), volume: parseFloat(r[5])
+          }));
+          data.sort((a, b) => a.date.localeCompare(b.date));
+          return { name, code: t, data };
+        }
+        break; // 有响应但无数据，不重试，走备用源
+      } catch(e) {
+        console.warn(`腾讯美股K线第${attempt + 1}次失败`, e);
+      } finally { clearTimeout(timer); }
+    }
+  }
+
+  // 备用数据源：新浪美股（原始价，本地拆股复权后截取最近datalen根）
+  const raw = await fetchSinaUSKlineJSONP(t.toLowerCase());
+  const adjusted = adjustUSSplits(raw);
+  const data = adjusted.length > datalen ? adjusted.slice(-datalen) : adjusted;
+  return { name, code: t, data };
+}
+
+// 大盘指数K线：A股=上证指数(sh000001)，美股=标普500
+// 美股基准主源腾讯 us.INX（仅取datalen根，快），新浪 .inx 全量历史兜底
+async function fetchMarketIndexData(datalen = 250) {
+  if (isUSMarket()) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const url = `https://ifzq.gtimg.cn/appstock/app/usfqkline/get?param=us.INX,day,,,${datalen},qfq`;
+        const resp = await fetch(url, { signal: controller.signal });
+        const json = await resp.json();
+        const sd = json.data && json.data['us.INX'];
+        const rows = sd && (sd.qfqday || sd.day);
+        if (rows && rows.length > 60) {
+          const data = rows.map(r => ({
+            date: r[0], open: parseFloat(r[1]), close: parseFloat(r[2]),
+            high: parseFloat(r[3]), low: parseFloat(r[4]), volume: parseFloat(r[5])
+          }));
+          data.sort((a, b) => a.date.localeCompare(b.date));
+          return data;
+        }
+      } finally { clearTimeout(timer); }
+    } catch(e) { console.warn('腾讯标普500指数失败，尝试新浪备用源', e); }
+    const raw = await fetchSinaUSKlineJSONP('.inx');
+    return raw.length > datalen ? raw.slice(-datalen) : raw;
+  }
+  return fetchSinaKlineJSONP('sh000001', datalen);
+}
+
+// 大盘环境（修复：此前 analyzeSingleStock 引用了未定义的 fetchMarketEnv）
+async function fetchMarketEnv() {
+  const marketData = await fetchMarketIndexData(250);
+  if (marketData && marketData.length > 60) return analyzeMarketEnv(marketData);
+  return null;
+}
+
 // ============ 数据获取 ============
 async function fetchKline(code, datalen = 250) {
+  // 美股代码（字母开头）走美股数据层
+  if (isUSCode(code)) return fetchUSKline(code, datalen);
   const market = code.startsWith('6') ? 'sh' : 'sz';
   const symbol = market + code;
   const controller = new AbortController();
@@ -718,7 +954,7 @@ async function fetchKline(code, datalen = 250) {
     } catch(e) { console.warn('新浪JSONP失败，尝试备用源', e); }
 
     // 备用数据源：腾讯财经
-    const txUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,250,qfq`;
+    const txUrl = `https://ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,250,qfq`;
     const resp = await fetch(txUrl, { signal: controller.signal });
     const json = await resp.json();
     const sd = json.data?.[symbol];
@@ -2514,8 +2750,10 @@ function toggleBacktestMode() {
 }
 
 async function doAnalyze() {
-  const code = document.getElementById('codeInput').value.trim();
-  if (!code || !/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
+  let code = document.getElementById('codeInput').value.trim();
+  const cfg = marketCfg();
+  if (!code || !cfg.codePattern.test(code)) { alert(isUSMarket() ? '请输入有效的美股代码（如 AAPL、NVDA、BRK.B）' : '请输入6位股票代码'); return; }
+  if (isUSMarket()) code = code.toUpperCase();
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true; btn.textContent = '分析中...';
   const area = document.getElementById('resultArea');
@@ -2525,10 +2763,10 @@ async function doAnalyze() {
     const backtestDate = isBacktest ? document.getElementById('backtestDate').value : null;
     const datalen = isBacktest ? 500 : 250;
 
-    // 并行拉取个股和大盘数据
+    // 并行拉取个股和大盘数据（A股=上证指数，美股=标普500）
     const [result, marketData] = await Promise.all([
       fetchKline(code, datalen),
-      fetchSinaKlineJSONP('sh000001', datalen).catch(() => null)
+      fetchMarketIndexData(datalen).catch(() => null)
     ]);
     if (!result.data || result.data.length < 30) throw new Error('数据不足');
 
@@ -2581,10 +2819,11 @@ function quickAnalyze(code) {
   doAnalyze();
 }
 
-// 双击在新标签页打开个股分析
+// 双击在新标签页打开个股分析（携带市场参数）
 function openStockInNewTab(code) {
   const url = new URL(window.location.href);
   url.searchParams.set('code', code);
+  url.searchParams.set('market', isUSMarket() ? 'us' : 'cn');
   window.open(url.toString(), '_blank');
 }
 
@@ -2978,14 +3217,14 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
       <!-- 大盘环境 -->
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <span style="font-size:13px;font-weight:600;color:#8899aa;">大盘环境（上证指数）</span>
+          <span style="font-size:13px;font-weight:600;color:#8899aa;">大盘环境（${marketCfg().indexName}）</span>
           ${marketEnv ? `<span style="font-size:20px;font-weight:800;color:${marketEnv.score>=60?'#e74c3c':marketEnv.score>=45?'#f39c12':'#2ecc71'}">${marketEnv.score}分</span>` : '<span style="font-size:13px;color:#556677;">暂无</span>'}
         </div>
         ${marketEnv ? `
           <div style="font-size:15px;font-weight:700;color:${marketEnv.trend==='bull'?'#e74c3c':marketEnv.trend==='bear'?'#2ecc71':'#f39c12'};margin-bottom:6px;">${marketEnv.stage} ${backtestInfo ? '<span style="font-size:11px;background:#f39c12;color:#000;padding:1px 6px;border-radius:8px;margin-left:6px;">回测 '+backtestInfo.date+'</span>' : ''}</div>
           <div style="font-size:12px;color:#aabbcc;line-height:1.6;margin-bottom:8px;">${marketEnv.advice}</div>
           <div style="display:flex;gap:10px;font-size:11px;color:#8899aa;flex-wrap:wrap;">
-            <span>上证: <b style="color:#f0f0f0">${marketEnv.price}</b></span>
+            <span>${isUSMarket() ? '标普500' : '上证'}: <b style="color:#f0f0f0">${marketEnv.price}</b></span>
             <span>20日涨跌: <b style="color:${parseFloat(marketEnv.change20)>=0?'#e74c3c':'#2ecc71'}">${parseFloat(marketEnv.change20)>=0?'+':''}${marketEnv.change20}%</b></span>
             <span>MA20: <b style="color:#f0f0f0">${marketEnv.ma20}</b></span>
             <span>MA60: <b style="color:#f0f0f0">${marketEnv.ma60}</b></span>
@@ -3560,19 +3799,23 @@ function renderAnalysis(result, marketEnv, backtestInfo = null) {
 
 // ============ 自选股池管理（localStorage持久化） ============
 const WATCHLIST_KEY = 'kline_watchlist_v1';
+const WATCHLIST_US_KEY = 'kline_watchlist_us_v1';
 let watchlistResults = {}; // code -> result 对象，缓存分析结果
 
-// 从localStorage读取自选股
+// 当前市场的自选股存储key（A股沿用原key，美股独立key；云同步仅覆盖A股）
+function watchlistKey() { return isUSMarket() ? WATCHLIST_US_KEY : WATCHLIST_KEY; }
+
+// 从localStorage读取自选股（按当前市场）
 function getWatchlist() {
   try {
-    const data = localStorage.getItem(WATCHLIST_KEY);
+    const data = localStorage.getItem(watchlistKey());
     return data ? JSON.parse(data) : [];
   } catch(e) { return []; }
 }
 
 // 保存自选股到localStorage
 function saveWatchlist(codes) {
-  try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(codes)); } catch(e) {}
+  try { localStorage.setItem(watchlistKey(), JSON.stringify(codes)); } catch(e) {}
 }
 
 // ============ 云配置同步（GitHub） ============
@@ -4328,8 +4571,9 @@ async function testGithubConnection() {
   }
 }
 
-// 自动同步触发：增减个股时调用
+// 自动同步触发：增减个股时调用（仅A股市场；美股自选股不参与云同步）
 function triggerAutoSync() {
+  if (isUSMarket()) return;
   const settings = getGithubSettings();
   if (settings && settings.autoSync && settings.token) {
     // 延迟500ms，避免连续操作频繁同步
@@ -4353,12 +4597,13 @@ function renderWatchlistTags() {
     return;
   }
   container.innerHTML = codes.map(code => {
-    const name = watchlistResults[code]?.name || code;
+    const name = watchlistResults[code]?.name || (isUSMarket() && typeof US_STOCK_NAMES !== 'undefined' && US_STOCK_NAMES[code]) || code;
+    const usMode = isUSMarket();
     return `<span style="display:inline-flex;align-items:center;gap:6px;background:#1a2332;border:1px solid #2a3441;border-radius:14px;padding:4px 8px 4px 12px;font-size:13px;">
       <span style="color:#f0f0f0">${name}</span>
       <span style="color:#556677;font-size:11px">${code}</span>
-      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="从所有设备删除">×</button>
-      <button onclick="deleteFromAllDevices('${code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:12px;padding:0 2px;line-height:1;" title="从所有设备删除（同步到云端）">☁️</button>
+      <button onclick="removeStock('${code}')" style="background:none;border:none;color:#8899aa;cursor:pointer;font-size:14px;padding:0 2px;line-height:1;" title="${usMode ? '删除（仅本设备）' : '从所有设备删除'}">×</button>
+      ${usMode ? '' : `<button onclick="deleteFromAllDevices('${code}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:12px;padding:0 2px;line-height:1;" title="从所有设备删除（同步到云端）">☁️</button>`}
     </span>`;
   }).join('');
 }
@@ -4366,10 +4611,22 @@ function renderWatchlistTags() {
 // 添加股票
 async function addStock() {
   const input = document.getElementById('addStockInput');
-  const code = input.value.trim();
-  if (!/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
+  let code = input.value.trim();
+  const cfg = marketCfg();
+  if (!cfg.codePattern.test(code)) { alert(isUSMarket() ? '请输入有效的美股代码（如 AAPL、NVDA、BRK.B）' : '请输入6位股票代码'); return; }
+  if (isUSMarket()) code = code.toUpperCase();
   const codes = getWatchlist();
   if (codes.includes(code)) { alert('该股票已在自选股池中'); return; }
+
+  // 美股：本地添加，不走tombstone/云同步逻辑
+  if (isUSMarket()) {
+    codes.push(code);
+    saveWatchlist(codes);
+    input.value = '';
+    renderWatchlistTags();
+    analyzeSingleStock(code);
+    return;
+  }
 
   // FIR-19: 检查是否在tombstone中（已从所有设备删除）
   let tombstones = [];
@@ -4461,6 +4718,17 @@ function showConfirm(message, title = '确认操作') {
 // 删除股票（默认全局删除：创建tombstone，同步后所有设备都会删除）
 async function removeStock(code) {
   if (!code) return;
+  // 美股：本地删除（美股自选股不参与GitHub云同步）
+  if (isUSMarket()) {
+    const confirmedUS = await showConfirm(`确定要删除美股自选 ${code} 吗？\n美股自选股保存在本地浏览器，删除仅影响本设备。`, '删除美股自选股');
+    if (!confirmedUS) return;
+    let codesUS = getWatchlist().filter(c => c !== code);
+    saveWatchlist(codesUS);
+    delete watchlistResults[code];
+    renderWatchlistTags();
+    renderWatchlistTable();
+    return;
+  }
   const confirmed = await showConfirm(`确定要从所有设备删除 ${code} 吗？\n该操作会同步到GitHub，其他设备同步后也会删除此股票。`, '删除自选股');
   if (!confirmed) return;
 
@@ -4488,6 +4756,17 @@ async function removeStock(code) {
 
 // 清空全部（原子事务：GET→tombstone→PUT带SHA→409重试→成功后才改本地）
 async function clearAllWatchlist() {
+  // 美股：仅本地清空（美股自选股不参与GitHub云同步，不创建tombstone）
+  if (isUSMarket()) {
+    const confirmedUS = await showConfirm('确定要清空全部美股自选股吗？\n美股自选股保存在本地浏览器，清空仅影响本设备。', '清空美股自选股');
+    if (!confirmedUS) return;
+    saveWatchlist([]);
+    watchlistResults = {};
+    renderWatchlistTags();
+    document.getElementById('batchResults').innerHTML = '';
+    document.getElementById('batchStatus').textContent = '';
+    return;
+  }
   const confirmed = await showConfirm('确定要从所有设备清空全部自选股吗？\n该操作会为所有股票创建删除标记，同步后所有设备都会清空。', '清空全部自选股');
   if (!confirmed) return;
 
@@ -4640,9 +4919,9 @@ async function clearAllWatchlist() {
   showSyncStatus('❌ 全局清空失败：重试次数已用完（未修改本地）', '#e74c3c');
 }
 
-// 加载示例自选股
+// 加载示例自选股（按当前市场）
 function loadExampleWatchlist() {
-  const examples = ['002436', '600519', '002594', '300750', '601318', '000858'];
+  const examples = marketCfg().exampleWatchlist;
   let codes = getWatchlist();
   examples.forEach(c => { if (!codes.includes(c)) codes.push(c); });
   saveWatchlist(codes);
@@ -4723,10 +5002,10 @@ async function analyzeAllWatchlist() {
   if (codes.length === 0) { alert('自选股池为空，请先添加股票'); return; }
   const status = document.getElementById('batchStatus');
   status.textContent = '正在获取大盘环境...';
-  // 先拉取大盘环境
+  // 先拉取大盘环境（A股=上证指数，美股=标普500）
   let marketEnv = null;
   try {
-    const marketData = await fetchSinaKlineJSONP('sh000001');
+    const marketData = await fetchMarketIndexData(250);
     if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
   } catch(e) { console.error('大盘数据获取失败', e); }
   status.textContent = `正在分析 0/${codes.length}...`;
@@ -4801,6 +5080,7 @@ function renderWatchlistTable() {
 
 // ============ 市场扫描 ============
 const SCAN_SECTORS_KEY = 'kline_custom_sectors_v1';
+const SCAN_SECTORS_US_KEY = 'kline_custom_sectors_us_v1';
 
 // 预置热门概念板块
 const PRESET_SECTORS = {
@@ -4823,20 +5103,31 @@ const PRESET_SECTORS = {
   'PCB概念': ['000823','001232','001389','002134','002141','002384','002436','002463','002552','002579','002636','002815','002913','002916','002938','300476','300657','300739','300814','300852','300903','300936','300964','301041','301132','301176','301251','301282','301366','301628','600183','600601','603175','603186','603228','603328','603386','603459','603920','603936','605058','605258','688183','688519','688655']
 };
 
+// ============ 美股预置扫描池（数据来源见 sector_data/us_pools.json 与 provenance） ============
+// 更新方式：修改 sector_data/us_pools.json 后同步此处（tests/test_us_market.py 校验一致性）
+const US_PRESET_POOLS = {
+  '标普500': ["A", "AAPL", "ABBV", "ABNB", "ABT", "ACGL", "ACN", "ADBE", "ADI", "ADM", "ADP", "ADSK", "AEE", "AEP", "AES", "AFL", "AIG", "AIZ", "AJG", "AKAM", "ALB", "ALGN", "ALL", "ALLE", "AMAT", "AMCR", "AMD", "AME", "AMGN", "AMP", "AMT", "AMZN", "ANET", "AON", "AOS", "APA", "APD", "APH", "APO", "APP", "APTV", "ARE", "ARES", "ATO", "AVGO", "AVY", "AWK", "AXON", "AXP", "AZO", "BA", "BAC", "BALL", "BAX", "BBY", "BDX", "BE", "BEN", "BF.B", "BG", "BIIB", "BKNG", "BKR", "BLK", "BMY", "BNY", "BR", "BRK.B", "BRO", "BSX", "BX", "BXP", "C", "CAH", "CARR", "CASY", "CAT", "CB", "CBOE", "CBRE", "CCI", "CCL", "CDNS", "CDW", "CEG", "CF", "CFG", "CHD", "CHRW", "CHTR", "CI", "CIEN", "CINF", "CL", "CLX", "CMCSA", "CME", "CMG", "CMI", "CMS", "CNC", "CNP", "COF", "COHR", "COIN", "COO", "COP", "COR", "COST", "CPAY", "CPRT", "CPT", "CRH", "CRL", "CRM", "CRWD", "CSCO", "CSGP", "CSX", "CTAS", "CTSH", "CVNA", "CVS", "CVX", "D", "DAL", "DASH", "DD", "DDOG", "DE", "DECK", "DELL", "DG", "DGX", "DHI", "DHR", "DIS", "DLR", "DLTR", "DOC", "DOV", "DOW", "DPZ", "DRI", "DTE", "DUK", "DVA", "DVN", "DXCM", "EBAY", "ECHO", "ECL", "ED", "EFX", "EG", "EIX", "EL", "ELV", "EME", "EMR", "EOG", "EQIX", "EQT", "ERIE", "ES", "ESS", "ETN", "ETR", "EVRG", "EW", "EXC", "EXE", "EXPD", "EXPE", "EXR", "F", "FANG", "FAST", "FCX", "FDS", "FDX", "FDXF", "FE", "FERG", "FFIV", "FICO", "FIS", "FISV", "FITB", "FIX", "FLEX", "FOX", "FOXA", "FRT", "FSLR", "FTNT", "FTV", "GD", "GDDY", "GE", "GEHC", "GEN", "GEV", "GILD", "GIS", "GL", "GLW", "GM", "GNRC", "GOOG", "GOOGL", "GPC", "GPN", "GRMN", "GS", "GWW", "HAL", "HAS", "HBAN", "HCA", "HD", "HIG", "HII", "HLT", "HON", "HONA", "HOOD", "HPE", "HPQ", "HRL", "HSIC", "HST", "HSY", "HUBB", "HUM", "HWM", "IBKR", "IBM", "ICE", "IDXX", "IEX", "IFF", "ILMN", "INCY", "INTC", "INTU", "INVH", "IP", "IQV", "IR", "IRM", "ISRG", "IT", "ITW", "IVZ", "J", "JBHT", "JBL", "JCI", "JKHY", "JNJ", "JPM", "KDP", "KEY", "KEYS", "KHC", "KIM", "KKR", "KLAC", "KMB", "KMI", "KO", "KR", "L", "LDOS", "LEN", "LH", "LHX", "LII", "LIN", "LITE", "LLY", "LMT", "LNT", "LOW", "LRCX", "LULU", "LUV", "LVS", "LYB", "LYV", "MA", "MAA", "MAR", "MAS", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET", "META", "MGM", "MKC", "MLM", "MMM", "MNST", "MO", "MOS", "MPC", "MPWR", "MRK", "MRNA", "MRSH", "MRVL", "MS", "MSCI", "MSFT", "MSI", "MTB", "MTD", "MU", "NCLH", "NDAQ", "NDSN", "NEE", "NEM", "NFLX", "NI", "NKE", "NOC", "NOW", "NRG", "NSC", "NTAP", "NTRS", "NUE", "NVDA", "NVR", "NWS", "NWSA", "NXPI", "O", "ODFL", "OKE", "OKTA", "OMC", "ON", "ORCL", "ORLY", "OTIS", "OXY", "P", "PANW", "PAYX", "PCAR", "PCG", "PEG", "PEP", "PFE", "PFG", "PG", "PGR", "PH", "PHM", "PKG", "PLD", "PLTR", "PM", "PNC", "PNR", "PNW", "PODD", "PPG", "PPL", "PRU", "PSA", "PSX", "PTC", "PWR", "PYPL", "Q", "QCOM", "RCL", "RDDT", "REG", "REGN", "RF", "RJF", "RL", "RMD", "ROK", "ROL", "ROP", "ROST", "RSG", "RTX", "RVTY", "SBAC", "SBUX", "SCHW", "SHW", "SJM", "SKYD", "SLB", "SMCI", "SNA", "SNDK", "SNPS", "SO", "SOLV", "SPG", "SPGI", "SRE", "STE", "STLD", "STT", "STX", "STZ", "SW", "SWK", "SWKS", "SYF", "SYK", "SYY", "T", "TDG", "TDY", "TECH", "TEL", "TER", "TFC", "TGT", "TJX", "TKO", "TMO", "TMUS", "TPL", "TPR", "TRGP", "TRMB", "TROW", "TRV", "TSCO", "TSLA", "TSN", "TT", "TTWO", "TWLO", "TXN", "TXT", "TYL", "UAL", "UBER", "UDR", "UHS", "ULTA", "UNH", "UNP", "UPS", "URI", "USB", "V", "VEEV", "VICI", "VLO", "VLTO", "VMC", "VMRK", "VRSK", "VRSN", "VRT", "VRTX", "VST", "VTR", "VTRS", "VYLR", "VZ", "WAB", "WAT", "WDAY", "WDC", "WEC", "WELL", "WFC", "WM", "WMB", "WMT", "WRB", "WSM", "WST", "WTW", "WY", "WYNN", "XEL", "XOM", "XYL", "XYZ", "YUM", "ZBH", "ZBRA", "ZTS"],
+  '纳指100': ["AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "ALAB", "ALNY", "AMAT", "AMD", "AMGN", "AMZN", "APP", "ARM", "ASML", "AVGO", "AXON", "BKNG", "BKR", "CCEP", "CDNS", "CEG", "CMCSA", "COST", "CPRT", "CRWD", "CRWV", "CSCO", "CSX", "CTAS", "DASH", "DDOG", "DXCM", "EXC", "FANG", "FAST", "FER", "FTNT", "GEHC", "GILD", "GOOG", "GOOGL", "HON", "HONA", "IDXX", "INTC", "INTU", "ISRG", "KDP", "KLAC", "LIN", "LITE", "LRCX", "MAR", "MCHP", "MDLZ", "MELI", "META", "MNST", "MPWR", "MRNA", "MRVL", "MSFT", "MSTR", "MU", "NBIS", "NFLX", "NVDA", "NXPI", "ODFL", "ORLY", "PANW", "PAYX", "PCAR", "PDD", "PEP", "PLTR", "PYPL", "QCOM", "REGN", "RKLB", "ROP", "ROST", "SBUX", "SHOP", "SNDK", "SNPS", "SPCX", "STX", "TER", "TMUS", "TRI", "TSLA", "TTWO", "TXN", "VRTX", "WDAY", "WDC", "WMT", "XEL"]
+};
+
+const US_STOCK_NAMES = {"A": "安捷伦科技", "AAPL": "苹果", "ABBV": "艾伯维公司", "ABNB": "爱彼迎", "ABT": "雅培", "ACGL": "艾奇资本", "ACN": "埃森哲", "ADBE": "Adobe Inc.", "ADI": "亚德诺", "ADM": "Archer Daniels Midland", "ADP": "自动数据处理公司", "ADSK": "欧特克", "AEE": "阿曼瑞恩", "AEP": "美国电力", "AES": "爱依斯电力", "AFL": "美国家庭寿险", "AIG": "美国国际集团", "AIZ": "安信龙保险", "AJG": "亚瑟加拉格尔", "AKAM": "阿克迈", "ALAB": "Astera Labs", "ALB": "雅保", "ALGN": "艾利科技", "ALL": "好事达", "ALLE": "Allegion Plc", "ALNY": "阿里拉姆制药", "AMAT": "应用材料", "AMCR": "Amcor Plc", "AMD": "超威半导体", "AME": "阿美特克", "AMGN": "安进", "AMP": "阿莫斯莱斯金融", "AMT": "美国电塔", "AMZN": "亚马逊", "ANET": "Arista Networks, Inc.", "AON": "怡安保险", "AOS": "A.O.史密斯", "APA": "阿帕奇石油", "APD": "空气产品", "APH": "安费诺", "APO": "阿波罗全球管理", "APP": "Applovin", "APTV": "Aptiv Plc", "ARE": "亚历山大房地产", "ARES": "Ares Management Corporation", "ARM": "安谋", "ASML": "阿斯麦", "ATO": "ATMOS能源公司", "AVGO": "博通", "AVY": "艾利丹尼森", "AWK": "美国水务", "AXON": "Axon Enterprise, Inc.", "AXP": "美国运通", "AZO": "汽车地带", "BA": "波音", "BAC": "美国银行", "BALL": "鲍尔包装", "BAX": "百特国际", "BBY": "百思买", "BDX": "碧迪医疗", "BE": "Bloom Energy", "BEN": "富兰克林邓普顿", "BF.B": "百富门-B", "BG": "邦吉", "BIIB": "渤健公司", "BKNG": "Booking Holdings Inc. Common Stock", "BKR": "贝克休斯", "BLK": "贝莱德", "BMY": "施贵宝", "BNY": "纽约梅隆银行", "BR": "Broadridge 金融解决方案", "BRK.B": "伯克希尔B", "BRO": "布朗保险经纪", "BSX": "波士顿科学", "BX": "黑石", "BXP": "波士顿物产", "C": "花旗集团", "CAH": "卡地纳健康", "CARR": "开利全球", "CASY": "Caseys General Stores, Inc.", "CAT": "卡特彼勒", "CB": "安达保险", "CBOE": "芝加哥期权交易所", "CBRE": "世邦魏理仕", "CCEP": "可口可乐欧洲太平洋", "CCI": "冠城国际", "CCL": "嘉年华邮轮", "CDNS": "铿腾电子", "CDW": "Cdw Corporation", "CEG": "星座能源", "CF": "CF工业控股", "CFG": "公民金融", "CHD": "丘奇&德怀特", "CHRW": "罗宾逊物流", "CHTR": "特许通讯", "CI": "信诺", "CIEN": "Ciena科技", "CINF": "辛市金融", "CL": "高露洁", "CLX": "高乐氏", "CMCSA": "康卡斯特", "CME": "芝加哥商品交易所", "CMG": "奇波雷墨西哥烧烤", "CMI": "康明斯", "CMS": "CMS能源", "CNC": "康西哥", "CNP": "中点能源", "COF": "第一资本信贷", "COHR": "Coherent Corp.", "COIN": "Coinbase", "COO": "库珀医疗", "COP": "康菲石油", "COR": "Cencora, Inc.", "COST": "好市多", "CPAY": "Corpay, Inc.", "CPRT": "科帕特", "CPT": "卡姆登物业信托", "CRH": "CRH水泥", "CRL": "查尔斯河实验室", "CRM": "赛富时", "CRWD": "CrowdStrike", "CRWV": "CoreWeave", "CSCO": "思科", "CSGP": "科斯塔", "CSX": "CSX运输", "CTAS": "信达思", "CTSH": "高知特", "CVNA": "Carvana Co.", "CVS": "西维斯健康", "CVX": "雪佛龙", "D": "道明尼资源", "DAL": "达美航空", "DASH": "Doordash, Inc.", "DD": "杜邦", "DDOG": "Datadog, Inc.", "DE": "迪尔股份", "DECK": "Deckers Outdoor Corporation", "DELL": "戴尔科技", "DG": "美国达乐公司", "DGX": "奎斯特诊疗", "DHI": "霍顿房屋", "DHR": "丹纳赫", "DIS": "迪士尼", "DLR": "数字房地产信托公司", "DLTR": "美元树公司", "DOC": "Healthpeak Properties, Inc.", "DOV": "都福集团", "DOW": "陶氏化学", "DPZ": "达美乐比萨", "DRI": "达登饭店", "DTE": "DTE能源", "DUK": "杜克能源", "DVA": "德维特", "DVN": "戴文能源", "DXCM": "德康医疗", "EBAY": "eBay", "ECHO": "回声星通信", "ECL": "艺康集团", "ED": "爱迪生联合电气", "EFX": "艾可菲", "EG": "Everest Group, Ltd.", "EIX": "爱迪生国际", "EL": "雅诗兰黛", "ELV": "Elevance Health, Inc.", "EME": "Emcor Group, Inc.", "EMR": "艾默生电气", "EOG": "EOG能源", "EQIX": "易昆尼克斯", "EQT": "EQT能源", "ERIE": "伊瑞保险", "ES": "能源方案", "ESS": "埃塞克斯信托", "ETN": "伊顿", "ETR": "安特吉", "EVRG": "Evergy, Inc.", "EW": "爱德华生命科学", "EXC": "爱克斯龙电力", "EXE": "Expand Energy Corporation", "EXPD": "康捷国际物流", "EXPE": "亿客行", "EXR": "Extra Space Storage Inc", "F": "福特汽车", "FANG": "Diamondback Energy, Inc.", "FAST": "快扣", "FCX": "麦克莫兰铜金", "FDS": "慧甚", "FDX": "联邦快递", "FDXF": "Fedex Freight Holding Company, Inc.", "FE": "第一能源", "FER": "Ferrovial N.V.", "FERG": "Ferguson Enterprises Inc.", "FFIV": "F5", "FICO": "Fair Isaac Corporation", "FIS": "繁德信息技术", "FISV": "费哲金融服务", "FITB": "五三银行", "FIX": "美国舒适系统", "FLEX": "伟创力", "FOX": "福克斯公司-B", "FOXA": "福克斯公司-A", "FRT": "FRT信托", "FSLR": "第一太阳能", "FTNT": "飞塔信息", "FTV": "Fortive Corporation", "GD": "通用动力", "GDDY": "Godaddy Inc.", "GE": "GE航天航空", "GEHC": "GE医疗", "GEN": "Gen Digital Inc.", "GEV": "GE Vernova", "GILD": "吉利德科学", "GIS": "通用磨坊", "GL": "Globe Life Inc.", "GLW": "康宁", "GM": "通用汽车", "GNRC": "Generac控股", "GOOG": "谷歌-C", "GOOGL": "谷歌-A", "GPC": "Genuine Parts", "GPN": "环汇有限公司", "GRMN": "佳明", "GS": "高盛", "GWW": "固安捷", "HAL": "哈里伯顿", "HAS": "孩之宝", "HBAN": "亨廷顿银行", "HCA": "HCA医疗", "HD": "家得宝", "HIG": "美国哈特福德金融", "HII": "亨廷顿英格尔斯工业", "HLT": "希尔顿酒店", "HON": "霍尼韦尔", "HONA": "Honeywell Aerospace Inc.", "HOOD": "Robinhood Markets, Inc.", "HPE": "慧与", "HPQ": "惠普", "HRL": "荷美尔食品", "HSIC": "亨利香恩服务", "HST": "美国豪斯特酒店", "HSY": "好时", "HUBB": "哈勃集团", "HUM": "哈门那", "HWM": "Howmet Aerospace Inc.", "IBKR": "盈透证券", "IBM": "IBM", "ICE": "洲际交易所", "IDXX": "爱德士", "IEX": "Idex Corporation", "IFF": "国际香料香精", "ILMN": "因美纳", "INCY": "因塞特", "INTC": "英特尔", "INTU": "财捷", "INVH": "Invitation Homes Inc.", "IP": "国际纸业", "IQV": "艾昆纬", "IR": "英格索兰", "IRM": "铁山", "ISRG": "直觉外科公司", "IT": "加特纳", "ITW": "伊利诺伊机械", "IVZ": "景顺", "J": "雅各布工程", "JBHT": "JB亨特运输服务", "JBL": "捷普科技", "JCI": "江森自控", "JKHY": "杰克亨利", "JNJ": "强生", "JPM": "摩根大通", "KDP": "胡椒博士集团", "KEY": "科凯国际", "KEYS": "是德科技", "KHC": "卡夫亨氏", "KIM": "金科", "KKR": "Kkr & Co. Inc.", "KLAC": "科磊", "KMB": "金佰利", "KMI": "金德尔摩根", "KO": "可口可乐", "KR": "克罗格", "L": "洛斯公司", "LDOS": "Leidos Holdings, Inc.", "LEN": "莱纳建筑", "LH": "徕博科", "LHX": "L3哈里斯技术公司", "LII": "雷诺士", "LIN": "林德", "LITE": "Lumentum", "LLY": "礼来", "LMT": "洛克希德马丁", "LNT": "美国联合能源", "LOW": "劳氏", "LRCX": "泛林集团", "LULU": "露露乐蒙", "LUV": "西南航空", "LVS": "金沙集团", "LYB": "利安德巴塞尔", "LYV": "Live Nation Entertainment, Inc.", "MA": "万事达", "MAA": "MAA房产信托", "MAR": "万豪酒店", "MAS": "马斯科", "MCD": "麦当劳", "MCHP": "微芯科技", "MCK": "麦克森", "MCO": "穆迪", "MDLZ": "亿滋", "MDT": "美敦力", "MELI": "美客多", "MET": "大都会人寿", "META": "Meta Platforms", "MGM": "美高梅", "MKC": "味好美", "MLM": "马丁-玛丽埃塔材料", "MMM": "3M Company", "MNST": "怪物饮料", "MO": "奥驰亚", "MOS": "美国美盛", "MPC": "马拉松石油", "MPWR": "美国芯源", "MRK": "默沙东", "MRNA": "莫德纳", "MRSH": "威达信", "MRVL": "迈威尔科技", "MS": "摩根士丹利", "MSCI": "明晟", "MSFT": "微软", "MSI": "摩托罗拉解决方案", "MSTR": "Strategy", "MTB": "美国制商银行", "MTD": "梅特勒-托利多", "MU": "美光科技", "NBIS": "Nebius集团", "NCLH": "挪威邮轮", "NDAQ": "纳斯达克", "NDSN": "诺信", "NEE": "新纪元能源", "NEM": "纽曼矿业", "NFLX": "奈飞", "NI": "印北瓦电", "NKE": "耐克", "NOC": "诺斯罗普格鲁曼", "NOW": "现在服务公司", "NRG": "NRG Energy", "NSC": "诺福克南方", "NTAP": "美国网存", "NTRS": "北方信托", "NUE": "纽柯钢铁", "NVDA": "英伟达", "NVR": "Nvr, Inc.", "NWS": "新闻集团 Class B", "NWSA": "新闻集团 Class A", "NXPI": "恩智浦", "O": "Realty Income Corporation", "ODFL": "Old Dominion Freight Line, Inc.", "OKE": "欧尼克(万欧卡)", "OKTA": "Okta, Inc.", "OMC": "宏盟集团", "ON": "安森美半导体", "ORCL": "甲骨文", "ORLY": "奥莱利", "OTIS": "奥的斯", "OXY": "西方石油", "P": "Everpure, Inc.", "PANW": "派拓网络", "PAYX": "沛齐", "PCAR": "帕卡", "PCG": "太平洋煤气电力", "PDD": "拼多多", "PEG": "公务集团", "PEP": "百事可乐", "PFE": "辉瑞", "PFG": "信安金融", "PG": "宝洁", "PGR": "前进保险", "PH": "派克汉尼汾", "PHM": "普得集团", "PKG": "美国包装公司", "PLD": "安博", "PLTR": "Palantir", "PM": "菲利普莫里斯", "PNC": "PNC金融", "PNR": "滨特尔", "PNW": "西帕纳卡资本", "PODD": "银休特", "PPG": "PPG工业", "PPL": "宾州电力", "PRU": "保德信金融", "PSA": "公共存储公司", "PSX": "Phillips 66", "PTC": "Ptc Inc.", "PWR": "广达服务", "PYPL": "Paypal", "Q": "Qnity Electronics, Inc.", "QCOM": "高通", "RCL": "皇家加勒比邮轮", "RDDT": "红迪网", "REG": "Regency Centers Corporation", "REGN": "再生元制药公司", "RF": "地区金融", "RJF": "瑞杰金融", "RKLB": "Rocket Lab", "RL": "拉夫劳伦", "RMD": "瑞思迈", "ROK": "罗克韦尔自动化", "ROL": "Rollins, Inc.", "ROP": "儒博实业", "ROST": "罗斯百货", "RSG": "共和废品处理", "RTX": "雷神技术", "RVTY": "Revvity, Inc.", "SBAC": "SBA通信公司", "SBUX": "星巴克", "SCHW": "嘉信理财", "SHOP": "Shopify Inc.", "SHW": "宣伟公司", "SJM": "斯马克", "SKYD": "Skydance Corporation", "SLB": "斯伦贝谢", "SMCI": "超微电脑", "SNA": "实耐宝", "SNDK": "闪迪", "SNPS": "新思科技", "SO": "美国南方公司", "SOLV": "Solventum Corporation", "SPCX": "SpaceX", "SPG": "西蒙地产", "SPGI": "标普全球", "SRE": "桑普拉能源", "STE": "思泰瑞医疗", "STLD": "Steel Dynamics, Inc.", "STT": "道富银行", "STX": "希捷科技", "STZ": "星座品牌-A", "SW": "Smurfit Westrock Plc", "SWK": "美国史丹利公司", "SWKS": "思佳讯", "SYF": "Synchrony Financial", "SYK": "史赛克", "SYY": "西斯科", "T": "美国电话电报", "TDG": "Transdigm Group Incorporated", "TDY": "Teledyne Technologies Incorporated", "TECH": "Bio-Techne Corp", "TEL": "泰科电子", "TER": "泰瑞达", "TFC": "Truist Financial Corporation", "TGT": "塔吉特", "TJX": "TJX公司", "TKO": "Tko Group Holdings, Inc.", "TMO": "赛默飞世尔", "TMUS": "T-Mobile Us, Inc.", "TPL": "Texas Pacific Land Corporation", "TPR": "Tapestry, Inc.", "TRGP": "Targa Resources, Inc.", "TRI": "汤森路透", "TRMB": "天宝导航公司", "TROW": "普信集团", "TRV": "旅行者财产险集团", "TSCO": "拖拉机供应公司", "TSLA": "特斯拉", "TSN": "泰森食品", "TT": "特灵科技", "TTWO": "Take-Two互动软件", "TWLO": "Twilio Inc.", "TXN": "德州仪器", "TXT": "德事隆", "TYL": "泰勒科技", "UAL": "联合大陆航空", "UBER": "优步", "UDR": "UDR不动产信托", "UHS": "环球健康", "ULTA": "犹他美容", "UNH": "联合健康", "UNP": "联合太平洋", "UPS": "联合包裹", "URI": "联合租赁", "USB": "美国合众银行", "V": "Visa", "VEEV": "Veeva Systems Inc.", "VICI": "Vici Properties Inc.", "VLO": "瓦莱罗能源", "VLTO": "Veralto Corp", "VMC": "火神材料", "VMRK": "Vivmark Residential", "VRSK": "Verisk分析", "VRSN": "威瑞信", "VRT": "维谛技术", "VRTX": "福泰制药", "VST": "瑞致达", "VTR": "芬塔公司", "VTRS": "晖致", "VYLR": "Vylor Inc.", "VZ": "威瑞森通信", "WAB": "美国西屋制动", "WAT": "沃特世", "WDAY": "Workday", "WDC": "西部数据", "WEC": "威州能源", "WELL": "Welltower Inc.", "WFC": "富国银行", "WM": "美国废物管理", "WMB": "威廉姆斯", "WMT": "沃尔玛", "WRB": "WR柏克利", "WSM": "Williams-Sonoma, Inc.", "WST": "West Pharmaceutical Services, Inc.", "WTW": "韦莱韬悦", "WY": "惠好", "WYNN": "永利度假村", "XEL": "埃克西尔能源", "XOM": "埃克森美孚", "XYL": "赛莱默", "XYZ": "Block, Inc.", "YUM": "Yum! Brands", "ZBH": "齐默巴奥米特控股", "ZBRA": "斑马技术", "ZTS": "硕腾"};
+const US_FULL_SYMBOLS = {"A": "A.N", "AAPL": "AAPL.OQ", "ABBV": "ABBV.N", "ABNB": "ABNB.OQ", "ABT": "ABT.N", "ACGL": "ACGL.OQ", "ACN": "ACN.N", "ADBE": "ADBE.OQ", "ADI": "ADI.OQ", "ADM": "ADM.N", "ADP": "ADP.OQ", "ADSK": "ADSK.OQ", "AEE": "AEE.N", "AEP": "AEP.OQ", "AES": "AES.N", "AFL": "AFL.N", "AIG": "AIG.N", "AIZ": "AIZ.N", "AJG": "AJG.N", "AKAM": "AKAM.OQ", "ALAB": "ALAB.OQ", "ALB": "ALB.N", "ALGN": "ALGN.OQ", "ALL": "ALL.N", "ALLE": "ALLE.N", "ALNY": "ALNY.OQ", "AMAT": "AMAT.OQ", "AMCR": "AMCR.N", "AMD": "AMD.OQ", "AME": "AME.N", "AMGN": "AMGN.OQ", "AMP": "AMP.N", "AMT": "AMT.N", "AMZN": "AMZN.OQ", "ANET": "ANET.N", "AON": "AON.N", "AOS": "AOS.N", "APA": "APA.OQ", "APD": "APD.N", "APH": "APH.N", "APO": "APO.N", "APP": "APP.OQ", "APTV": "APTV.N", "ARE": "ARE.N", "ARES": "ARES.N", "ARM": "ARM.OQ", "ASML": "ASML.OQ", "ATO": "ATO.N", "AVGO": "AVGO.OQ", "AVY": "AVY.N", "AWK": "AWK.N", "AXON": "AXON.OQ", "AXP": "AXP.N", "AZO": "AZO.N", "BA": "BA.N", "BAC": "BAC.N", "BALL": "BALL.N", "BAX": "BAX.N", "BBY": "BBY.N", "BDX": "BDX.N", "BE": "BE.N", "BEN": "BEN.N", "BF.B": "BF.B.N", "BG": "BG.N", "BIIB": "BIIB.OQ", "BKNG": "BKNG.OQ", "BKR": "BKR.OQ", "BLK": "BLK.N", "BMY": "BMY.N", "BNY": "BNY.N", "BR": "BR.N", "BRK.B": "BRK.B.N", "BRO": "BRO.N", "BSX": "BSX.N", "BX": "BX.N", "BXP": "BXP.N", "C": "C.N", "CAH": "CAH.N", "CARR": "CARR.N", "CASY": "CASY.OQ", "CAT": "CAT.N", "CB": "CB.N", "CBOE": "CBOE.AM", "CBRE": "CBRE.N", "CCEP": "CCEP.OQ", "CCI": "CCI.N", "CCL": "CCL.N", "CDNS": "CDNS.OQ", "CDW": "CDW.OQ", "CEG": "CEG.OQ", "CF": "CF.N", "CFG": "CFG.N", "CHD": "CHD.N", "CHRW": "CHRW.OQ", "CHTR": "CHTR.OQ", "CI": "CI.N", "CIEN": "CIEN.N", "CINF": "CINF.OQ", "CL": "CL.N", "CLX": "CLX.N", "CMCSA": "CMCSA.OQ", "CME": "CME.OQ", "CMG": "CMG.N", "CMI": "CMI.N", "CMS": "CMS.N", "CNC": "CNC.N", "CNP": "CNP.N", "COF": "COF.N", "COHR": "COHR.N", "COIN": "COIN.OQ", "COO": "COO.OQ", "COP": "COP.N", "COR": "COR.N", "COST": "COST.OQ", "CPAY": "CPAY.N", "CPRT": "CPRT.OQ", "CPT": "CPT.N", "CRH": "CRH.N", "CRL": "CRL.N", "CRM": "CRM.N", "CRWD": "CRWD.OQ", "CRWV": "CRWV.OQ", "CSCO": "CSCO.OQ", "CSGP": "CSGP.OQ", "CSX": "CSX.OQ", "CTAS": "CTAS.OQ", "CTSH": "CTSH.OQ", "CVNA": "CVNA.N", "CVS": "CVS.N", "CVX": "CVX.N", "D": "D.N", "DAL": "DAL.N", "DASH": "DASH.OQ", "DD": "DD.N", "DDOG": "DDOG.OQ", "DE": "DE.N", "DECK": "DECK.N", "DELL": "DELL.N", "DG": "DG.N", "DGX": "DGX.N", "DHI": "DHI.N", "DHR": "DHR.N", "DIS": "DIS.N", "DLR": "DLR.N", "DLTR": "DLTR.OQ", "DOC": "DOC.N", "DOV": "DOV.N", "DOW": "DOW.N", "DPZ": "DPZ.OQ", "DRI": "DRI.N", "DTE": "DTE.N", "DUK": "DUK.N", "DVA": "DVA.N", "DVN": "DVN.N", "DXCM": "DXCM.OQ", "EBAY": "EBAY.OQ", "ECHO": "ECHO.OQ", "ECL": "ECL.N", "ED": "ED.N", "EFX": "EFX.N", "EG": "EG.N", "EIX": "EIX.N", "EL": "EL.N", "ELV": "ELV.N", "EME": "EME.N", "EMR": "EMR.N", "EOG": "EOG.N", "EQIX": "EQIX.OQ", "EQT": "EQT.N", "ERIE": "ERIE.OQ", "ES": "ES.N", "ESS": "ESS.N", "ETN": "ETN.N", "ETR": "ETR.N", "EVRG": "EVRG.OQ", "EW": "EW.N", "EXC": "EXC.OQ", "EXE": "EXE.OQ", "EXPD": "EXPD.N", "EXPE": "EXPE.OQ", "EXR": "EXR.N", "F": "F.N", "FANG": "FANG.OQ", "FAST": "FAST.OQ", "FCX": "FCX.N", "FDS": "FDS.N", "FDX": "FDX.N", "FDXF": "FDXF.N", "FE": "FE.N", "FER": "FER.OQ", "FERG": "FERG.N", "FFIV": "FFIV.OQ", "FICO": "FICO.N", "FIS": "FIS.N", "FISV": "FISV.OQ", "FITB": "FITB.N", "FIX": "FIX.N", "FLEX": "FLEX.OQ", "FOX": "FOX.OQ", "FOXA": "FOXA.OQ", "FRT": "FRT.N", "FSLR": "FSLR.OQ", "FTNT": "FTNT.OQ", "FTV": "FTV.N", "GD": "GD.N", "GDDY": "GDDY.N", "GE": "GE.N", "GEHC": "GEHC.OQ", "GEN": "GEN.OQ", "GEV": "GEV.N", "GILD": "GILD.OQ", "GIS": "GIS.N", "GL": "GL.N", "GLW": "GLW.N", "GM": "GM.OQ", "GNRC": "GNRC.N", "GOOG": "GOOG.OQ", "GOOGL": "GOOGL.OQ", "GPC": "GPC.N", "GPN": "GPN.N", "GRMN": "GRMN.N", "GS": "GS.N", "GWW": "GWW.N", "HAL": "HAL.N", "HAS": "HAS.OQ", "HBAN": "HBAN.OQ", "HCA": "HCA.N", "HD": "HD.N", "HIG": "HIG.N", "HII": "HII.N", "HLT": "HLT.OQ", "HON": "HON.OQ", "HONA": "HONA.OQ", "HOOD": "HOOD.OQ", "HPE": "HPE.N", "HPQ": "HPQ.N", "HRL": "HRL.N", "HSIC": "HSIC.OQ", "HST": "HST.OQ", "HSY": "HSY.N", "HUBB": "HUBB.N", "HUM": "HUM.N", "HWM": "HWM.N", "IBKR": "IBKR.OQ", "IBM": "IBM.N", "ICE": "ICE.N", "IDXX": "IDXX.OQ", "IEX": "IEX.N", "IFF": "IFF.N", "ILMN": "ILMN.OQ", "INCY": "INCY.OQ", "INTC": "INTC.OQ", "INTU": "INTU.OQ", "INVH": "INVH.N", "IP": "IP.N", "IQV": "IQV.N", "IR": "IR.N", "IRM": "IRM.N", "ISRG": "ISRG.OQ", "IT": "IT.N", "ITW": "ITW.N", "IVZ": "IVZ.N", "J": "J.N", "JBHT": "JBHT.OQ", "JBL": "JBL.N", "JCI": "JCI.N", "JKHY": "JKHY.OQ", "JNJ": "JNJ.N", "JPM": "JPM.N", "KDP": "KDP.OQ", "KEY": "KEY.N", "KEYS": "KEYS.N", "KHC": "KHC.N", "KIM": "KIM.N", "KKR": "KKR.N", "KLAC": "KLAC.OQ", "KMB": "KMB.OQ", "KMI": "KMI.N", "KO": "KO.N", "KR": "KR.N", "L": "L.N", "LDOS": "LDOS.N", "LEN": "LEN.N", "LH": "LH.N", "LHX": "LHX.N", "LII": "LII.N", "LIN": "LIN.OQ", "LITE": "LITE.OQ", "LLY": "LLY.N", "LMT": "LMT.N", "LNT": "LNT.OQ", "LOW": "LOW.N", "LRCX": "LRCX.OQ", "LULU": "LULU.OQ", "LUV": "LUV.N", "LVS": "LVS.N", "LYB": "LYB.N", "LYV": "LYV.N", "MA": "MA.N", "MAA": "MAA.N", "MAR": "MAR.OQ", "MAS": "MAS.N", "MCD": "MCD.N", "MCHP": "MCHP.OQ", "MCK": "MCK.N", "MCO": "MCO.N", "MDLZ": "MDLZ.OQ", "MDT": "MDT.N", "MELI": "MELI.OQ", "MET": "MET.N", "META": "META.OQ", "MGM": "MGM.N", "MKC": "MKC.N", "MLM": "MLM.N", "MMM": "MMM.N", "MNST": "MNST.OQ", "MO": "MO.N", "MOS": "MOS.N", "MPC": "MPC.N", "MPWR": "MPWR.OQ", "MRK": "MRK.N", "MRNA": "MRNA.OQ", "MRSH": "MRSH.N", "MRVL": "MRVL.OQ", "MS": "MS.N", "MSCI": "MSCI.N", "MSFT": "MSFT.OQ", "MSI": "MSI.N", "MSTR": "MSTR.OQ", "MTB": "MTB.N", "MTD": "MTD.N", "MU": "MU.OQ", "NBIS": "NBIS.OQ", "NCLH": "NCLH.N", "NDAQ": "NDAQ.OQ", "NDSN": "NDSN.OQ", "NEE": "NEE.N", "NEM": "NEM.N", "NFLX": "NFLX.OQ", "NI": "NI.N", "NKE": "NKE.N", "NOC": "NOC.N", "NOW": "NOW.N", "NRG": "NRG.N", "NSC": "NSC.N", "NTAP": "NTAP.OQ", "NTRS": "NTRS.OQ", "NUE": "NUE.N", "NVDA": "NVDA.OQ", "NVR": "NVR.N", "NWS": "NWS.OQ", "NWSA": "NWSA.OQ", "NXPI": "NXPI.OQ", "O": "O.N", "ODFL": "ODFL.OQ", "OKE": "OKE.N", "OKTA": "OKTA.OQ", "OMC": "OMC.N", "ON": "ON.OQ", "ORCL": "ORCL.N", "ORLY": "ORLY.OQ", "OTIS": "OTIS.N", "OXY": "OXY.N", "P": "P.N", "PANW": "PANW.OQ", "PAYX": "PAYX.OQ", "PCAR": "PCAR.OQ", "PCG": "PCG.N", "PDD": "PDD.OQ", "PEG": "PEG.N", "PEP": "PEP.OQ", "PFE": "PFE.N", "PFG": "PFG.OQ", "PG": "PG.N", "PGR": "PGR.N", "PH": "PH.N", "PHM": "PHM.N", "PKG": "PKG.N", "PLD": "PLD.N", "PLTR": "PLTR.OQ", "PM": "PM.N", "PNC": "PNC.N", "PNR": "PNR.N", "PNW": "PNW.N", "PODD": "PODD.OQ", "PPG": "PPG.N", "PPL": "PPL.N", "PRU": "PRU.N", "PSA": "PSA.N", "PSX": "PSX.N", "PTC": "PTC.OQ", "PWR": "PWR.N", "PYPL": "PYPL.OQ", "Q": "Q.N", "QCOM": "QCOM.OQ", "RCL": "RCL.N", "RDDT": "RDDT.N", "REG": "REG.OQ", "REGN": "REGN.OQ", "RF": "RF.N", "RJF": "RJF.N", "RKLB": "RKLB.OQ", "RL": "RL.N", "RMD": "RMD.N", "ROK": "ROK.N", "ROL": "ROL.N", "ROP": "ROP.OQ", "ROST": "ROST.OQ", "RSG": "RSG.N", "RTX": "RTX.N", "RVTY": "RVTY.N", "SBAC": "SBAC.OQ", "SBUX": "SBUX.OQ", "SCHW": "SCHW.N", "SHOP": "SHOP.OQ", "SHW": "SHW.N", "SJM": "SJM.N", "SKYD": "SKYD.N", "SLB": "SLB.N", "SMCI": "SMCI.OQ", "SNA": "SNA.N", "SNDK": "SNDK.OQ", "SNPS": "SNPS.OQ", "SO": "SO.N", "SOLV": "SOLV.N", "SPCX": "SPCX.OQ", "SPG": "SPG.N", "SPGI": "SPGI.N", "SRE": "SRE.N", "STE": "STE.N", "STLD": "STLD.OQ", "STT": "STT.N", "STX": "STX.OQ", "STZ": "STZ.N", "SW": "SW.N", "SWK": "SWK.N", "SWKS": "SWKS.OQ", "SYF": "SYF.N", "SYK": "SYK.N", "SYY": "SYY.N", "T": "T.N", "TDG": "TDG.N", "TDY": "TDY.N", "TECH": "TECH.OQ", "TEL": "TEL.N", "TER": "TER.OQ", "TFC": "TFC.N", "TGT": "TGT.N", "TJX": "TJX.N", "TKO": "TKO.N", "TMO": "TMO.N", "TMUS": "TMUS.OQ", "TPL": "TPL.N", "TPR": "TPR.N", "TRGP": "TRGP.N", "TRI": "TRI.OQ", "TRMB": "TRMB.OQ", "TROW": "TROW.OQ", "TRV": "TRV.N", "TSCO": "TSCO.OQ", "TSLA": "TSLA.OQ", "TSN": "TSN.N", "TT": "TT.N", "TTWO": "TTWO.OQ", "TWLO": "TWLO.N", "TXN": "TXN.OQ", "TXT": "TXT.N", "TYL": "TYL.N", "UAL": "UAL.OQ", "UBER": "UBER.N", "UDR": "UDR.N", "UHS": "UHS.N", "ULTA": "ULTA.OQ", "UNH": "UNH.N", "UNP": "UNP.N", "UPS": "UPS.N", "URI": "URI.N", "USB": "USB.N", "V": "V.N", "VEEV": "VEEV.N", "VICI": "VICI.N", "VLO": "VLO.N", "VLTO": "VLTO.N", "VMC": "VMC.N", "VMRK": "VMRK.N", "VRSK": "VRSK.OQ", "VRSN": "VRSN.OQ", "VRT": "VRT.N", "VRTX": "VRTX.OQ", "VST": "VST.N", "VTR": "VTR.N", "VTRS": "VTRS.OQ", "VYLR": "VYLR.N", "VZ": "VZ.N", "WAB": "WAB.N", "WAT": "WAT.N", "WDAY": "WDAY.OQ", "WDC": "WDC.OQ", "WEC": "WEC.N", "WELL": "WELL.N", "WFC": "WFC.N", "WM": "WM.N", "WMB": "WMB.N", "WMT": "WMT.OQ", "WRB": "WRB.N", "WSM": "WSM.N", "WST": "WST.N", "WTW": "WTW.OQ", "WY": "WY.N", "WYNN": "WYNN.OQ", "XEL": "XEL.OQ", "XOM": "XOM.N", "XYL": "XYL.N", "XYZ": "XYZ.N", "YUM": "YUM.N", "ZBH": "ZBH.N", "ZBRA": "ZBRA.OQ", "ZTS": "ZTS.N"};
+
 // 获取所有板块（预置 + 自定义 + 动态）
 function getAllSectors() {
   return getAllSectorsWithMeta().sectors;
 }
 
-// 保存自定义板块
+// 保存自定义板块（按当前市场分key）
 function saveCustomSector(name, codes) {
   let custom = {};
+  const key = isUSMarket() ? SCAN_SECTORS_US_KEY : SCAN_SECTORS_KEY;
   try {
-    const data = localStorage.getItem(SCAN_SECTORS_KEY);
+    const data = localStorage.getItem(key);
     if (data) custom = JSON.parse(data);
   } catch(e) {}
   custom[name] = codes;
-  try { localStorage.setItem(SCAN_SECTORS_KEY, JSON.stringify(custom)); } catch(e) {}
+  try { localStorage.setItem(key, JSON.stringify(custom)); } catch(e) {}
 }
 
 // 渲染板块选择列表
@@ -4899,15 +5190,17 @@ function getFreshnessIcon(updatedAt) {
   return '❌';
 }
 
-// 添加自定义板块
+// 添加自定义板块（按当前市场校验代码格式）
 function addCustomSector() {
   const nameInput = document.getElementById('customSectorName');
   const codesInput = document.getElementById('customSectorCodes');
   const name = nameInput.value.trim();
   const codesStr = codesInput.value.trim();
   if (!name) { alert('请输入板块名称'); return; }
-  const codes = codesStr.split(/[,，\s]+/).filter(c => c && /^\d{6}$/.test(c));
-  if (codes.length === 0) { alert('请输入有效的股票代码'); return; }
+  const pattern = marketCfg().codePattern;
+  let codes = codesStr.split(/[,，\s]+/).filter(c => c && pattern.test(c));
+  if (isUSMarket()) codes = codes.map(c => c.toUpperCase());
+  if (codes.length === 0) { alert(isUSMarket() ? '请输入有效的美股代码' : '请输入有效的股票代码'); return; }
   saveCustomSector(name, codes);
   nameInput.value = '';
   codesInput.value = '';
@@ -5249,17 +5542,19 @@ function removeTHSSector(sectorCode) {
 function getAllSectorsWithMeta() {
   const sectors = {};
   const meta = {};
+  const usMode = isUSMarket();
 
-  // 预置板块
-  for (const [name, codes] of Object.entries(PRESET_SECTORS)) {
+  // 预置板块（A股=17个同花顺板块；美股=标普500/纳指100成分股）
+  const presets = usMode ? US_PRESET_POOLS : PRESET_SECTORS;
+  for (const [name, codes] of Object.entries(presets)) {
     sectors[name] = codes;
-    meta[name] = { type: 'preset', source: '内置' };
+    meta[name] = { type: 'preset', source: usMode ? '指数成分股' : '内置' };
   }
 
-  // 自定义板块
+  // 自定义板块（A股/美股分开存储）
   let custom = {};
   try {
-    const data = localStorage.getItem(SCAN_SECTORS_KEY);
+    const data = localStorage.getItem(usMode ? SCAN_SECTORS_US_KEY : SCAN_SECTORS_KEY);
     if (data) custom = JSON.parse(data);
   } catch(e) {}
   for (const [name, codes] of Object.entries(custom)) {
@@ -5267,8 +5562,8 @@ function getAllSectorsWithMeta() {
     meta[name] = { type: 'manual', source: '自定义' };
   }
 
-  // 动态同花顺板块（FIR-22）— 只有 verified 且 fresh 的板块才能用于扫描
-  const dynamicSectors = loadDynamicSectors();
+  // 动态同花顺板块（FIR-22，仅A股）— 只有 verified 且 fresh 的板块才能用于扫描
+  const dynamicSectors = usMode ? [] : loadDynamicSectors();
   for (const sector of dynamicSectors) {
     // Freshness gate：只有已验证且新鲜的板块才能用于扫描
     const scannable = isSectorScannable(sector);
@@ -5361,11 +5656,11 @@ async function startMarketScan() {
   resultsDiv.innerHTML = '';
   scanResults = [];
 
-  // 先拉取大盘环境
+  // 先拉取大盘环境（A股=上证指数，美股=标普500）
   status.textContent = '正在获取大盘环境...';
   let marketEnv = null;
   try {
-    const marketData = await fetchSinaKlineJSONP('sh000001');
+    const marketData = await fetchMarketIndexData(250);
     if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
   } catch(e) { console.error('大盘数据获取失败', e); }
 
@@ -5489,20 +5784,101 @@ function addSelectedToWatchlist() {
   analyzeAllWatchlist();
 }
 
+// ============ 市场切换 UI ============
+function applyMarketUI() {
+  const usMode = isUSMarket();
+  const cfg = marketCfg();
+  // 切换按钮高亮
+  const btnCn = document.getElementById('marketBtnCn');
+  const btnUs = document.getElementById('marketBtnUs');
+  if (btnCn && btnUs) {
+    btnCn.style.background = usMode ? 'transparent' : '#e74c3c';
+    btnCn.style.color = usMode ? '#8899aa' : '#fff';
+    btnCn.style.fontWeight = usMode ? '400' : '600';
+    btnUs.style.background = usMode ? '#3498db' : 'transparent';
+    btnUs.style.color = usMode ? '#fff' : '#8899aa';
+    btnUs.style.fontWeight = usMode ? '600' : '400';
+  }
+  // 输入框提示
+  const codeInput = document.getElementById('codeInput');
+  if (codeInput) codeInput.placeholder = cfg.placeholder;
+  const addInput = document.getElementById('addStockInput');
+  if (addInput) addInput.placeholder = cfg.addPlaceholder;
+  const sectorCodes = document.getElementById('customSectorCodes');
+  if (sectorCodes) sectorCodes.placeholder = cfg.sectorPlaceholder;
+  // 快捷示例
+  const quick = document.getElementById('quickCodes');
+  if (quick) {
+    quick.innerHTML = cfg.quickCodes.map(([c, n]) =>
+      `<span class="quick-code" onclick="quickAnalyze('${c}')">${n} ${c}</span>`).join('');
+  }
+  // 美股模式：隐藏A股专属的云同步面板与同花顺动态板块行
+  const syncPanel = document.getElementById('cloudSyncPanel');
+  if (syncPanel) syncPanel.style.display = usMode ? 'none' : '';
+  const usNote = document.getElementById('usWatchlistNote');
+  if (usNote) usNote.style.display = usMode ? '' : 'none';
+  const thsRow = document.getElementById('thsSectorRow');
+  if (thsRow) thsRow.style.display = usMode ? 'none' : 'flex';
+  const thsErr = document.getElementById('thsSectorError');
+  if (thsErr && usMode) thsErr.style.display = 'none';
+  // 页脚数据来源说明按市场切换
+  const footerSrc = document.getElementById('footerDataSource');
+  if (footerSrc) footerSrc.textContent = usMode
+    ? '数据来源：腾讯证券（前复权日线），新浪财经备用（拆股复权）'
+    : '数据来源：新浪财经公开接口（前复权日线）';
+}
+
+function switchMarket(m) {
+  if (m !== 'cn' && m !== 'us') return;
+  if (m === CURRENT_MARKET) return;
+  CURRENT_MARKET = m;
+  try { localStorage.setItem(MARKET_KEY, m); } catch(e) {}
+  applyMarketUI();
+  // 清空上一市场的展示结果，刷新自选股与板块列表
+  watchlistResults = {};
+  scanResults = [];
+  const resultArea = document.getElementById('resultArea');
+  if (resultArea) resultArea.innerHTML = '';
+  const batchResults = document.getElementById('batchResults');
+  if (batchResults) batchResults.innerHTML = '';
+  const scanResultsDiv = document.getElementById('scanResults');
+  if (scanResultsDiv) scanResultsDiv.innerHTML = '';
+  const batchStatus = document.getElementById('batchStatus');
+  if (batchStatus) batchStatus.textContent = '';
+  renderWatchlistTags();
+  renderSectorList();
+  // 自动分析当前市场默认个股
+  const codeInput = document.getElementById('codeInput');
+  if (codeInput) codeInput.value = marketCfg().defaultCode;
+  switchTab('analyze');
+  doAnalyze();
+}
+
 // 初始化
+applyMarketUI();
 renderPatterns();
 renderWatchlistTags();
 renderSectorList();
-// 支持URL参数自动分析：?code=002436
+// 支持URL参数自动分析：?code=002436 或 ?code=AAPL&market=us（字母代码自动识别为美股）
 const urlParams = new URLSearchParams(window.location.search);
 const urlCode = urlParams.get('code');
-if (urlCode && /^\d{6}$/.test(urlCode)) {
+let urlMarket = urlParams.get('market');
+// 未显式指定市场时，字母代码自动识别为美股
+if (!urlMarket && urlCode && isUSCode(urlCode)) urlMarket = 'us';
+if (urlMarket === 'us' || urlMarket === 'cn') {
+  CURRENT_MARKET = urlMarket;
+  try { localStorage.setItem(MARKET_KEY, urlMarket); } catch(e) {}
+  applyMarketUI();
+  renderWatchlistTags();
+  renderSectorList();
+}
+if (urlCode && marketCfg().codePattern.test(urlCode)) {
   switchTab('analyze');
-  document.getElementById('codeInput').value = urlCode;
+  document.getElementById('codeInput').value = isUSMarket() ? urlCode.toUpperCase() : urlCode;
   setTimeout(() => doAnalyze(), 300);
 } else {
   switchTab('analyze');
-  document.getElementById('codeInput').value = '002436';
+  document.getElementById('codeInput').value = marketCfg().defaultCode;
   setTimeout(() => doAnalyze(), 300);
 }
 window.addEventListener('resize', () => {

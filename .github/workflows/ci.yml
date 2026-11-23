@@ -126,6 +126,10 @@ jobs:
         cd tests
         python test_backtest_horizons.py
 
+    - name: Run US market data-layer tests (US Market)
+      run: |
+        python tests/test_us_market.py
+
   js-syntax-check:
     runs-on: ubuntu-latest
     steps:
@@ -161,6 +165,10 @@ jobs:
     - name: Run FIR-28 release identity regression tests
       run: |
         node tests/test_fir28_release_identity.js
+
+    - name: Run US market JS tests + cross-runtime parity (US Market)
+      run: |
+        node tests/test_us_market.js
 
   analysis-api:
     # V6 Python 分析服务（FIR-31 / FIR-38）：契约、迁移、预置板块一致性

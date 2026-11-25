@@ -193,7 +193,7 @@ canvas { width: 100%; display: block; }
   <!-- 股票分析 -->
   <div id="page-analyze" class="page">
     <div class="search-bar" style="flex-wrap:wrap;gap:10px;align-items:center;">
-      <input type="text" id="codeInput" placeholder="输入股票代码，如 002436、600519" maxlength="6" onkeydown="if(event.key==='Enter')doAnalyze()" style="flex:1;min-width:180px;">
+      <input type="text" id="codeInput" placeholder="输入代码，如 600519、AAPL、NVDA" maxlength="8" onkeydown="if(event.key==='Enter')doAnalyze()" style="flex:1;min-width:180px;">
       <!-- 回测模式切换 -->
       <div style="display:flex;align-items:center;gap:8px;background:#0f1419;border:1px solid #2a3441;border-radius:8px;padding:6px 12px;">
         <span style="font-size:13px;color:#8899aa;">📅 回测</span>
@@ -230,7 +230,7 @@ canvas { width: 100%; display: block; }
       
       <!-- 添加股票 -->
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-        <input type="text" id="addStockInput" placeholder="输入6位股票代码，如 002436" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
+        <input type="text" id="addStockInput" placeholder="输入代码，如 600519、AAPL" maxlength="8" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
         <button onclick="addStock()" style="padding:10px 20px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">添加</button>
         <button onclick="loadExampleWatchlist()" style="padding:10px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:14px;cursor:pointer;">加载示例</button>
       </div>
@@ -1907,9 +1907,16 @@ function toggleBacktestMode() {
   }
 }
 
+// 代码校验：A 股 6 位数字；美股 1-6 位字母（可带点后缀，如 BRK.B）。与 BFF assertCode / Python market 对齐。
+function isValidCode(code) {
+  return /^\d{6}$/.test(code) || /^[A-Z]{1,6}(\.[A-Z])?$/.test(code);
+}
+// 归一化：去空格、美股转大写（A 股数字不受影响）
+function normalizeCode(code) { return String(code).trim().toUpperCase(); }
+
 async function doAnalyze() {
-  const code = document.getElementById('codeInput').value.trim();
-  if (!code || !/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
+  const code = normalizeCode(document.getElementById('codeInput').value);
+  if (!code || !isValidCode(code)) { alert('请输入 A 股 6 位代码或美股代码（如 AAPL、NVDA）'); return; }
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true; btn.textContent = '分析中...';
   const area = document.getElementById('resultArea');
@@ -3128,8 +3135,8 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(runSelfTest, 1000);
   }
   // 自动分析（code参数）
-  const autoCode = params.get('code');
-  if (autoCode && /^\d{6}$/.test(autoCode)) {
+  const autoCode = normalizeCode(params.get('code') || '');
+  if (autoCode && isValidCode(autoCode)) {
     switchTab('analyze');
     document.getElementById('codeInput').value = autoCode;
     setTimeout(doAnalyze, 800);
@@ -3159,8 +3166,8 @@ function renderWatchlistTags() {
 // 添加股票（写入服务端；用户主动加回删除过的股票会先确认）
 async function addStock() {
   const input = document.getElementById('addStockInput');
-  const code = input.value.trim();
-  if (!/^\d{6}$/.test(code)) { alert('请输入6位股票代码'); return; }
+  const code = normalizeCode(input.value);
+  if (!isValidCode(code)) { alert('请输入 A 股 6 位代码或美股代码（如 AAPL）'); return; }
   if (getWatchlist().includes(code)) { alert('该股票已在自选股池中'); return; }
   if (watchlistState.tombstones.find(t => t.code === code)) {
     const confirmed = await showConfirm(`该股票(${code})此前已从自选股删除。\n\n确定要重新加入吗？所有设备都会看到它。`, '重新添加已删除股票');
@@ -3706,8 +3713,8 @@ async function addCustomSector() {
   const name = nameInput.value.trim();
   const codesStr = codesInput.value.trim();
   if (!name) { alert('请输入板块名称'); return; }
-  const codes = [...new Set(codesStr.split(/[,，\s]+/).filter(c => c && /^\d{6}$/.test(c)))];
-  if (codes.length === 0) { alert('请输入有效的股票代码'); return; }
+  const codes = [...new Set(codesStr.split(/[,，\s]+/).map(c => normalizeCode(c)).filter(c => c && isValidCode(c)))];
+  if (codes.length === 0) { alert('请输入有效的股票代码（A 股 6 位或美股代码）'); return; }
   let r;
   try {
     r = await customSectorRequest('PUT', `/${encodeURIComponent(name)}`, { codes });
@@ -3883,8 +3890,8 @@ refreshCustomSectors();
 initWatchlistSync();
 // 支持URL参数自动分析：?code=002436
 const urlParams = new URLSearchParams(window.location.search);
-const urlCode = urlParams.get('code');
-if (urlCode && /^\d{6}$/.test(urlCode)) {
+const urlCode = normalizeCode(urlParams.get('code') || '');
+if (urlCode && isValidCode(urlCode)) {
   switchTab('analyze');
   document.getElementById('codeInput').value = urlCode;
   setTimeout(() => doAnalyze(), 300);

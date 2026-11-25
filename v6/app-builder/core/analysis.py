@@ -64,14 +64,14 @@ class InvalidInputError(ValueError):
 # ------------------------------------------------------------------ 代码 / 交易所
 
 def exchange_symbol(code: str) -> str:
-    """6 位 A 股代码 → 带交易所前缀的代码（sh/sz/bj）；无法识别时报错（fail-closed）"""
-    if not isinstance(code, str) or not _CODE_RE.match(code):
-        raise InvalidInputError(f"股票代码必须是 6 位数字：{code!r}")
-    from .market_data.sina_provider import _market_prefix
-    prefix = _market_prefix(code)
-    if prefix is None:
-        raise InvalidInputError(f"无法识别交易所：{code}")
-    return f"{prefix}{code}"
+    """代码 → 内部 symbol：A 股 sh/sz/bj+6 位；美股 us+TICKER。无法识别 fail-closed。
+
+    A 股输出与历史完全一致（内部仍用 sina _market_prefix）；美股委托 market 模块。"""
+    from .market_data.market import to_internal_symbol, UnknownCodeError
+    try:
+        return to_internal_symbol(code)
+    except UnknownCodeError as exc:
+        raise InvalidInputError(str(exc)) from exc
 
 
 # ------------------------------------------------------------------ 输入校验
@@ -80,12 +80,15 @@ def _finite(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
-def validate_bars(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+def validate_bars(bars: Sequence[Mapping[str, Any]], market: str = "cn") -> List[Dict[str, Any]]:
     """严格校验 K 线；返回问题清单（空 = 通过）。bars 元素需含 day/open/high/low/close/volume。
 
     R67-3：日期落在已核实交易日历年份（VERIFIED_YEARS）内时，必须是交易日；休市日出现 K 线即拒绝。
     未核实年份不做该项判断（结果的 calendar.status 会是 unverified）。
+    market：cn=A 股日历（默认，历史行为不变），us=美股 NYSE/NASDAQ 日历。
     """
+    from .market_data import us_calendar as _uc
+    cal = _uc if market == "us" else tc
     issues: List[Dict[str, Any]] = []
 
     def bad(i, field, reason, value=None):
@@ -103,7 +106,7 @@ def validate_bars(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
             except ValueError:
                 bad(i, "day", "日期不存在", d)
             else:
-                if tc.is_calendar_verified(d) and not tc.is_trading_day(d):
+                if cal.is_calendar_verified(d) and not cal.is_trading_day(d):
                     bad(i, "day", "休市日（非交易日）出现 K 线", d)
             if prev is not None:
                 if d == prev:
@@ -160,6 +163,9 @@ def sha256_json(obj: Any) -> str:
 
 def calendar_info(symbol: str, last_date: str, now: datetime) -> Dict[str, Any]:
     """交易日历证据。只有能用权威日历证明时才给 verified。"""
+    from .market_data.market import is_us_symbol
+    if is_us_symbol(symbol):
+        return _calendar_info_us(symbol, last_date, now)
     cal_id = tc.derive_calendar_id(symbol)
     today = now.astimezone(CN_TZ).date().isoformat()
     info: Dict[str, Any] = {"calendar_id": cal_id, "status": "unverified", "source": None,
@@ -177,6 +183,53 @@ def calendar_info(symbol: str, last_date: str, now: datetime) -> Dict[str, Any]:
     today_trading = tc.is_trading_day(today)
     after_close = now.astimezone(CN_TZ).time() >= MARKET_CLOSE
     expected = today if (today_trading and after_close) else tc.prev_trading_day(today)
+    info["expected_trade_date"] = expected
+    if last_date == today and today_trading and not after_close:
+        info["session_state"] = "intraday"
+        info["stale"] = False
+    else:
+        info["session_state"] = "close_confirmed"
+        info["stale"] = last_date < expected
+    return info
+
+
+def _calendar_info_us(symbol: str, last_date: str, now: datetime) -> Dict[str, Any]:
+    """美股交易日历证据（NYSE/NASDAQ，收盘 16:00 美东）。结构与 A 股 calendar_info 对齐。"""
+    from .market_data import us_calendar as uc
+    from .market_data.market import UnknownCodeError
+    ticker = symbol[2:]
+    try:
+        cal_id = uc.derive_us_calendar_id(ticker)
+    except UnknownCodeError:
+        cal_id = uc.CALENDAR_NASDAQ
+    info: Dict[str, Any] = {"calendar_id": cal_id, "status": "unverified", "source": None,
+                            "as_of_is_trading_day": None, "expected_trade_date": None,
+                            "stale": None, "session_state": "unknown"}
+    if not (uc.is_calendar_verified(last_date)):
+        info["reason"] = f"美股交易日历未覆盖 {last_date[:4]} 年（已核实：{sorted(uc.VERIFIED_YEARS)}）"
+        return info
+    info["as_of_is_trading_day"] = uc.is_trading_day(last_date)
+
+    # 美东当前时间（含夏令时）；zoneinfo 不可用时 fail-closed，保持 unknown，不瞎猜盘中状态
+    try:
+        from zoneinfo import ZoneInfo
+        ny = now.astimezone(ZoneInfo("America/New_York"))
+    except Exception as exc:  # noqa: BLE001
+        info["reason"] = f"美东时区不可用：{exc}"
+        info["status"] = "verified"
+        info["source"] = "core.market_data.us_calendar（NYSE 年度休市日历）"
+        return info
+
+    today = ny.date().isoformat()
+    if not uc.is_calendar_verified(today):
+        info["reason"] = f"美股交易日历未覆盖当前 {today[:4]} 年"
+        return info
+    info["status"] = "verified"
+    info["source"] = "core.market_data.us_calendar（NYSE 年度休市日历）"
+    today_trading = uc.is_trading_day(today)
+    us_close = time(16, 0)
+    after_close = ny.time() >= us_close
+    expected = today if (today_trading and after_close) else uc.prev_trading_day(today)
     info["expected_trade_date"] = expected
     if last_date == today and today_trading and not after_close:
         info["session_state"] = "intraday"
@@ -275,11 +328,12 @@ def parse_as_of(as_of: Optional[str], now: Optional[datetime] = None) -> Optiona
 
 
 def prepare_window(raw_bars: Iterable[Mapping[str, Any]], as_of: Optional[str] = None,
-                   window: int = WINDOW, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+                   window: int = WINDOW, now: Optional[datetime] = None,
+                   market: str = "cn") -> List[Dict[str, Any]]:
     """asOf 校验 → 规范化 → 全量校验 → 按 asOf 截断（point-in-time）→ 取最近 window 根"""
     as_of = parse_as_of(as_of, now)
     bars = normalize_bars(raw_bars)
-    issues = validate_bars(bars)
+    issues = validate_bars(bars, market)
     if issues:
         raise InvalidInputError(f"行情数据不合法：{len(issues)} 处问题（首个：第 {issues[0]['index']} 根 "
                                 f"{issues[0]['date']} {issues[0]['field']} {issues[0]['reason']}）", issues)
@@ -305,8 +359,10 @@ def analyze(code: str, raw_bars: Iterable[Mapping[str, Any]], *, adjustment: str
     if window != WINDOW:
         raise InvalidInputError(f"window 固定为 {WINDOW}（所有入口必须一致）")
     symbol = exchange_symbol(code)
+    from .market_data.market import is_us_symbol
+    market = "us" if is_us_symbol(symbol) else "cn"
     now = now or datetime.now(CN_TZ)
-    bars = prepare_window(raw_bars, as_of, window, now=now)
+    bars = prepare_window(raw_bars, as_of, window, now=now, market=market)
     last_date = bars[-1]["day"]
     if last_date > today_cn(now):
         raise InvalidInputError(f"最后一根 K 线日期 {last_date} 晚于当前日期")

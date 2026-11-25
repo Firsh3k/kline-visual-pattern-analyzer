@@ -378,6 +378,7 @@ class DataSourceType(Enum):
     TENCENT = "tencent"
     IFIND = "ifind"
     TONGDAXIN = "tongdaxin"
+    EASTMONEY = "eastmoney"
     MANUAL = "manual"
 
 

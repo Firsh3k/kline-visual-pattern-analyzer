@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { execFileSync, execSync } from 'child_process';
 import * as dotenv from 'dotenv';
-import { assertAsOf, buildBatchItem } from './stock-analysis.pure';
+import { assertAsOf, assertCode, buildBatchItem } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { SectorCatalogStatus, SectorCatalogStore } from './sector-catalog';
@@ -26,7 +26,6 @@ interface CallOptions {
 /** 单次 Python 分析的硬超时：到时 SIGKILL，确认退出后返回（原 spawn timeout 只发 SIGTERM，不保证退出） */
 const PY_TIMEOUT_MS = 30000;
 
-const CODE_RE = /^\d{6}$/;
 const MAX_SCAN_CODES = 200;
 
 @Injectable()
@@ -157,15 +156,17 @@ export class StockAnalysisService implements OnModuleInit {
     return 'unavailable';
   }
 
-  private validateCode(code: string): void {
-    if (!CODE_RE.test(code)) {
-      throw new BadRequestException(`股票代码必须为 6 位数字：${JSON.stringify(code)}`);
+  private validateCode(code: string): string {
+    try {
+      return assertCode(code);  // A 股 6 位 / 美股字母，与 Python market 模块对齐
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : '股票代码不合法');
     }
   }
 
-  /** 调用 Python Canonical Core 执行器。严格 6 位代码、spawn 参数数组（无 shell 注入）、fail-closed。 */
+  /** 调用 Python Canonical Core 执行器。严格代码校验、spawn 参数数组（无 shell 注入）、fail-closed。 */
   callPythonLocal(code: string, opts: CallOptions = {}): Promise<Record<string, unknown>> {
-    this.validateCode(code);
+    const checkedCode = this.validateCode(code);
     if (!this.pythonBinary) {
       return Promise.reject(new Error('本地Python环境不可用'));
     }
@@ -175,7 +176,7 @@ export class StockAnalysisService implements OnModuleInit {
     } catch (err) {
       return Promise.reject(err);
     }
-    const args = [engine.script, code, '--adjustment', opts.adjustment ?? 'qfq'];
+    const args = [engine.script, checkedCode, '--adjustment', opts.adjustment ?? 'qfq'];
     let asOf: string | undefined;
     try {
       asOf = assertAsOf(opts.asOf);
@@ -367,8 +368,10 @@ export class StockAnalysisService implements OnModuleInit {
       throw new Error('无可用的Python分析后端');
     }
     const clean = [...new Set((codes ?? []).map((c) => String(c).trim()))];
-    if (clean.some((c) => !CODE_RE.test(c))) {
-      throw new BadRequestException('扫描列表包含非法代码（必须为 6 位数字）');
+    try {
+      clean.forEach((c) => assertCode(c));
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : '扫描列表包含非法代码');
     }
     if (clean.length > MAX_SCAN_CODES) {
       throw new BadRequestException(`单次扫描最多 ${MAX_SCAN_CODES} 只（当前 ${clean.length}）`);

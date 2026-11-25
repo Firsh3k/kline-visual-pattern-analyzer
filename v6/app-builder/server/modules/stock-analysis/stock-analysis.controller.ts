@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
   BadRequestException, NotFoundException, HttpException, ServiceUnavailableException,
 } from '@nestjs/common';
-import { assertAsOf } from './stock-analysis.pure';
+import { assertAsOf, assertCode } from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
 import { collectDeployInfo } from './deploy-info';
 
@@ -40,8 +40,11 @@ export class StockAnalysisController {
 
   @Get('analyze/:code')
   async analyze(@Param('code') code: string, @Query('asOf') asOf?: string) {
-    if (!code || !/^\d{6}$/.test(code)) {
-      throw new BadRequestException('股票代码必须为 6 位数字');
+    let checkedCode: string;
+    try {
+      checkedCode = assertCode(code);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '股票代码不合法');
     }
     let checkedAsOf: string | undefined;
     try {
@@ -50,7 +53,7 @@ export class StockAnalysisController {
       throw new BadRequestException(error instanceof Error ? error.message : 'asOf 不合法');
     }
     try {
-      return await this.service.analyzeStock(code, checkedAsOf);
+      return await this.service.analyzeStock(checkedCode, checkedAsOf);
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error ? error.message : '分析失败'

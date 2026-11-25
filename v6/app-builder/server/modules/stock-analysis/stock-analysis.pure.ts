@@ -36,6 +36,23 @@ export function assertAsOf(asOf: string | undefined | null, now: Date = new Date
 }
 
 /**
+ * 证券代码校验：A 股 6 位数字；美股 1-6 位字母（可带点后缀，如 BRK.B）。
+ * 与 Python core.market_data.market 识别口径对齐；非法抛 InvalidRequestError（fail-closed）。
+ */
+export function assertCode(code: string): string {
+  if (!code || typeof code !== 'string') {
+    throw new InvalidRequestError('股票代码不能为空');
+  }
+  const c = code.trim();
+  const cn = /^\d{6}$/;
+  const us = /^[A-Z]{1,6}(\.[A-Z])?$/;
+  if (!cn.test(c) && !us.test(c)) {
+    throw new InvalidRequestError('股票代码必须是 A 股 6 位数字或美股字母代码（如 AAPL）');
+  }
+  return c;
+}
+
+/**
  * 扫描列表项：字段全部来自 Python core 的 summary（与个股页同一份 doc.signals）。
  * bull_top / bear_top = Python 给出的该方向主导【已确认】形态；没有已确认形态即为 null。
  * summary 缺少信号层或版本不符 → 抛错（该只股票记为失败，不降级展示）。

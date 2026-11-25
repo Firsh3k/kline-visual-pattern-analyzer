@@ -61,7 +61,30 @@ def _fetch_start(as_of: str | None) -> str:
     return (anchor - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
 
 
-def _fetch_series(symbol: str, adjustment: str, as_of: str | None = None):
+def _fetch_series_for(code: str, symbol: str, adjustment: str, as_of: str | None = None):
+    """统一取数入口：按市场路由。A 股→腾讯（前复权，历史口径不变）；美股→东方财富。"""
+    from core.market_data import market as M
+    if M.is_us_symbol(symbol):
+        return _fetch_series_us(symbol, adjustment, as_of)
+    return _fetch_series_cn(symbol, adjustment, as_of)
+
+
+def _fetch_series_us(symbol: str, adjustment: str, as_of: str | None = None):
+    """用 EastMoneyDataProvider 拉美股日线；fqt 严格对应复权，失败 fail-closed。"""
+    from core import AdjustmentType, FrequencyType
+    from core.market_data.eastmoney_provider import EastMoneyDataProvider
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+    start = _fetch_start(as_of)
+    series = EastMoneyDataProvider().fetch_klines(
+        symbol, start_date=start, frequency=FrequencyType.DAILY, adjustment=adj)
+    if not series.bars:
+        raise RuntimeError(f"{symbol} 行情返回为空")
+    if series.adjustment != adj:
+        raise RuntimeError(f"复权方式不一致：请求 {adj.value}，返回 {series.adjustment.value}")
+    return series
+
+
+def _fetch_series_cn(symbol: str, adjustment: str, as_of: str | None = None):
     """用 core 的 TencentDataProvider 拉日线；qfq 严格只接受 qfqday，失败换等价子域后仍失败即报错。"""
     from core import AdjustmentType, FrequencyType
     import core.market_data.tencent_provider as tp
@@ -147,12 +170,17 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
     symbol = A.exchange_symbol(code)
     as_of = A.parse_as_of(as_of)  # R67-3：未来 / 不存在的日期在取行情之前就拒绝
     try:
-        series = _fetch_series(symbol, adjustment, as_of)
+        series = _fetch_series_for(code, symbol, adjustment, as_of)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"行情获取失败（fail-closed，未降级）：{exc}") from exc
 
     bars = _series_to_bars(series)
-    name = _fetch_name(code, symbol)
+    # 美股名称直接取东财返回的中文名；A 股沿用腾讯实时行情名称
+    from core.market_data import market as M
+    if M.is_us_symbol(symbol):
+        name = getattr(series, "name", None) or code
+    else:
+        name = _fetch_name(code, symbol)
     prov = _provenance(series, adjustment)
     try:
         doc = A.analyze(code, bars, adjustment=adjustment, provenance=prov,
@@ -180,7 +208,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 def analyze_market(as_of: str | None = None) -> dict:
     from core import analysis as A
     as_of = A.parse_as_of(as_of)  # R67-3：同一口径
-    series = _fetch_series("sh000001", "none", as_of)
+    series = _fetch_series_cn("sh000001", "none", as_of)
     last_close = float(series.bars[-1].close)
     if not (500 < last_close < 20000):
         raise RuntimeError(f"上证指数收盘价 {last_close} 量级不合理，疑似取到个股，拒绝使用")
@@ -245,8 +273,11 @@ def main() -> int:
 
     if not args.code:
         _fail("缺少股票代码参数")
-    if not CODE_RE.match(args.code):
-        _fail(f"股票代码必须为 6 位数字：{args.code!r}")
+    try:
+        from core.market_data import market as M
+        M.detect_market(args.code)
+    except M.UnknownCodeError as exc:
+        _fail(str(exc))
 
     try:
         result = analyze_stock(args.code, as_of=args.as_of, adjustment=args.adjustment)

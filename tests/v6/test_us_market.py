@@ -88,9 +88,43 @@ class TestUSCalendar:
         assert uc.is_trading_day("2024-11-28") is False
         assert uc.is_trading_day("2024-11-29") is True
 
-    def test_juneteenth_2021_first_observation(self):
-        # 2021 Juneteenth：6/19 周六，观察日 6/18 周五休市
-        assert uc.is_trading_day("2021-06-18") is False
+    def test_juneteenth_2021_markets_open(self):
+        # 权威口径 NASDAQ ETA2021-45：2021-06-17 才立法，交易所当年不休市，
+        # 2021-06-18（周五）与 2021-06-21（周一）全部正常开市。
+        # 回归：ee33c4f 曾误把 2021-06-18 标为休市。
+        assert uc.is_trading_day("2021-06-18") is True
+        assert uc.is_trading_day("2021-06-21") is True
+
+    def test_juneteenth_2022_first_market_closure(self):
+        # NASDAQ ETA2022-55：首个 Juneteenth 休市观察日为 2022-06-20（6/19 周日顺延周一）
+        assert uc.is_trading_day("2022-06-20") is False
+        assert uc.is_trading_day("2022-06-17") is True
+
+    def test_good_friday_2026_closed(self):
+        # 2026 Good Friday = 04-03（复活节 04-05 前两个交易日）
+        assert uc.is_trading_day("2026-04-03") is False
+
+    def test_black_friday_2026_early_close(self):
+        # 2026-11-27 感恩节后周五：交易日，13:00 美东提前收盘
+        assert uc.is_trading_day("2026-11-27") is True
+        assert uc.is_early_close("2026-11-27") is True
+        assert uc.close_time("2026-11-27") == uc.EARLY_CLOSE_ET
+        assert uc.close_time("2026-11-27").strftime("%H:%M") == "13:00"
+
+    def test_regular_day_close_16(self):
+        assert uc.is_early_close("2026-11-23") is False
+        assert uc.close_time("2026-11-23").strftime("%H:%M") == "16:00"
+        assert uc.close_time("2026-11-26") is None  # 感恩节休市无收盘时刻
+
+    def test_early_close_never_overlaps_holidays(self):
+        assert not (uc._EARLY_CLOSES & uc._HOLIDAYS)
+        for d in sorted(uc._EARLY_CLOSES):
+            assert uc.is_trading_day(d) is True
+
+    def test_trading_day_counts_2021_2022(self):
+        # NYSE 实际：2021=251（无 Juneteenth 休市）、2022=251（首个 Juneteenth 休市）
+        assert len(uc.get_trading_days("2021-01-01", "2021-12-31")) == 251
+        assert len(uc.get_trading_days("2022-01-01", "2022-12-31")) == 251
 
     def test_weekend(self):
         assert uc.is_trading_day("2024-01-06") is False
@@ -103,6 +137,53 @@ class TestUSCalendar:
     def test_unverified_year_fail_closed(self):
         with pytest.raises(uc.CalendarUnverifiedError):
             uc.is_trading_day("2027-01-04")
+
+
+# ---------------------------------------------------------------- 提前收盘盘中/收盘状态
+class TestEarlyCloseSession:
+    """2026-11-27（感恩节后周五）13:00 美东提前收盘：收盘前后状态必须按当日实际收盘时刻判定，
+    不得统一按 16:00。对照普通交易日 2026-11-23 的 16:00 边界。"""
+
+    def _ny(self, s):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.fromisoformat(s).replace(tzinfo=ZoneInfo("America/New_York"))
+
+    def _info(self, last_date, now_str):
+        import core.analysis as A
+        return A._calendar_info_us("usAAPL", last_date, self._ny(now_str))
+
+    def test_early_close_day_before_13_is_intraday(self):
+        info = self._info("2026-11-27", "2026-11-27T12:30:00")
+        assert info["status"] == "verified"
+        assert info["early_close"] is True
+        assert info["close_time_et"] == "13:00"
+        assert info["session_state"] == "intraday"
+        assert info["stale"] is False
+        # 13:00 前当日未收盘，期望最近收盘日仍是上一交易日（11-26 感恩节休市 → 11-25）
+        assert info["expected_trade_date"] == "2026-11-25"
+
+    def test_early_close_day_after_13_is_close_confirmed(self):
+        info = self._info("2026-11-27", "2026-11-27T13:30:00")
+        assert info["session_state"] == "close_confirmed"
+        assert info["expected_trade_date"] == "2026-11-27"
+        assert info["stale"] is False
+
+    def test_early_close_day_13_to_16_not_treated_as_intraday(self):
+        # 关键回归：13:30 已收盘，若统一按 16:00 会误判 intraday 且把当日数据当未确认
+        info = self._info("2026-11-25", "2026-11-27T14:00:00")
+        assert info["session_state"] == "close_confirmed"
+        assert info["stale"] is True  # 已收盘但数据还停在 11-25
+
+    def test_regular_day_16_boundary(self):
+        before = self._info("2026-11-23", "2026-11-23T15:30:00")
+        assert before["early_close"] is False
+        assert before["close_time_et"] == "16:00"
+        assert before["session_state"] == "intraday"
+        after = self._info("2026-11-23", "2026-11-23T16:30:00")
+        assert after["session_state"] == "close_confirmed"
+        assert after["expected_trade_date"] == "2026-11-23"
+        assert after["stale"] is False
 
 
 # ---------------------------------------------------------------- analysis 路由
@@ -132,3 +213,104 @@ class TestAnalysisRouting:
         import core.analysis as A
         assert A.exchange_symbol("600519") == "sh600519"
         assert A.exchange_symbol("002436") == "sz002436"
+
+
+# ---------------------------------------------------------------- fail-closed 边界
+class TestFailClosed:
+    def test_invalid_code_rejected_with_clear_message(self):
+        import python_analyzer as P
+        from core.analysis import InvalidInputError
+        with pytest.raises(InvalidInputError, match="无法识别市场"):
+            P.analyze_stock("ABC123")
+
+    def test_unknown_ticker_outside_secid_table_fail_closed(self):
+        # 格式合法但不在东财 secid 映射表内 → fail-closed，不降级
+        import python_analyzer as P
+        with pytest.raises(RuntimeError, match="行情获取失败（fail-closed，未降级）"):
+            P.analyze_stock("ZZZZZ")
+
+    def test_upstream_failure_fail_closed_no_fallback(self, monkeypatch):
+        import python_analyzer as P
+        from core.interfaces import MarketDataError
+
+        def boom(code, symbol, adjustment, as_of=None):
+            raise MarketDataError("东方财富全部主机不可用（usAAPL qfq）")
+
+        monkeypatch.setattr(P, "_fetch_series_for", boom)
+        with pytest.raises(RuntimeError, match="行情获取失败（fail-closed，未降级）"):
+            P.analyze_stock("AAPL")
+
+
+# ---------------------------------------------------------------- 东财 provider（mock HTTP，确定性）
+class TestEastMoneyProvider:
+    """开发环境东财不可达（生产出口可达性属部署后冒烟项），
+    用 mock _http_get 覆盖解析 / 复权映射 / 子域轮询 / fail-closed。"""
+
+    PAYLOAD = ('{"rc":0,"data":{"code":"AAPL","name":"苹果","klines":['
+               '"2026-11-24,340.00,345.00,348.00,338.00,50000000",'
+               '"2026-11-25,346.00,349.00,352.00,344.00,60000000"]}}')
+
+    def _provider(self, monkeypatch, handler):
+        from core.market_data import eastmoney_provider as E
+        monkeypatch.setattr(E, "_http_get", handler)
+        return E.EastMoneyDataProvider()
+
+    def test_parse_and_fqt_and_calendar(self, monkeypatch):
+        from core import AdjustmentType
+        seen = []
+
+        def handler(url, timeout=20):
+            seen.append(url)
+            return self.PAYLOAD
+
+        p = self._provider(monkeypatch, handler)
+        series = p.fetch_klines("usAAPL", adjustment=AdjustmentType.FORWARD)
+        assert "fqt=1" in seen[0] and "secid=105.AAPL" in seen[0]
+        assert series.name == "苹果"
+        assert series.trading_calendar == "NASDAQ"
+        assert series.adjustment == AdjustmentType.FORWARD
+        b = series.bars[-1]
+        # 东财行格式 [date, open, close, high, low, volume]
+        assert (b.open, b.close, b.high, b.low, b.volume) == (346.0, 349.0, 352.0, 344.0, 60000000.0)
+        import hashlib
+        assert b.provenance.raw_payload_hash == hashlib.sha256(self.PAYLOAD.encode()).hexdigest()
+
+    def test_subdomain_rotation(self, monkeypatch):
+        from core import AdjustmentType
+        calls = []
+
+        def handler(url, timeout=20):
+            calls.append(url)
+            if len(calls) == 1:
+                raise ConnectionError("Remote end closed connection without response")
+            return self.PAYLOAD
+
+        p = self._provider(monkeypatch, handler)
+        series = p.fetch_klines("usAAPL", adjustment=AdjustmentType.FORWARD)
+        assert len(calls) == 2, "首主机失败应轮询下一子域"
+        assert series.bars[-1].provenance.url.startswith("https://13.push2his.eastmoney.com")
+
+    def test_all_hosts_fail_closed(self, monkeypatch):
+        from core import AdjustmentType
+        from core.interfaces import MarketDataError
+
+        def handler(url, timeout=20):
+            raise ConnectionError("Remote end closed connection without response")
+
+        p = self._provider(monkeypatch, handler)
+        with pytest.raises(MarketDataError, match="全部主机不可用"):
+            p.fetch_klines("usAAPL", adjustment=AdjustmentType.FORWARD)
+
+    def test_empty_klines_fail_closed(self, monkeypatch):
+        from core import AdjustmentType
+        from core.interfaces import MarketDataError
+
+        p = self._provider(monkeypatch, lambda url, timeout=20: '{"rc":0,"data":{"klines":[]}}')
+        with pytest.raises(MarketDataError, match="fail-closed"):
+            p.fetch_klines("usAAPL", adjustment=AdjustmentType.FORWARD)
+
+    def test_non_us_symbol_rejected(self):
+        from core.interfaces import MarketDataError
+        from core.market_data.eastmoney_provider import EastMoneyDataProvider
+        with pytest.raises(MarketDataError, match="仅服务美股"):
+            EastMoneyDataProvider().fetch_klines("sh600519")

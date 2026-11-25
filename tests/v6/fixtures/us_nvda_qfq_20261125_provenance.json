@@ -1,0 +1,14 @@
+{
+  "ticker": "NVDA",
+  "symbol": "usNVDA",
+  "name": "英伟达",
+  "source": "tencent",
+  "adjustment": "qfq",
+  "trading_calendar": "NASDAQ",
+  "fetched_at": "2026-11-25T15:19:11.161207+00:00",
+  "bar_count": 250,
+  "first_day": "2025-11-28",
+  "last_day": "2026-11-25",
+  "raw_payload_sha256": "00bcd2a86dc075cbcd7badff70073255cd24e289e55cf7d19f28e576c32c6183",
+  "note": "冻结行情 fixture：开发环境东财不可达，用腾讯美股前复权抓取；验收注入美股路由路径，东财生产可达性属部署后冒烟项"
+}

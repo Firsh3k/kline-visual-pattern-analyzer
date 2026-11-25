@@ -225,9 +225,13 @@ def _calendar_info_us(symbol: str, last_date: str, now: datetime) -> Dict[str, A
         info["reason"] = f"美股交易日历未覆盖当前 {today[:4]} 年"
         return info
     info["status"] = "verified"
-    info["source"] = "core.market_data.us_calendar（NYSE 年度休市日历）"
+    info["source"] = "core.market_data.us_calendar（NYSE 年度休市日历 + NASDAQ ETA2021-45/ETA2022-55）"
     today_trading = uc.is_trading_day(today)
-    us_close = time(16, 0)
+    # 提前收盘日（感恩节后周五/7-3/平安夜，13:00 美东）按当日实际收盘时刻判定，
+    # 不得统一按 16:00；close_time 对非交易日返回 None。
+    us_close = uc.close_time(today) or uc.REGULAR_CLOSE_ET
+    info["close_time_et"] = us_close.strftime("%H:%M")
+    info["early_close"] = uc.is_early_close(today)
     after_close = ny.time() >= us_close
     expected = today if (today_trading and after_close) else uc.prev_trading_day(today)
     info["expected_trade_date"] = expected

@@ -1914,9 +1914,14 @@ function isValidCode(code) {
 // 归一化：去空格、美股转大写（A 股数字不受影响）
 function normalizeCode(code) { return String(code).trim().toUpperCase(); }
 
+// 分析请求序号：快速切换标的（如 002436 → AAPL）且响应乱序时，
+// 旧请求的成功/失败/结束状态都不得覆盖当前页面的结果与按钮状态。
+let _analyzeSeq = 0;
+
 async function doAnalyze() {
   const code = normalizeCode(document.getElementById('codeInput').value);
   if (!code || !isValidCode(code)) { alert('请输入 A 股 6 位代码或美股代码（如 AAPL、NVDA）'); return; }
+  const mySeq = ++_analyzeSeq;
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true; btn.textContent = '分析中...';
   const area = document.getElementById('resultArea');
@@ -1927,6 +1932,7 @@ async function doAnalyze() {
   try {
     // 1) 个股：Python Canonical Core 是唯一数据源（K线/形态/指标/阶段/评分）。回测传 asOf。
     const pyRes = await fetchPythonDoc(code, backtestDate);
+    if (mySeq !== _analyzeSeq) return; // 已有更新的分析：旧响应（含失败）整体丢弃
     if (!pyRes.ok) {
       EngineStatus.state = 'error';
       EngineStatus.errorMessage = pyRes.error;
@@ -1952,6 +1958,7 @@ async function doAnalyze() {
     let backtestInfo = null;
     if (isBacktest && backtestDate) {
       const afterRes = await fetchPythonDoc(code, null);
+      if (mySeq !== _analyzeSeq) return;
       if (afterRes.ok) {
         const fullData = docToV4Data(afterRes.doc);
         const afterData = fullData.filter(d => (d.date || '').substring(0, 10) > doc.as_of);
@@ -1984,11 +1991,14 @@ async function doAnalyze() {
       if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
     } catch (e) { marketEnv = null; }
 
+    if (mySeq !== _analyzeSeq) return; // 渲染前最后一道闸：大盘请求期间也可能已切换
     renderAnalysis(result, marketEnv, backtestInfo, { doc });
   } catch (e) {
+    if (mySeq !== _analyzeSeq) return; // 旧请求的异常不得覆盖当前页面
     area.innerHTML = `<div class="error-msg">数据获取失败：${e.message}。请检查代码是否正确，或稍后重试。</div>`;
   } finally {
-    btn.disabled = false; btn.textContent = '开始分析';
+    // 仅最新请求负责恢复按钮；旧请求结束时新请求可能仍在分析中
+    if (mySeq === _analyzeSeq) { btn.disabled = false; btn.textContent = '开始分析'; }
   }
 }
 

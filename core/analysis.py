@@ -311,10 +311,21 @@ def today_cn(now: Optional[datetime] = None) -> str:
     return (now or datetime.now(CN_TZ)).astimezone(CN_TZ).date().isoformat()
 
 
-def parse_as_of(as_of: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
+def today_us(now: Optional[datetime] = None) -> str:
+    """America/New_York 当前日期（美股 asOf / 最后一根 K 线校验口径，含夏令时）。
+
+    北京时间已跨日而美东尚未跨日时，美股的"未来日期"必须按美东今天拒绝，
+    不能用北京时间今天放行。zoneinfo 不可用时抛异常（fail-closed，不回退北京时间）。
+    """
+    from zoneinfo import ZoneInfo
+    return (now or datetime.now(CN_TZ)).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+
+def parse_as_of(as_of: Optional[str], now: Optional[datetime] = None, market: str = "cn") -> Optional[str]:
     """
     R67-3：asOf 统一校验（在取行情之前调用）。None = 最新。
-    必须是 YYYY-MM-DD、真实存在的日期，且不晚于 Asia/Shanghai 今天；否则拒绝，
+    必须是 YYYY-MM-DD、真实存在的日期，且不晚于"该市场时区的今天"：
+    A 股按北京时间（Asia/Shanghai），美股按美东时间（America/New_York）；否则拒绝，
     不允许“未来日期 + 截取到旧 K 线”被当作合法请求。
     """
     if as_of is None:
@@ -325,9 +336,17 @@ def parse_as_of(as_of: Optional[str], now: Optional[datetime] = None) -> Optiona
         datetime.strptime(as_of, "%Y-%m-%d")
     except ValueError:
         raise InvalidInputError(f"asOf 日期不存在：{as_of}")
-    today = today_cn(now)
+    if market == "us":
+        try:
+            today = today_us(now)
+        except Exception as exc:  # noqa: BLE001
+            raise InvalidInputError(f"美东时区不可用，无法校验美股 asOf（fail-closed）：{exc}")
+        tz_label = "美东时间"
+    else:
+        today = today_cn(now)
+        tz_label = "北京时间"
     if as_of > today:
-        raise InvalidInputError(f"asOf {as_of} 晚于今天（{today}，北京时间），不能分析未来日期")
+        raise InvalidInputError(f"asOf {as_of} 晚于今天（{today}，{tz_label}），不能分析未来日期")
     return as_of
 
 
@@ -335,7 +354,7 @@ def prepare_window(raw_bars: Iterable[Mapping[str, Any]], as_of: Optional[str] =
                    window: int = WINDOW, now: Optional[datetime] = None,
                    market: str = "cn") -> List[Dict[str, Any]]:
     """asOf 校验 → 规范化 → 全量校验 → 按 asOf 截断（point-in-time）→ 取最近 window 根"""
-    as_of = parse_as_of(as_of, now)
+    as_of = parse_as_of(as_of, now, market)
     bars = normalize_bars(raw_bars)
     issues = validate_bars(bars, market)
     if issues:
@@ -368,8 +387,19 @@ def analyze(code: str, raw_bars: Iterable[Mapping[str, Any]], *, adjustment: str
     now = now or datetime.now(CN_TZ)
     bars = prepare_window(raw_bars, as_of, window, now=now, market=market)
     last_date = bars[-1]["day"]
-    if last_date > today_cn(now):
-        raise InvalidInputError(f"最后一根 K 线日期 {last_date} 晚于当前日期")
+    # 最后一根 K 线日期按该市场时区校验：美股美东、A 股北京。
+    # 北京已跨日而美东未跨日时，美东未来日期必须拒绝（fail-closed）。
+    if market == "us":
+        try:
+            today_ref = today_us(now)
+        except Exception as exc:  # noqa: BLE001
+            raise InvalidInputError(f"美东时区不可用，无法校验美股 K 线日期（fail-closed）：{exc}")
+        tz_label = "美东时间"
+    else:
+        today_ref = today_cn(now)
+        tz_label = "北京时间"
+    if last_date > today_ref:
+        raise InvalidInputError(f"最后一根 K 线日期 {last_date} 晚于当前日期（{today_ref}，{tz_label}）")
     cal = calendar_info(symbol, last_date, now)
     result = _roundtrip(run_core(to_klines(bars)))
     bar_rows = [[b["day"], float(b["open"]), float(b["high"]), float(b["low"]),

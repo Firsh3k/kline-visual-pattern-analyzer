@@ -24,7 +24,16 @@
 | 2026-04-03 | Good Friday 休市 | ✓ |
 | 2026-11-27 | 美东 13:00 提前收盘，测收盘前/后状态 | ✓ |
 
-提前收盘按 `close_time_et=13:00` 判定收盘前后状态，不统一按 16:00。年度交易日数校验：2021=251、2022=251、2024=252。
+提前收盘按 `close_time_et=13:00` 判定收盘前后状态，不统一按 16:00。年度交易日数校验：2021=252、2022=251、2024=252、2025=250。
+
+本轮再修正两处日历错误（整改②）：
+
+| 日期 | 原错误 | 修正 | 权威依据 |
+|---|---|---|---|
+| 2021-12-31 | 误标休市，拒绝当天有效 K 线 | 正常开市 | NYSE 2021–2023 日历：2022 元旦适逢周六，周五 12-31 正常开市（仅圣诞节适逢周六才周五休市，如 2021-12-24） |
+| 2025-01-09 | 误当交易日 | 休市（卡特国葬哀悼日） | Nasdaq 官方公告 closure in honor of National Day of Mourning（James Carter） |
+
+依据：用户提供的 NYSE/ICE 2021–2023 假日与提前收盘日历、Nasdaq ETA2021-45 / ETA2022-55、Nasdaq 卡特哀悼日公告。`core/market_data/us_calendar.py` 与 `v6/app-builder/core/` 镜像同步修正。
 
 ## 2. 个股验收（固定行情，Core → API → 页面逐字段）
 
@@ -63,3 +72,45 @@
 - `fullstack-cli`（平台全局工具，仅 postinstall `action-plugin init` 用）VM 缺失，依赖本体已装好，不影响 tsc/nest 构建。
 - `test_mobile_layout.js` 浏览器段需 `playwright-core`（CI 提供），静态源码约束已通过。
 - **东财生产出口可达性 = 部署后冒烟项**：开发环境通过不能代替生产验证。
+## 7. 本轮整改（FIR-47 四项工单，复核基准）
+
+### ① 两项 CI 失败修复（run 45650800048）
+
+- **JS DataSourceType 枚举同步**：Python 新增 `eastmoney`，JS 镜像 `tests/v5/canonical_schema.js` 缺。补 `EASTMONEY:'eastmoney'`（顺序 sina/tencent/ifind/tongdaxin/eastmoney/manual）。`run_canonical_parity.py` 100% 通过。
+- **Playwright runner 兼容**：`ubuntu-latest` 已迁 ubuntu-26.04，playwright@1.56.1 报 "does not support chromium on ubuntu26.04-x64"。`js-syntax-check` job 固定 `runs-on: ubuntu-24.04`（受支持且兼容）。本地 VM chromium 移动布局 29/29 通过。
+
+### ② 美股日历 + 美东日期校验
+
+- 日历修正见 §1（2021-12-31 开市、2025-01-09 休市），3 个日历回归用例。
+- **美东日期校验**：`core/analysis.py` 新增 `today_us()`（ZoneInfo America/New_York，fail-closed），`parse_as_of(market=)` 与 `analyze` 最后一根 K 线按市场选时区——美股用美东今天，A 股仍用北京时间。JS `stock-analysis.pure.ts` 加 `todayNewYork`（Intl en-CA timeZone）/`marketOfCode`，`assertAsOf(market=)`；controller/service 传 `marketOfCode(checkedCode)`，A 股指数路径保持 cn。
+- 关键场景：北京 2026-11-25 00:30 = 美东 2026-11-24 11:30（EST），北京已跨日、美东未跨日时拒绝美东未来日期。`TestUSDateValidation` 4 用例 + `test_bff_pure.js` 3 个美东用例。
+
+### ③ 页面收回"美股个股分析"范围
+
+- 自选股 `addStock` / 自定义板块 `addCustomSector` / `addSelectedToWatchlist` 恢复 A 股六位数字输入限制（`isCNCode` 守卫，非 CN 代码点名拒绝）。
+- 美股个股页隐藏依赖上证指数的内容：相对强度（RS）卡片、逆大盘风险知识项、"大盘环境适配"评估维度、header"含大盘参考数据"。`doAnalyze` 对美股跳过 `sh000001` 大盘抓取。A 股页面保持原样（RS 卡片仍渲染）。
+- `?code=` 个股入口保留美股支持。`test_us_acceptance.js` section 五 5 用例。
+
+### ④ 可重复验收接入 CI + 真实 Nest + 零漂移
+
+- **CI 接入**：`python-tests` job 跑 `tests/v6/test_us_market.py`（46 项）；`js-syntax-check` job 跑 `tests/v6/test_us_acceptance.js`（22 项）；`platform-package` job（已 npm ci 全量依赖）跑 `tests/v6/test_us_nest_e2e.js`（5 项）。
+- **真实 Nest 端到端**（`test_us_nest_e2e.js` + `us_nest_boot.js`）：启动真实 `StockAnalysisController → StockAnalysisService → EngineResolver → Python subprocess → Canonical Core`，经 `KLINE_FIXTURE_DIR` 测试接缝注入冻结行情（`python_analyzer._fixture_series`，仅美股、仅 env 启用，生产不设此 env 行为不变），走真实 HTTP `/api/analyze/AAPL|NVDA`。核对：真实 API `result_sha256`/`signals_sha256`/`data_hash`/8 形态 score·stage·confirmed == 冻结 Core；页面 `doAnalyze` 渲染主导形态/分数/确认 == 真实 API；美股页隐藏 RS。5/5 通过。
+- **600519 零漂移复跑**：`frozen_snapshot.py`（NOW=2026-10-19 12:40 CN）当前分支 vs 基线 worktree（45f6e15）输出**逐字节一致**（含 600519_latest data_hash a204007e5c2610ac…、002436、002594、大盘）。A 股路径零漂移。
+- 东财真实取数留部署后冒烟，无需 Staging。
+
+### 本轮测试汇总（本地全绿）
+
+| 套件 | 结果 |
+|---|---|
+| `test_us_market.py` | 46 passed |
+| `test_us_acceptance.js` | 22 passed |
+| `test_us_nest_e2e.js`（真实 Nest） | 5 passed |
+| `test_bff_pure.js` | 12 passed |
+| `run_canonical_parity.py` | 100% |
+| `test_mobile_layout.js` | 29 passed |
+| 服务端 `tsc --noEmit` | 0 错误 |
+| 平台 ESLint server | 0 警告 |
+| `build_runtime_bundles.py --check` | 一致 |
+| 600519 零漂移（vs 45f6e15） | 逐字节一致 |
+
+引擎包重建 39 文件，`bundle_sha256=9da72bc2581f6e5126eb3ebf1939090efc8d678438db590e9036276d15e96a09`（含 `python_analyzer.py` fixture 接缝 + core 美东校验）。

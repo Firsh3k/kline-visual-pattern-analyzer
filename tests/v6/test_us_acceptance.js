@@ -14,7 +14,7 @@ const path = require('path');
 const { loadPage, ROOT } = require('./v4_page_harness');
 
 const EXPORTS = ['doAnalyze', 'fetchPythonDoc', 'docToV4Data', 'buildMatchesFromDoc', 'pickDominant',
-  'renderAnalysis', 'PATTERNS', 'BEAR_PATTERNS'];
+  'renderAnalysis', 'PATTERNS', 'BEAR_PATTERNS', 'addStock', 'addCustomSector', 'isUSCode', 'isCNCode'];
 const PY = process.env.PYTHON || 'python3';
 const DOCS = JSON.parse(execFileSync(PY, [path.join(ROOT, 'tests', 'v6', 'us_acceptance_make_docs.py')],
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
@@ -214,6 +214,61 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     await p.x.doAnalyze(); await settle();
     const html = areaHtml(p);
     assert.ok(html.includes('引擎不是 Python Canonical Core'), '应拒绝非 real_core 引擎');
+  });
+
+  console.log('五、页面范围：美股仅个股分析，隐藏大盘依赖项；自选股/自定义板块限 A 股');
+
+  await test('美股个股页隐藏相对强度（RS）卡片与逆大盘项、无缺大盘警告', async () => {
+    const p = loadPage({ exports: EXPORTS, canvasIds: ['chartFull', 'chart60'], fetch: async () => okResp(DOCS.AAPL.api) });
+    p.sandbox.fetchSinaKlineJSONP = async () => { throw new Error('美股不应取上证指数'); };
+    setCode(p, 'AAPL');
+    await p.x.doAnalyze(); await settle();
+    const html = areaHtml(p);
+    assert.ok(html.includes(nameOf(DOCS.AAPL.api.signals.dominant.overall.pattern_id)), '美股个股形态仍正常展示');
+    assert.ok(!html.includes('相对强度（RS）'), '美股应隐藏相对强度卡片');
+    assert.ok(!html.includes('逆大盘'), '美股应隐藏逆大盘风险项');
+    assert.ok(!html.includes('大盘环境适配'), '美股应隐藏大盘环境适配维度');
+    assert.ok(!html.includes('缺少大盘环境维度'), '美股不取大盘，不应显示缺大盘警告');
+  });
+
+  await test('A 股个股页保留相对强度（RS）卡片（保持原样）', async () => {
+    const p = loadPage({ exports: EXPORTS, canvasIds: ['chartFull', 'chart60'] });
+    const doc = DOCS['002436'].core;
+    const data = p.x.docToV4Data(doc);
+    // 直接验证渲染层：A 股（isUS=false）即使大盘缺失也保留 RS 卡片（显示“大盘不可用”）
+    p.x.renderAnalysis({ name: doc.name || '002436', code: '002436', data }, null, null, { doc, isUS: false });
+    await settle();
+    const html = areaHtml(p);
+    assert.ok(html.includes('相对强度（RS）'), 'A 股应保留相对强度卡片');
+  });
+
+  await test('isUSCode / isCNCode 判定正确', () => {
+    const p = loadPage({ exports: EXPORTS });
+    assert.strictEqual(p.x.isUSCode('AAPL'), true);
+    assert.strictEqual(p.x.isUSCode('BRK.B'), true);
+    assert.strictEqual(p.x.isUSCode('600519'), false);
+    assert.strictEqual(p.x.isCNCode('600519'), true);
+    assert.strictEqual(p.x.isCNCode('002436'), true);
+    assert.strictEqual(p.x.isCNCode('AAPL'), false);
+  });
+
+  await test('自选股 addStock 拒绝美股代码（后端只收六位数字）', async () => {
+    const p = loadPage({ exports: EXPORTS });
+    const alerts = [];
+    p.sandbox.alert = m => alerts.push(String(m));
+    p.sandbox.document.getElementById('addStockInput').value = 'AAPL';
+    await p.x.addStock();
+    assert.ok(alerts.some(m => m.includes('自选股仅支持 A 股')), '应提示自选股仅限 A 股');
+  });
+
+  await test('自定义板块 addCustomSector 拒绝美股代码', async () => {
+    const p = loadPage({ exports: EXPORTS });
+    const alerts = [];
+    p.sandbox.alert = m => alerts.push(String(m));
+    p.sandbox.document.getElementById('customSectorName').value = '测试板块';
+    p.sandbox.document.getElementById('customSectorCodes').value = 'AAPL,600519';
+    await p.x.addCustomSector();
+    assert.ok(alerts.some(m => m.includes('自定义板块仅支持 A 股') && m.includes('AAPL')), '应拒绝并点名美股代码');
   });
 
   console.log(`\n结果: ${passed} 通过, ${failed} 失败`);

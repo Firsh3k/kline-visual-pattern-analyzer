@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
   BadRequestException, NotFoundException, HttpException, ServiceUnavailableException,
 } from '@nestjs/common';
-import { assertAsOf, assertCode } from './stock-analysis.pure';
+import { assertAsOf, assertCode, marketOfCode } from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
 import { collectDeployInfo } from './deploy-info';
 
@@ -48,7 +48,7 @@ export class StockAnalysisController {
     }
     let checkedAsOf: string | undefined;
     try {
-      checkedAsOf = assertAsOf(asOf);  // R67-3：未来 / 不存在日期在取行情前拒绝
+      checkedAsOf = assertAsOf(asOf, new Date(), marketOfCode(checkedCode));  // R67-3：未来 / 不存在日期在取行情前拒绝（美股按美东今天）
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'asOf 不合法');
     }

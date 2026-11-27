@@ -61,8 +61,54 @@ def _fetch_start(as_of: str | None) -> str:
     return (anchor - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
 
 
+def _fixture_series(fixdir: str, symbol: str, adjustment: str):
+    """测试接缝（仅当 KLINE_FIXTURE_DIR 环境变量设置时启用）：从冻结 CSV 构造 MarketDataSeries，
+    供"真实 Nest /api/analyze/:code 端到端"确定性验收使用（不访问网络）。
+
+    生产环境不设此 env，_fetch_series_for 行为与原先完全一致。目前仅支持美股 fixture
+    （us_{ticker}_qfq_*.csv + 同名 _provenance.json，provenance 如实记冻结来源）。
+    """
+    import csv
+    import glob
+    import os
+    from core import AdjustmentType, FrequencyType
+    from core.types import (DataProvenance, DataQualityFlag, DataSourceType,
+                            MarketDataBar, MarketDataSeries)
+    if not symbol.startswith("us"):
+        raise RuntimeError(f"KLINE_FIXTURE_DIR 测试接缝仅支持美股 fixture（收到 {symbol}）")
+    ticker = symbol[2:]
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+    csvs = sorted(glob.glob(os.path.join(fixdir, f"us_{ticker.lower()}_qfq_*.csv")))
+    if not csvs:
+        raise RuntimeError(f"缺少 {ticker} 冻结 fixture（目录 {fixdir}）")
+    path = csvs[-1]
+    prov_path = path[:-4] + "_provenance.json"
+    with open(prov_path, encoding="utf-8") as f:
+        prov = json.load(f)
+    bars = []
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            bars.append(MarketDataBar(
+                date=row["date"], open=float(row["open"]), high=float(row["high"]),
+                low=float(row["low"]), close=float(row["close"]), volume=float(row["volume"]),
+                provenance=DataProvenance(
+                    source=DataSourceType.TENCENT, url="fixture", fetched_at=prov["fetched_at"],
+                    raw_payload_hash=prov["raw_payload_sha256"],
+                    adjustment_applied=adj, quality_flag=DataQualityFlag.ADJUSTED)))
+    if not bars:
+        raise RuntimeError(f"{ticker} fixture 为空")
+    return MarketDataSeries(
+        symbol=symbol, name=prov["name"], frequency=FrequencyType.DAILY, adjustment=adj,
+        trading_calendar=prov["trading_calendar"], source=DataSourceType.TENCENT,
+        fetched_at=prov["fetched_at"], bars=bars)
+
+
 def _fetch_series_for(code: str, symbol: str, adjustment: str, as_of: str | None = None):
     """统一取数入口：按市场路由。A 股→腾讯（前复权，历史口径不变）；美股→东方财富。"""
+    import os
+    fixdir = os.environ.get("KLINE_FIXTURE_DIR")
+    if fixdir:
+        return _fixture_series(fixdir, symbol, adjustment)
     from core.market_data import market as M
     if M.is_us_symbol(symbol):
         return _fetch_series_us(symbol, adjustment, as_of)

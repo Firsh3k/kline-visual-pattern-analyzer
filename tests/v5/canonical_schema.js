@@ -53,8 +53,8 @@ const CANONICAL_SCHEMA = {
     },
     DataSourceType: {
       name: 'DataSourceType',
-      values: ['sina', 'tencent', 'ifind', 'tongdaxin', 'manual'],
-      members: { SINA: 'sina', TENCENT: 'tencent', IFIND: 'ifind', TONGDAXIN: 'tongdaxin', MANUAL: 'manual' }
+      values: ['sina', 'tencent', 'ifind', 'tongdaxin', 'eastmoney', 'manual'],
+      members: { SINA: 'sina', TENCENT: 'tencent', IFIND: 'ifind', TONGDAXIN: 'tongdaxin', EASTMONEY: 'eastmoney', MANUAL: 'manual' }
     },
     DataQualityFlag: {
       name: 'DataQualityFlag',

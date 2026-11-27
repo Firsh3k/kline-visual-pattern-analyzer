@@ -3,7 +3,8 @@
  *
  * R67-1：扫描 / 自选股列表的“确认 / 主导”全部透传 Python core 信号层（summary.dominant、
  *        summary.patterns_latest[pid].confirmed），BFF 不再按阶段名或分数另立择优规则。
- * R67-3：asOf 与 Python core.analysis.parse_as_of 同一口径：YYYY-MM-DD、真实存在、不晚于北京时间今天。
+ * R67-3：asOf 与 Python core.analysis.parse_as_of 同一口径：YYYY-MM-DD、真实存在、不晚于"该市场时区今天"
+ *        （A 股北京时间 / 美股美东时间）。北京已跨日而美东未跨日时，美股未来日期按美东今天拒绝。
  */
 
 export const SIGNAL_RULE_VERSION = 'signals-1';
@@ -18,8 +19,20 @@ export function todayShanghai(now: Date = new Date()): string {
   return cn.toISOString().slice(0, 10);
 }
 
-/** asOf 校验；undefined / 空串 = 最新。非法直接抛 InvalidRequestError（不取行情）。 */
-export function assertAsOf(asOf: string | undefined | null, now: Date = new Date()): string | undefined {
+/** America/New_York 当前日期 YYYY-MM-DD（与 core.analysis.today_us 一致，含夏令时）。
+ *  用 IANA 时区换算，避免固定偏移在夏令时出错；en-CA 输出 ISO YYYY-MM-DD。 */
+export function todayNewYork(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+
+/** 代码归属市场：美股字母代码 → 'us'，A 股 6 位数字 → 'cn'（与 assertCode 口径对齐）。 */
+export function marketOfCode(code: string): 'us' | 'cn' {
+  return /^[A-Za-z]/.test((code || '').trim()) ? 'us' : 'cn';
+}
+
+/** asOf 校验；undefined / 空串 = 最新。非法直接抛 InvalidRequestError（不取行情）。
+ *  market='us' 按美东今天校验，'cn'（默认）按北京时间今天校验。 */
+export function assertAsOf(asOf: string | undefined | null, now: Date = new Date(), market: 'us' | 'cn' = 'cn'): string | undefined {
   if (asOf === undefined || asOf === null || asOf === '') return undefined;
   if (typeof asOf !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
     throw new InvalidRequestError(`asOf 必须为 YYYY-MM-DD：${JSON.stringify(asOf)}`);
@@ -28,9 +41,10 @@ export function assertAsOf(asOf: string | undefined | null, now: Date = new Date
   if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== asOf) {
     throw new InvalidRequestError(`asOf 日期不存在：${asOf}`);
   }
-  const today = todayShanghai(now);
+  const today = market === 'us' ? todayNewYork(now) : todayShanghai(now);
+  const tzLabel = market === 'us' ? '美东时间' : '北京时间';
   if (asOf > today) {
-    throw new InvalidRequestError(`asOf ${asOf} 晚于今天（${today}，北京时间），不能分析未来日期`);
+    throw new InvalidRequestError(`asOf ${asOf} 晚于今天（${today}，${tzLabel}），不能分析未来日期`);
   }
   return asOf;
 }

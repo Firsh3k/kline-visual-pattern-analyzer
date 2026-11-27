@@ -1913,6 +1913,10 @@ function isValidCode(code) {
 }
 // 归一化：去空格、美股转大写（A 股数字不受影响）
 function normalizeCode(code) { return String(code).trim().toUpperCase(); }
+// 美股代码判定（字母开头）：本期美股仅支持个股分析，大盘依赖项（相对强度/逆大盘风险）隐藏。
+function isUSCode(code) { return /^[A-Z]/.test(String(code).trim()); }
+// 自选股 / 自定义板块后端只收 A 股 6 位数字，输入限制与之对齐（不接受美股代码）。
+function isCNCode(code) { return /^\d{6}$/.test(String(code).trim()); }
 
 // 分析请求序号：快速切换标的（如 002436 → AAPL）且响应乱序时，
 // 旧请求的成功/失败/结束状态都不得覆盖当前页面的结果与按钮状态。
@@ -1979,20 +1983,24 @@ async function doAnalyze() {
       }
     }
 
-    // 3) 大盘环境：前端独立计算，仅作参考，绝不参与个股形态判定与评分
+    // 3) 大盘环境：前端独立计算，仅作参考，绝不参与个股形态判定与评分。
+    //    美股本期仅个股分析：不取上证指数，相对强度/逆大盘风险等大盘依赖项隐藏（A 股保持原样）。
+    const isUS = isUSCode(code);
     let marketEnv = null;
-    try {
-      const datalen = isBacktest ? 500 : 250;
-      let marketData = await fetchSinaKlineJSONP('sh000001', datalen).catch(() => null);
-      if (marketData && isBacktest && backtestDate) {
-        marketData = marketData.filter(d => (d.date || '').substring(0, 10) <= doc.as_of);
-        if (marketData.length > 250) marketData = marketData.slice(-250);
-      }
-      if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
-    } catch (e) { marketEnv = null; }
+    if (!isUS) {
+      try {
+        const datalen = isBacktest ? 500 : 250;
+        let marketData = await fetchSinaKlineJSONP('sh000001', datalen).catch(() => null);
+        if (marketData && isBacktest && backtestDate) {
+          marketData = marketData.filter(d => (d.date || '').substring(0, 10) <= doc.as_of);
+          if (marketData.length > 250) marketData = marketData.slice(-250);
+        }
+        if (marketData && marketData.length > 60) marketEnv = analyzeMarketEnv(marketData);
+      } catch (e) { marketEnv = null; }
+    }
 
     if (mySeq !== _analyzeSeq) return; // 渲染前最后一道闸：大盘请求期间也可能已切换
-    renderAnalysis(result, marketEnv, backtestInfo, { doc });
+    renderAnalysis(result, marketEnv, backtestInfo, { doc, isUS });
   } catch (e) {
     if (mySeq !== _analyzeSeq) return; // 旧请求的异常不得覆盖当前页面
     area.innerHTML = `<div class="error-msg">数据获取失败：${e.message}。请检查代码是否正确，或稍后重试。</div>`;
@@ -2050,6 +2058,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
 
   // 个股 8 形态 100% 来自 Python Canonical Core；离线（CSV）无 doc 时不做任何形态结论。
   const doc = pyPayload && pyPayload.doc ? pyPayload.doc : null;
+  const isUS = !!(pyPayload && pyPayload.isUS);  // 美股个股：隐藏大盘依赖项（相对强度/逆大盘风险）
   const offline = !doc;
   // 正式指标：在线一律用 core.indicators.series（Python 计算）；离线 CSV 才用前端自算（且不做形态结论）。
   const ind = offline ? calcIndicators(data) : coreIndicatorsFromDoc(doc);
@@ -2102,7 +2111,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     evidence: bestDetail.__py.evidence || {},
     category: bestDetail.__category,
   } : null;
-  const marketMissing = !marketEnv;
+  const marketMissing = !marketEnv && !isUS;  // 美股不取大盘，不视为“缺失”，不显示缺大盘警告
 
   // 当前阶段 / 预判 / 操作（Python 7 阶段口径）
   const currentStage = bestDetail.stage || '暂无明显形态';
@@ -2117,6 +2126,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
   // 注：周线形态（matchWeeklyPatterns）属于形态识别，已移除；形态结论一律来自 Python Core。
   const fakeSignalRisk = calcFakeSignalRisk(data, ind, bestType, bestScore, marketEnv, macdDiv, vol);
   fakeSignalRisk.marketMissing = marketMissing;
+  fakeSignalRisk.isUS = isUS;  // 美股隐藏“大盘环境适配”维度与逆大盘知识项
+  relativeStrength.hidden = isUS;  // 美股隐藏相对强度（RS）卡片
 
   // 个股 20 日涨跌始终可算（不依赖大盘）；大盘 20 日与相对强度依赖大盘，大盘缺失时显式置为“—”。
   const stock20 = ((data[n-1].close - data[Math.max(0,n-20)].close) / data[Math.max(0,n-20)].close * 100);
@@ -2394,7 +2405,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     <!-- 假信号风险评估 -->
     <div style="background:linear-gradient(135deg,#0f1419,#1a1a0f);border:2px solid ${fakeSignalRisk.color};border-radius:10px;padding:14px;margin-bottom:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:14px;font-weight:700;color:#f0f0f0;">🎯 假信号风险评估 <span style="font-size:11px;font-weight:400;color:#8899aa;">（参考 · 前端估算，含大盘参考数据；不参与、不改变 Python 形态与确认结论）</span></span>
+        <span style="font-size:14px;font-weight:700;color:#f0f0f0;">🎯 假信号风险评估 <span style="font-size:11px;font-weight:400;color:#8899aa;">（参考 · 前端估算${fakeSignalRisk.isUS ? '' : '，含大盘参考数据'}；不参与、不改变 Python 形态与确认结论）</span></span>
         <div style="display:flex;gap:16px;align-items:center;">
           <div style="text-align:center;">
             <div style="font-size:11px;color:#8899aa;">风险指数</div>
@@ -2422,7 +2433,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
           `).join('')}
         </div>
       ` : '<div style="font-size:12px;color:#2ecc71;">✅ 未检测到明显假信号特征</div>'}
-      <div style="margin-top:8px;font-size:11px;color:#556677;">评估维度：成交量配合 | 大盘环境适配 | MACD背离 | 远离均线 | 量价配合 | 形态匹配度 | 量比:${fakeSignalRisk.volRatio} | 偏离MA60:${fakeSignalRisk.distFromMa60}%</div>
+      <div style="margin-top:8px;font-size:11px;color:#556677;">评估维度：成交量配合${fakeSignalRisk.isUS ? '' : ' | 大盘环境适配'} | MACD背离 | 远离均线 | 量价配合 | 形态匹配度 | 量比:${fakeSignalRisk.volRatio} | 偏离MA60:${fakeSignalRisk.distFromMa60}%</div>
       <!-- 假信号知识详解（可折叠） -->
       <div style="margin-top:10px;border-top:1px solid #2a3441;padding-top:8px;">
         <div onclick="document.getElementById('fakeSignalKnowledge').style.display=document.getElementById('fakeSignalKnowledge').style.display==='none'?'block':'none'" style="cursor:pointer;font-size:12px;color:#f39c12;font-weight:600;user-select:none;">📖 假信号识别知识详解（点击展开/收起）</div>
@@ -2432,7 +2443,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
               <div style="color:#e74c3c;font-weight:700;margin-bottom:4px;">🔴 假突破（买入假信号）</div>
               <div style="color:#aabbcc;"><b>缩量突破</b>：真突破需放量1.5倍+，缩量=主力没真买，70%是拉高出货</div>
               <div style="color:#aabbcc;"><b>3天回落</b>：真突破会站稳颈线，3天内跌回=诱多完成</div>
-              <div style="color:#aabbcc;"><b>逆大盘</b>：熊市突破成功率仅25%，90%股票跟跌</div>
+              ${fakeSignalRisk.isUS ? '' : '<div style="color:#aabbcc;"><b>逆大盘</b>：熊市突破成功率仅25%，90%股票跟跌</div>'}
               <div style="color:#aabbcc;"><b>顶背离</b>：价创新高MACD不创新高=动能衰减，70%后续下跌</div>
             </div>
             <div style="background:rgba(46,204,113,0.06);border-radius:6px;padding:10px;">
@@ -2557,8 +2568,8 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
         <div style="font-size:11px;color:#8899aa;margin-top:4px;line-height:1.5;">带宽${bollinger.width}%（历史${bollinger.widthPercentile}%分位）${bollinger.isSqueeze?' ⚠️收口':''}</div>
       </div>
 
-      <!-- 相对强度 -->
-      <div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
+      <!-- 相对强度（美股隐藏：依赖大盘） -->
+      ${relativeStrength.hidden ? '' : `<div style="background:#0f1419;border-radius:8px;padding:12px;border:1px solid #2a3441;">
         <div style="font-size:13px;font-weight:600;color:#f0f0f0;margin-bottom:8px;">相对强度（RS）</div>
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="font-size:12px;color:#8899aa;">个股20日</span>
@@ -2577,7 +2588,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
             : `<span style="font-size:14px;font-weight:700;color:${parseFloat(relativeStrength.rs)>0?'#e74c3c':'#2ecc71'}">${parseFloat(relativeStrength.rs)>0?'+':''}${relativeStrength.rs}%</span>`}
         </div>
         <div style="font-size:12px;font-weight:600;color:${relativeStrength.score>0?'#e74c3c':relativeStrength.score<0?'#2ecc71':'#8899aa'};margin-top:6px;">${relativeStrength.level}</div>
-      </div>
+      </div>`}
     </div>
 
     <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
@@ -3177,7 +3188,7 @@ function renderWatchlistTags() {
 async function addStock() {
   const input = document.getElementById('addStockInput');
   const code = normalizeCode(input.value);
-  if (!isValidCode(code)) { alert('请输入 A 股 6 位代码或美股代码（如 AAPL）'); return; }
+  if (!isCNCode(code)) { alert('自选股仅支持 A 股 6 位数字代码（如 600519）；美股请在上方个股分析框输入'); return; }
   if (getWatchlist().includes(code)) { alert('该股票已在自选股池中'); return; }
   if (watchlistState.tombstones.find(t => t.code === code)) {
     const confirmed = await showConfirm(`该股票(${code})此前已从自选股删除。\n\n确定要重新加入吗？所有设备都会看到它。`, '重新添加已删除股票');
@@ -3723,8 +3734,11 @@ async function addCustomSector() {
   const name = nameInput.value.trim();
   const codesStr = codesInput.value.trim();
   if (!name) { alert('请输入板块名称'); return; }
-  const codes = [...new Set(codesStr.split(/[,，\s]+/).map(c => normalizeCode(c)).filter(c => c && isValidCode(c)))];
-  if (codes.length === 0) { alert('请输入有效的股票代码（A 股 6 位或美股代码）'); return; }
+  const tokens = [...new Set(codesStr.split(/[,，\s]+/).map(c => normalizeCode(c)).filter(Boolean))];
+  const codes = tokens.filter(c => isCNCode(c));
+  const rejected = tokens.filter(c => !isCNCode(c));
+  if (rejected.length > 0) { alert(`自定义板块仅支持 A 股 6 位数字代码（后端只收六位数字），已拒绝：${rejected.join('、')}`); return; }
+  if (codes.length === 0) { alert('请输入有效的 A 股 6 位数字代码（如 600519,002436）'); return; }
   let r;
   try {
     r = await customSectorRequest('PUT', `/${encodeURIComponent(name)}`, { codes });
@@ -3878,6 +3892,7 @@ async function addSelectedToWatchlist() {
   try {
     for (const cb of checked) {
       const code = cb.value;
+      if (!isCNCode(code)) continue;  // 自选股后端只收 A 股 6 位数字
       if (!getWatchlist().includes(code)) { await watchlistRequest('POST', `/${code}`); added++; }
     }
   } catch (e) {

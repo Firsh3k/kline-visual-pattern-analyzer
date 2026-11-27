@@ -122,9 +122,27 @@ class TestUSCalendar:
             assert uc.is_trading_day(d) is True
 
     def test_trading_day_counts_2021_2022(self):
-        # NYSE 实际：2021=251（无 Juneteenth 休市）、2022=251（首个 Juneteenth 休市）
-        assert len(uc.get_trading_days("2021-01-01", "2021-12-31")) == 251
+        # NYSE 实际：2021=252（无 Juneteenth 休市，且 12-31 正常开市）、2022=251（首个 Juneteenth 休市）
+        assert len(uc.get_trading_days("2021-01-01", "2021-12-31")) == 252
         assert len(uc.get_trading_days("2022-01-01", "2022-12-31")) == 251
+
+    def test_new_year_2022_saturday_friday_open(self):
+        # 回归：2022 元旦 1/1 周六，NYSE 规则前一周五 2021-12-31 正常开市（不设观察休市）。
+        # 此前 _HOLIDAYS 误含 2021-12-31，会拒绝当天有效 K 线。
+        assert uc.is_trading_day("2021-12-31") is True
+        assert uc.close_time("2021-12-31") == uc.REGULAR_CLOSE_ET
+        assert uc.is_trading_day("2022-01-01") is False  # 周六
+
+    def test_carter_mourning_2025_01_09_closed(self):
+        # 回归：2025-01-09 卡特总统全国哀悼日，NYSE/NASDAQ 临时休市；前后交易日常开市。
+        assert uc.is_trading_day("2025-01-09") is False
+        assert uc.close_time("2025-01-09") is None
+        assert uc.is_trading_day("2025-01-08") is True
+        assert uc.is_trading_day("2025-01-10") is True
+
+    def test_trading_day_count_2025(self):
+        # 2025=250（含 01-09 卡特哀悼日休市）
+        assert len(uc.get_trading_days("2025-01-01", "2025-12-31")) == 250
 
     def test_weekend(self):
         assert uc.is_trading_day("2024-01-06") is False
@@ -213,6 +231,67 @@ class TestAnalysisRouting:
         import core.analysis as A
         assert A.exchange_symbol("600519") == "sh600519"
         assert A.exchange_symbol("002436") == "sz002436"
+
+
+# ---------------------------------------------------------------- 美股美东日期校验
+class TestUSDateValidation:
+    """美股 asOf / 最后一根 K 线按美东日期校验；A 股仍按北京时间。
+
+    关键场景：北京时间已跨日、美东尚未跨日时，美东的未来日期必须拒绝。
+    北京 2026-11-25 00:30 = 美东 2026-11-24 11:30（EST，UTC-5）。
+    """
+    from datetime import datetime, timezone, timedelta
+    CN = timezone(timedelta(hours=8))
+    NOW = datetime(2026, 11, 25, 0, 30, tzinfo=CN)
+
+    def _bars_ending(self, end):
+        days = uc.get_trading_days("2025-01-01", end)
+        bars = []
+        p = 100.0
+        for d in days:
+            p += 0.15
+            bars.append({"day": d, "open": p - 0.2, "high": p + 0.5,
+                         "low": p - 0.6, "close": p, "volume": 1e7})
+        return bars
+
+    def test_us_asof_et_future_rejected_cn_today_accepted(self):
+        import core.analysis as A
+        assert A.today_cn(self.NOW) == "2026-11-25"
+        assert A.today_us(self.NOW) == "2026-11-24"
+        # 11-25 是北京今天、美东未来 → 美股拒绝，A 股放行
+        with pytest.raises(A.InvalidInputError, match="美东时间"):
+            A.parse_as_of("2026-11-25", self.NOW, market="us")
+        assert A.parse_as_of("2026-11-25", self.NOW, market="cn") == "2026-11-25"
+        assert A.parse_as_of("2026-11-24", self.NOW, market="us") == "2026-11-24"
+
+    def test_us_last_bar_et_future_rejected(self):
+        import core.analysis as A
+        bars = self._bars_ending("2026-11-25")  # 美东未来（美东今天 11-24）
+        with pytest.raises(A.InvalidInputError, match="晚于当前日期"):
+            A.analyze("AAPL", bars, adjustment="qfq",
+                      provenance={"source": "eastmoney"}, now=self.NOW)
+
+    def test_us_last_bar_et_today_accepted(self):
+        import core.analysis as A
+        bars = self._bars_ending("2026-11-24")  # 美东今天
+        doc = A.analyze("AAPL", bars, adjustment="qfq",
+                        provenance={"source": "eastmoney"}, now=self.NOW)
+        assert doc["bars"][-1][0] == "2026-11-24"
+
+    def test_cn_last_bar_uses_beijing_not_et(self):
+        import core.analysis as A
+        from core.market_data import trading_calendar as tc
+        days = tc.get_trading_days("2025-01-01", "2026-11-25")
+        bars = []
+        p = 100.0
+        for d in days:
+            p += 0.15
+            bars.append({"day": d, "open": p - 0.2, "high": p + 0.5,
+                         "low": p - 0.6, "close": p, "volume": 1e7})
+        # A 股最后一根 11-25（北京今天）放行，不受美东未跨日影响
+        doc = A.analyze("600519", bars, adjustment="qfq",
+                        provenance={"source": "tencent"}, now=self.NOW)
+        assert doc["bars"][-1][0] == "2026-11-25"
 
 
 # ---------------------------------------------------------------- fail-closed 边界

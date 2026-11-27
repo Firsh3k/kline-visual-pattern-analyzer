@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { execFileSync, execSync } from 'child_process';
 import * as dotenv from 'dotenv';
-import { assertAsOf, assertCode, buildBatchItem } from './stock-analysis.pure';
+import { assertAsOf, assertCode, buildBatchItem, marketOfCode } from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { SectorCatalogStatus, SectorCatalogStore } from './sector-catalog';
@@ -179,7 +179,7 @@ export class StockAnalysisService implements OnModuleInit {
     const args = [engine.script, checkedCode, '--adjustment', opts.adjustment ?? 'qfq'];
     let asOf: string | undefined;
     try {
-      asOf = assertAsOf(opts.asOf);
+      asOf = assertAsOf(opts.asOf, new Date(), marketOfCode(checkedCode));
     } catch (err) {
       return Promise.reject(err);
     }

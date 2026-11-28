@@ -132,8 +132,13 @@ def test_pool_consistency():
         if os.path.isfile(path):
             prov = json.load(open(path, encoding='utf-8'))
             check(f'{name} provenance数量', prov['total_constituents'] == count)
-            check(f'{name} provenance验证数', prov['verified_count'] == count)
-            check(f'{name} provenance有对账日期', bool(prov.get('authoritative_reconciliation_date')))
+            # 来源字段须符合 FIR-15 校验约定：reconciliation_method 为合法枚举；
+            # 美股池为人工维护（无 THS 权威对账源）→ manual + 无权威对账日期（fail-closed NOT_RECONCILED）
+            check(f'{name} provenance方法合法枚举', prov['reconciliation_method'] in ('ths_ifind', 'ths_web', 'manual', 'not_reconciled'),
+                  f"got={prov['reconciliation_method']}")
+            check(f'{name} provenance人工维护约定', prov['reconciliation_method'] == 'manual' and prov['verified_count'] == 0
+                  and not prov.get('authoritative_reconciliation_date'))
+            check(f'{name} provenance记录双源交叉核对', '交叉核对' in prov.get('reconciliation_result', ''))
 
 
 def test_market_config_parity():

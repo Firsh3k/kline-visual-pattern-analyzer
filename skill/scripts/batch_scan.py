@@ -209,22 +209,15 @@ def scan_us_pool(pool_key, output_dir, min_score=0, workers=5):
     import concurrent.futures
     script_dir = os.path.dirname(os.path.abspath(__file__))
     try:
-        from analyze_stock import analyze, fetch_market_env
+        from analyze_stock import analyze, fetch_market_env, _find_us_pools
     except ImportError:
         # 根目录 legacy 副本运行时，回退到 scripts/ 目录
         sys.path.insert(0, os.path.join(script_dir, 'scripts'))
-        from analyze_stock import analyze, fetch_market_env
+        from analyze_stock import analyze, fetch_market_env, _find_us_pools
 
-    pools_path = None
-    for candidate in [
-        os.path.join(os.path.dirname(script_dir), 'sector_data', 'us_pools.json'),
-        os.path.join(script_dir, 'sector_data', 'us_pools.json'),
-    ]:
-        if os.path.isfile(candidate):
-            pools_path = candidate
-            break
+    pools_path = _find_us_pools()
     if pools_path is None:
-        raise FileNotFoundError('未找到 sector_data/us_pools.json')
+        raise FileNotFoundError('未找到 sector_data/us_pools.json（自脚本目录向上6级均未命中）')
     with open(pools_path, encoding='utf-8') as f:
         pools = json.load(f)
     pool_map = {'sp500': '标普500', 'nasdaq100': '纳指100'}

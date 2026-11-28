@@ -136,27 +136,37 @@ def fetch_sina_us_kline(symbol):
 _US_POOL_META = None
 
 
+def _find_us_pools():
+    """自脚本目录逐级向上定位 sector_data/us_pools.json。
+    兼容 scripts/、skill/scripts/、根目录 legacy 副本等不同入口深度。"""
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        cand = os.path.join(d, 'sector_data', 'us_pools.json')
+        if os.path.isfile(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
 def _us_pool_meta():
     """懒加载扫描池元数据（交易所后缀/中文名映射），避免每只股票都依赖实时行情请求"""
     global _US_POOL_META
     if _US_POOL_META is None:
         _US_POOL_META = {'fullSymbols': {}, 'names': {}}
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        for candidate in [
-            os.path.join(os.path.dirname(script_dir), 'sector_data', 'us_pools.json'),
-            os.path.join(script_dir, 'sector_data', 'us_pools.json'),
-        ]:
-            if os.path.isfile(candidate):
-                try:
-                    with open(candidate, encoding='utf-8') as f:
-                        pools = json.load(f)
-                    _US_POOL_META = {
-                        'fullSymbols': pools.get('fullSymbols', {}),
-                        'names': pools.get('names', {}),
-                    }
-                except Exception:
-                    pass
-                break
+        path = _find_us_pools()
+        if path:
+            try:
+                with open(path, encoding='utf-8') as f:
+                    pools = json.load(f)
+                _US_POOL_META = {
+                    'fullSymbols': pools.get('fullSymbols', {}),
+                    'names': pools.get('names', {}),
+                }
+            except Exception:
+                pass
     return _US_POOL_META
 
 

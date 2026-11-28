@@ -2749,11 +2749,16 @@ function toggleBacktestMode() {
   }
 }
 
+// 分析请求序号：快速切换市场/标的（如 002436 → 切美股 → AAPL）且响应乱序时，
+// 旧请求的成功/失败/结束状态都不得覆盖当前市场的页面结果与按钮状态。
+let _analyzeSeq = 0;
+
 async function doAnalyze() {
   let code = document.getElementById('codeInput').value.trim();
   const cfg = marketCfg();
   if (!code || !cfg.codePattern.test(code)) { alert(isUSMarket() ? '请输入有效的美股代码（如 AAPL、NVDA、BRK.B）' : '请输入6位股票代码'); return; }
   if (isUSMarket()) code = code.toUpperCase();
+  const mySeq = ++_analyzeSeq;
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true; btn.textContent = '分析中...';
   const area = document.getElementById('resultArea');
@@ -2768,6 +2773,7 @@ async function doAnalyze() {
       fetchKline(code, datalen),
       fetchMarketIndexData(datalen).catch(() => null)
     ]);
+    if (mySeq !== _analyzeSeq) return; // 已有更新的分析/市场切换：旧响应（含失败）整体丢弃
     if (!result.data || result.data.length < 30) throw new Error('数据不足');
 
     // 回测模式：截取到回测日期为止的数据
@@ -2804,12 +2810,15 @@ async function doAnalyze() {
     }
 
     const marketEnv = marketAnalysisData && marketAnalysisData.length > 60 ? analyzeMarketEnv(marketAnalysisData) : null;
+    if (mySeq !== _analyzeSeq) return; // 渲染前最后一道闸
     renderAnalysis(result, marketEnv, backtestInfo);
   } catch (e) {
+    if (mySeq !== _analyzeSeq) return; // 旧请求的异常不得覆盖当前页面
     area.innerHTML = `<div class="error-msg">数据获取失败：${e.message}。请检查代码是否正确，或使用CSV上传功能。</div>
       <div class="csv-upload"><label>上传CSV文件分析 <input type="file" accept=".csv" onchange="handleCSV(event)"></label></div>`;
   } finally {
-    btn.disabled = false; btn.textContent = '开始分析';
+    // 仅最新请求负责恢复按钮；旧请求结束时新请求可能仍在分析中
+    if (mySeq === _analyzeSeq) { btn.disabled = false; btn.textContent = '开始分析'; }
   }
 }
 
@@ -4932,6 +4941,7 @@ function loadExampleWatchlist() {
 // 分析单只股票（添加时自动调用）
 async function analyzeSingleStock(code, marketEnv = null) {
   const status = document.getElementById('batchStatus');
+  const startMarket = CURRENT_MARKET; // 市场快照：完成后若已切换市场，不得写入当前市场的自选结果
   status.textContent = `正在分析 ${code}...`;
   try {
     // 如果没有传入大盘环境，自动拉取
@@ -4941,6 +4951,7 @@ async function analyzeSingleStock(code, marketEnv = null) {
       } catch(e) { console.warn('大盘环境获取失败，使用默认值', e); }
     }
     const result = await fetchKline(code);
+    if (startMarket !== CURRENT_MARKET) return;
     if (result && result.data && result.data.length > 20) {
       const r = calculateStockResult(result, marketEnv);
       watchlistResults[code] = r;
@@ -4948,7 +4959,7 @@ async function analyzeSingleStock(code, marketEnv = null) {
       renderWatchlistTable();
       status.textContent = `已添加 ${r.name} (${code}) - 买入${r.buyAccuracy}%/卖出${r.sellAccuracy}%`;
     }
-  } catch(e) { console.error(code, e); status.textContent = `分析 ${code} 失败`; }
+  } catch(e) { if (startMarket !== CURRENT_MARKET) return; console.error(code, e); status.textContent = `分析 ${code} 失败`; }
 }
 
 // 计算单只股票的分析结果（复用逻辑）
@@ -5832,6 +5843,7 @@ function switchMarket(m) {
   if (m !== 'cn' && m !== 'us') return;
   if (m === CURRENT_MARKET) return;
   CURRENT_MARKET = m;
+  _analyzeSeq++; // 作废上一市场所有在途分析请求（成功/失败都不得再渲染）
   try { localStorage.setItem(MARKET_KEY, m); } catch(e) {}
   applyMarketUI();
   // 清空上一市场的展示结果，刷新自选股与板块列表

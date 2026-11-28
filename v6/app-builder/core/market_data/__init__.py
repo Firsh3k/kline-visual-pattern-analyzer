@@ -6,7 +6,9 @@ core.market_data — FIR-23 市场数据契约实现
 
 from .sina_provider import SinaDataProvider
 from .tencent_provider import TencentDataProvider
+from .eastmoney_provider import EastMoneyDataProvider
 from .multi_source import MultiSourceDataProvider
+from . import market, us_calendar
 from .trading_calendar import (
     is_trading_day,
     get_trading_days,
@@ -30,6 +32,9 @@ from .policy import UseCase, DEFAULT_POLICY, adjustment_for
 __all__ = [
     "SinaDataProvider",
     "TencentDataProvider",
+    "EastMoneyDataProvider",
+    "market",
+    "us_calendar",
     "MultiSourceDataProvider",
     "is_trading_day",
     "get_trading_days",

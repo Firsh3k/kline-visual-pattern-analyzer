@@ -20,8 +20,8 @@ const out = ts.transpileModule(fs.readFileSync(SRC, 'utf8'), {
 });
 assert.strictEqual((out.diagnostics || []).length, 0, 'TS 编译诊断非空');
 const mod = { exports: {} };
-vm.runInNewContext(out.outputText, { module: mod, exports: mod.exports, require, Date, JSON, Number, Object, Error });
-const { assertAsOf, buildBatchItem, todayShanghai, SIGNAL_RULE_VERSION } = mod.exports;
+vm.runInNewContext(out.outputText, { module: mod, exports: mod.exports, require, Date, JSON, Number, Object, Error, Intl });
+const { assertAsOf, buildBatchItem, todayShanghai, todayNewYork, marketOfCode, SIGNAL_RULE_VERSION } = mod.exports;
 
 const DOCS = JSON.parse(execFileSync(process.env.PYTHON || 'python3', [path.join(ROOT, 'tests', 'v6', 'r67_make_docs.py')],
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
@@ -50,6 +50,24 @@ test('今天 / 过去日期通过；空 = 最新', () => {
 test('按北京时间判断“今天”（UTC 前一天晚上已是北京次日）', () => {
   assert.strictEqual(todayShanghai(AFTER_MIDNIGHT_CN), '2026-10-20');
   assert.strictEqual(assertAsOf('2026-10-20', AFTER_MIDNIGHT_CN), '2026-10-20');
+});
+
+console.log('FIR-47：美股 asOf 按美东日期校验（北京已跨日、美东未跨日）');
+// AFTER_MIDNIGHT_CN = 2026-10-19T17:00Z = 北京 10-20 01:00 = 美东 10-19 13:00（EDT）
+test('美东今天换算正确（含夏令时）', () => {
+  assert.strictEqual(todayNewYork(AFTER_MIDNIGHT_CN), '2026-10-19');
+  assert.strictEqual(todayShanghai(AFTER_MIDNIGHT_CN), '2026-10-20');
+});
+test('美股 asOf 美东未来拒绝（北京今天放行）', () => {
+  assert.throws(() => assertAsOf('2026-10-20', AFTER_MIDNIGHT_CN, 'us'), /美东时间/);
+  assert.strictEqual(assertAsOf('2026-10-20', AFTER_MIDNIGHT_CN, 'cn'), '2026-10-20');
+  assert.strictEqual(assertAsOf('2026-10-19', AFTER_MIDNIGHT_CN, 'us'), '2026-10-19');
+});
+test('marketOfCode 区分美股 / A 股', () => {
+  assert.strictEqual(marketOfCode('AAPL'), 'us');
+  assert.strictEqual(marketOfCode('BRK.B'), 'us');
+  assert.strictEqual(marketOfCode('600519'), 'cn');
+  assert.strictEqual(marketOfCode('002436'), 'cn');
 });
 
 console.log('R67-1：扫描 / 自选股列表透传 Python 确认');

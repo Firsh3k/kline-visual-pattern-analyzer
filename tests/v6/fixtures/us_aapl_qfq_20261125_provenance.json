@@ -1,0 +1,14 @@
+{
+  "ticker": "AAPL",
+  "symbol": "usAAPL",
+  "name": "苹果",
+  "source": "tencent",
+  "adjustment": "qfq",
+  "trading_calendar": "NASDAQ",
+  "fetched_at": "2026-11-25T15:19:10.674229+00:00",
+  "bar_count": 250,
+  "first_day": "2025-11-28",
+  "last_day": "2026-11-25",
+  "raw_payload_sha256": "a01ad76ce739ca176019b9cfbb4d3c5ad02094b14a0f97cee1afe13a50e6bc13",
+  "note": "冻结行情 fixture：开发环境东财不可达，用腾讯美股前复权抓取；验收注入美股路由路径，东财生产可达性属部署后冒烟项"
+}

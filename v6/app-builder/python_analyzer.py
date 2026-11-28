@@ -61,7 +61,76 @@ def _fetch_start(as_of: str | None) -> str:
     return (anchor - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
 
 
-def _fetch_series(symbol: str, adjustment: str, as_of: str | None = None):
+def _fixture_series(fixdir: str, symbol: str, adjustment: str):
+    """测试接缝（仅当 KLINE_FIXTURE_DIR 环境变量设置时启用）：从冻结 CSV 构造 MarketDataSeries，
+    供"真实 Nest /api/analyze/:code 端到端"确定性验收使用（不访问网络）。
+
+    生产环境不设此 env，_fetch_series_for 行为与原先完全一致。目前仅支持美股 fixture
+    （us_{ticker}_qfq_*.csv + 同名 _provenance.json，provenance 如实记冻结来源）。
+    """
+    import csv
+    import glob
+    import os
+    from core import AdjustmentType, FrequencyType
+    from core.types import (DataProvenance, DataQualityFlag, DataSourceType,
+                            MarketDataBar, MarketDataSeries)
+    if not symbol.startswith("us"):
+        raise RuntimeError(f"KLINE_FIXTURE_DIR 测试接缝仅支持美股 fixture（收到 {symbol}）")
+    ticker = symbol[2:]
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+    csvs = sorted(glob.glob(os.path.join(fixdir, f"us_{ticker.lower()}_qfq_*.csv")))
+    if not csvs:
+        raise RuntimeError(f"缺少 {ticker} 冻结 fixture（目录 {fixdir}）")
+    path = csvs[-1]
+    prov_path = path[:-4] + "_provenance.json"
+    with open(prov_path, encoding="utf-8") as f:
+        prov = json.load(f)
+    bars = []
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            bars.append(MarketDataBar(
+                date=row["date"], open=float(row["open"]), high=float(row["high"]),
+                low=float(row["low"]), close=float(row["close"]), volume=float(row["volume"]),
+                provenance=DataProvenance(
+                    source=DataSourceType.TENCENT, url="fixture", fetched_at=prov["fetched_at"],
+                    raw_payload_hash=prov["raw_payload_sha256"],
+                    adjustment_applied=adj, quality_flag=DataQualityFlag.ADJUSTED)))
+    if not bars:
+        raise RuntimeError(f"{ticker} fixture 为空")
+    return MarketDataSeries(
+        symbol=symbol, name=prov["name"], frequency=FrequencyType.DAILY, adjustment=adj,
+        trading_calendar=prov["trading_calendar"], source=DataSourceType.TENCENT,
+        fetched_at=prov["fetched_at"], bars=bars)
+
+
+def _fetch_series_for(code: str, symbol: str, adjustment: str, as_of: str | None = None):
+    """统一取数入口：按市场路由。A 股→腾讯（前复权，历史口径不变）；美股→东方财富。"""
+    import os
+    fixdir = os.environ.get("KLINE_FIXTURE_DIR")
+    if fixdir:
+        return _fixture_series(fixdir, symbol, adjustment)
+    from core.market_data import market as M
+    if M.is_us_symbol(symbol):
+        return _fetch_series_us(symbol, adjustment, as_of)
+    return _fetch_series_cn(symbol, adjustment, as_of)
+
+
+def _fetch_series_us(symbol: str, adjustment: str, as_of: str | None = None):
+    """用 EastMoneyDataProvider 拉美股日线；fqt 严格对应复权，失败 fail-closed。"""
+    from core import AdjustmentType, FrequencyType
+    from core.market_data.eastmoney_provider import EastMoneyDataProvider
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+    start = _fetch_start(as_of)
+    series = EastMoneyDataProvider().fetch_klines(
+        symbol, start_date=start, frequency=FrequencyType.DAILY, adjustment=adj)
+    if not series.bars:
+        raise RuntimeError(f"{symbol} 行情返回为空")
+    if series.adjustment != adj:
+        raise RuntimeError(f"复权方式不一致：请求 {adj.value}，返回 {series.adjustment.value}")
+    return series
+
+
+def _fetch_series_cn(symbol: str, adjustment: str, as_of: str | None = None):
     """用 core 的 TencentDataProvider 拉日线；qfq 严格只接受 qfqday，失败换等价子域后仍失败即报错。"""
     from core import AdjustmentType, FrequencyType
     import core.market_data.tencent_provider as tp
@@ -145,14 +214,23 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 
     InvalidInputError = A.InvalidInputError
     symbol = A.exchange_symbol(code)
-    as_of = A.parse_as_of(as_of)  # R67-3：未来 / 不存在的日期在取行情之前就拒绝
+    from core.market_data import market as M
+    market = "us" if M.is_us_symbol(symbol) else "cn"
+    # R67-3：未来 / 不存在的日期在取行情之前就拒绝；FIR-47：美股按美东日期校验（A 股仍北京时间），
+    # 北京已跨日、美东未跨日时不得先调用行情提供方。
+    as_of = A.parse_as_of(as_of, market=market)
     try:
-        series = _fetch_series(symbol, adjustment, as_of)
+        series = _fetch_series_for(code, symbol, adjustment, as_of)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"行情获取失败（fail-closed，未降级）：{exc}") from exc
 
     bars = _series_to_bars(series)
-    name = _fetch_name(code, symbol)
+    # 美股名称直接取东财返回的中文名；A 股沿用腾讯实时行情名称
+    from core.market_data import market as M
+    if M.is_us_symbol(symbol):
+        name = getattr(series, "name", None) or code
+    else:
+        name = _fetch_name(code, symbol)
     prov = _provenance(series, adjustment)
     try:
         doc = A.analyze(code, bars, adjustment=adjustment, provenance=prov,
@@ -180,7 +258,7 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 def analyze_market(as_of: str | None = None) -> dict:
     from core import analysis as A
     as_of = A.parse_as_of(as_of)  # R67-3：同一口径
-    series = _fetch_series("sh000001", "none", as_of)
+    series = _fetch_series_cn("sh000001", "none", as_of)
     last_close = float(series.bars[-1].close)
     if not (500 < last_close < 20000):
         raise RuntimeError(f"上证指数收盘价 {last_close} 量级不合理，疑似取到个股，拒绝使用")
@@ -245,8 +323,11 @@ def main() -> int:
 
     if not args.code:
         _fail("缺少股票代码参数")
-    if not CODE_RE.match(args.code):
-        _fail(f"股票代码必须为 6 位数字：{args.code!r}")
+    try:
+        from core.market_data import market as M
+        M.detect_market(args.code)
+    except M.UnknownCodeError as exc:
+        _fail(str(exc))
 
     try:
         result = analyze_stock(args.code, as_of=args.as_of, adjustment=args.adjustment)

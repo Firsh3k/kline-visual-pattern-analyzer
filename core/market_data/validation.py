@@ -228,7 +228,7 @@ def find_legacy_provenance_bars(bars: List[MarketDataBar]) -> List[str]:
     return out
 
 
-def assess_series_quality(series: MarketDataSeries) -> "DataQualityReport":
+def assess_series_quality(series: MarketDataSeries, get_trading_days_fn=None) -> "DataQualityReport":
     """共享的 DataQualityReport 构造（Blocker 2 & 6）。
 
     流程：
@@ -238,10 +238,15 @@ def assess_series_quality(series: MarketDataSeries) -> "DataQualityReport":
          unknown_missing_days（原因未知），不静默记为 OK。
       4. 复权一致性：NONE -> NOT_APPLICABLE；qfq/hfq 无配对 raw -> UNVERIFIED(bool=False)。
       5. provenance 缺失/legacy 占位标记。
+
+    get_trading_days_fn：可选的 (start,end)->List[str] 交易日函数；
+      None 时默认 A 股 trading_calendar（A 股路径行为完全不变），
+      美股传入 us_calendar.get_trading_days 以使用正确的交易日历。
     """
     # 延迟导入避免循环
-    from .trading_calendar import get_trading_days
+    from .trading_calendar import get_trading_days as _cn_trading_days
     from ..types import DataQualityReport
+    get_trading_days = get_trading_days_fn or _cn_trading_days
 
     bars = series.bars
     if not bars:

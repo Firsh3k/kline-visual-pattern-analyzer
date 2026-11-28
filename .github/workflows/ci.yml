@@ -43,6 +43,11 @@ jobs:
         SKIP_NETWORK_TESTS=1 python -m pytest tests/v5/ -v --tb=short
         echo "V5 Canonical Core deterministic tests passed (live network integration excluded from gate)"
 
+    - name: Run V6 US market tests (FIR-47, deterministic gate)
+      run: |
+        python -m pytest tests/v6/test_us_market.py -v --tb=short
+        echo "V6 US market tests passed (calendar / early-close / ET date validation / fail-closed / eastmoney mock)"
+
     - name: Run live data-provider network integration tests (non-blocking)
       continue-on-error: true
       run: |
@@ -147,7 +152,9 @@ jobs:
         python test_backtest_horizons.py
 
   js-syntax-check:
-    runs-on: ubuntu-latest
+    # FIR-47：固定 ubuntu-24.04。ubuntu-latest 已迁移 26.04，playwright@1.56.1 的 chromium
+    # 不支持 ubuntu26.04-x64（CI run 45650800048）；24.04 为受支持且兼容的 runner。
+    runs-on: ubuntu-24.04
     # FIR-41：自选股存储的 PostgreSQL 实现用真实数据库验证
     services:
       postgres:
@@ -202,6 +209,10 @@ jobs:
         node tests/v6/test_scan_jobs.js
         node tests/v6/test_sector_catalog.js
         node tests/v6/test_engine_bundle.js
+
+    - name: Run V6 US stock acceptance (FIR-47, fixed fixtures Core↔API↔page + page scope, deterministic)
+      run: |
+        node tests/v6/test_us_acceptance.js
 
     - name: Run FIR-19 multi-device sync regression tests
       run: |
@@ -269,6 +280,13 @@ jobs:
     - name: Typecheck server
       working-directory: v6/app-builder
       run: npx tsc -p tsconfig.node.json --noEmit
+
+    - name: Run V6 US real-Nest fixed-fixture e2e (FIR-47, real /api/analyze AAPL/NVDA ↔ page signals)
+      run: |
+        # 启动真实 StockAnalysisController→Service→Python subprocess→Canonical Core，
+        # KLINE_FIXTURE_DIR 注入冻结行情（生产不设此 env），核对 API 信号字段与页面渲染一致。
+        node tests/v6/test_us_nest_e2e.js
+        echo "V6 US real-Nest e2e passed (fixed fixtures, no live network)"
 
     - name: Real nest build + platform-style deploy (nft trace, no .py) + boot + /api/health
       run: |

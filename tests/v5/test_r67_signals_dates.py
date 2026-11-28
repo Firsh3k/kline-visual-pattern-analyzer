@@ -108,7 +108,7 @@ def analyzer():
 @pytest.mark.parametrize("bad", ["2099-01-02", "2026-02-30"])
 def test_python_analyzer_rejects_before_fetching(analyzer, monkeypatch, bad):
     calls = []
-    monkeypatch.setattr(analyzer, "_fetch_series", lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(AssertionError("不应取行情")))
+    monkeypatch.setattr(analyzer, "_fetch_series_for", lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(AssertionError("不应取行情")))
     with pytest.raises(A.InvalidInputError):
         analyzer.analyze_stock("002436", as_of=bad)
     with pytest.raises(A.InvalidInputError):

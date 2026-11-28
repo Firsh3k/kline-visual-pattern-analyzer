@@ -294,6 +294,67 @@ class TestUSDateValidation:
         assert doc["bars"][-1][0] == "2026-11-25"
 
 
+# ---------------------------------------------------------------- 执行器首次 asOf 校验（取数前）
+class TestExecutorAsOfGate:
+    """FIR-47 复核补丁：python_analyzer.analyze_stock 的首次 asOf 校验必须按市场时区。
+
+    场景：北京 2026-11-25 00:30 = 美东 2026-11-24 11:30。直接调用执行器分析 AAPL
+    asOf=2026-11-25（北京今天、美东未来）→ 必须在调用行情提供方【之前】拒绝，取数调用为零。
+    """
+
+    def _freeze_cross_day(self, monkeypatch):
+        import core.analysis as A
+        monkeypatch.setattr(A, "today_cn", lambda now=None: "2026-11-25")
+        monkeypatch.setattr(A, "today_us", lambda now=None: "2026-11-24")
+
+    def test_us_asof_et_future_rejected_before_any_fetch(self, monkeypatch):
+        import python_analyzer as P
+        from core.analysis import InvalidInputError
+        self._freeze_cross_day(monkeypatch)
+        calls = []
+
+        def spy_fetch(code, symbol, adjustment, as_of=None):
+            calls.append((code, symbol, as_of))
+            raise AssertionError("不应触达行情提供方")
+
+        monkeypatch.setattr(P, "_fetch_series_for", spy_fetch)
+        monkeypatch.delenv("KLINE_FIXTURE_DIR", raising=False)
+        with pytest.raises(InvalidInputError, match="美东时间"):
+            P.analyze_stock("AAPL", as_of="2026-11-25")
+        assert calls == [], f"未来回测在取数前被拒，取数调用必须为零，实际 {calls}"
+
+    def test_us_asof_et_today_passes_gate_and_fetches_once(self, monkeypatch):
+        import python_analyzer as P
+        self._freeze_cross_day(monkeypatch)
+        calls = []
+
+        def spy_fetch(code, symbol, adjustment, as_of=None):
+            calls.append((code, symbol, as_of))
+            raise RuntimeError("sentinel：已通过首次校验并进入取数")
+
+        monkeypatch.setattr(P, "_fetch_series_for", spy_fetch)
+        monkeypatch.delenv("KLINE_FIXTURE_DIR", raising=False)
+        with pytest.raises(RuntimeError, match="行情获取失败（fail-closed，未降级）"):
+            P.analyze_stock("AAPL", as_of="2026-11-24")
+        assert calls == [("AAPL", "usAAPL", "2026-11-24")]
+
+    def test_cn_asof_cn_today_not_blocked_by_et(self, monkeypatch):
+        import python_analyzer as P
+        self._freeze_cross_day(monkeypatch)
+        calls = []
+
+        def spy_fetch(code, symbol, adjustment, as_of=None):
+            calls.append((code, symbol, as_of))
+            raise RuntimeError("sentinel：已通过首次校验并进入取数")
+
+        monkeypatch.setattr(P, "_fetch_series_for", spy_fetch)
+        monkeypatch.delenv("KLINE_FIXTURE_DIR", raising=False)
+        # A 股 11-25（北京今天）不受美东未跨日影响，仍按北京时间放行
+        with pytest.raises(RuntimeError, match="行情获取失败（fail-closed，未降级）"):
+            P.analyze_stock("600519", as_of="2026-11-25")
+        assert len(calls) == 1 and calls[0][2] == "2026-11-25"
+
+
 # ---------------------------------------------------------------- fail-closed 边界
 class TestFailClosed:
     def test_invalid_code_rejected_with_clear_message(self):

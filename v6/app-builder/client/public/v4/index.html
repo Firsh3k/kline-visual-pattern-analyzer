@@ -230,7 +230,7 @@ canvas { width: 100%; display: block; }
       
       <!-- 添加股票 -->
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-        <input type="text" id="addStockInput" placeholder="输入代码，如 600519、AAPL" maxlength="8" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
+        <input type="text" id="addStockInput" placeholder="输入 A 股 6 位代码，如 600519、002436" maxlength="8" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
         <button onclick="addStock()" style="padding:10px 20px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">添加</button>
         <button onclick="loadExampleWatchlist()" style="padding:10px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:14px;cursor:pointer;">加载示例</button>
       </div>
@@ -2274,8 +2274,9 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
     ` : ''}
 
     <!-- ===== 新增：大盘环境 + 当前阶段 + 形态可靠性 ===== -->
-    <div class="m-stack" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-      <!-- 大盘环境 -->
+    <div class="m-stack" style="display:grid;grid-template-columns:${isUS?'1fr':'1fr 1fr'};gap:12px;margin-bottom:12px;">
+      <!-- 大盘环境（仅 A 股；美股个股不依赖上证指数，整卡隐藏，避免"获取中"永久悬挂） -->
+      ${isUS ? '' : `
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid #2a3441;border-radius:10px;padding:14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
           <span style="font-size:13px;font-weight:600;color:#8899aa;">大盘环境（上证指数）<span style="font-size:10px;color:#556677;font-weight:400;">·参考，不计入个股结论</span></span>
@@ -2333,6 +2334,7 @@ function renderAnalysis(result, marketEnv, backtestInfo = null, pyPayload = null
           ${marketEnv.dataLength ? `<div style="margin-top:6px;font-size:10px;color:#556677;">数据: ${marketEnv.dataLength}根K线, 最新: ${marketEnv.lastDate}</div>` : ''}
         ` : '<div style="font-size:12px;color:#556677;">大盘数据获取中...</div>'}
       </div>
+      `}
 
       <!-- 个股当前阶段（Python Core） -->
       <div style="background:linear-gradient(135deg,#0f1419,#1a2332);border:1px solid ${bestConfirmed?(bestType==='bull'?'rgba(231,76,60,0.4)':'rgba(46,204,113,0.4)'):'#2a3441'};border-radius:10px;padding:14px;">

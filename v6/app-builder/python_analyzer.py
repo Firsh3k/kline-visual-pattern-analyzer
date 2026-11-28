@@ -214,7 +214,11 @@ def analyze_stock(code: str, as_of: str | None = None, adjustment: str = "qfq") 
 
     InvalidInputError = A.InvalidInputError
     symbol = A.exchange_symbol(code)
-    as_of = A.parse_as_of(as_of)  # R67-3：未来 / 不存在的日期在取行情之前就拒绝
+    from core.market_data import market as M
+    market = "us" if M.is_us_symbol(symbol) else "cn"
+    # R67-3：未来 / 不存在的日期在取行情之前就拒绝；FIR-47：美股按美东日期校验（A 股仍北京时间），
+    # 北京已跨日、美东未跨日时不得先调用行情提供方。
+    as_of = A.parse_as_of(as_of, market=market)
     try:
         series = _fetch_series_for(code, symbol, adjustment, as_of)
     except Exception as exc:  # noqa: BLE001

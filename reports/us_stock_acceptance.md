@@ -84,12 +84,14 @@
 - 日历修正见 §1（2021-12-31 开市、2025-01-09 休市），3 个日历回归用例。
 - **美东日期校验**：`core/analysis.py` 新增 `today_us()`（ZoneInfo America/New_York，fail-closed），`parse_as_of(market=)` 与 `analyze` 最后一根 K 线按市场选时区——美股用美东今天，A 股仍用北京时间。JS `stock-analysis.pure.ts` 加 `todayNewYork`（Intl en-CA timeZone）/`marketOfCode`，`assertAsOf(market=)`；controller/service 传 `marketOfCode(checkedCode)`，A 股指数路径保持 cn。
 - 关键场景：北京 2026-11-25 00:30 = 美东 2026-11-24 11:30（EST），北京已跨日、美东未跨日时拒绝美东未来日期。`TestUSDateValidation` 4 用例 + `test_bff_pure.js` 3 个美东用例。
+- **执行器首次校验补丁（复核追加）**：`python_analyzer.analyze_stock` 的首次 `parse_as_of` 原先漏传 market（默认北京时间），会在北京已跨日时先调用行情提供方。现按 `is_us_symbol(symbol)` 传 `market="us"/"cn"`，取数前拒绝。`TestExecutorAsOfGate` 3 用例：AAPL asOf=2026-11-25（美东未来）→ `InvalidInputError`（美东时间）且 `_fetch_series_for` 调用为零；asOf=2026-11-24（美东今天）→ 通过首次校验并恰好取数一次；600519 asOf=2026-11-25（北京今天）→ 不受美东未跨日影响。反例验证：还原旧行为（不传 market）取数调用=1，证明用例能抓住缺陷。
 
 ### ③ 页面收回"美股个股分析"范围
 
 - 自选股 `addStock` / 自定义板块 `addCustomSector` / `addSelectedToWatchlist` 恢复 A 股六位数字输入限制（`isCNCode` 守卫，非 CN 代码点名拒绝）。
 - 美股个股页隐藏依赖上证指数的内容：相对强度（RS）卡片、逆大盘风险知识项、"大盘环境适配"评估维度、header"含大盘参考数据"。`doAnalyze` 对美股跳过 `sh000001` 大盘抓取。A 股页面保持原样（RS 卡片仍渲染）。
 - `?code=` 个股入口保留美股支持。`test_us_acceptance.js` section 五 5 用例。
+- **页面残留收尾（复核追加）**：美股页整卡隐藏「大盘环境（上证指数）」（原先残留"大盘数据获取中…"永久悬挂），当前阶段卡改单列占满；自选股输入框示例去掉 AAPL（改"输入 A 股 6 位代码，如 600519、002436"）。A 股页面原样（大盘卡保留）。验收断言：美股渲染无「大盘环境（上证指数）」/「大盘数据获取中」，A 股渲染保留大盘卡，addStockInput placeholder 不含 AAPL。
 
 ### ④ 可重复验收接入 CI + 真实 Nest + 零漂移
 
@@ -102,8 +104,8 @@
 
 | 套件 | 结果 |
 |---|---|
-| `test_us_market.py` | 46 passed |
-| `test_us_acceptance.js` | 22 passed |
+| `test_us_market.py` | 49 passed |
+| `test_us_acceptance.js` | 23 passed |
 | `test_us_nest_e2e.js`（真实 Nest） | 5 passed |
 | `test_bff_pure.js` | 12 passed |
 | `run_canonical_parity.py` | 100% |
@@ -113,4 +115,4 @@
 | `build_runtime_bundles.py --check` | 一致 |
 | 600519 零漂移（vs 45f6e15） | 逐字节一致 |
 
-引擎包重建 39 文件，`bundle_sha256=9da72bc2581f6e5126eb3ebf1939090efc8d678438db590e9036276d15e96a09`（含 `python_analyzer.py` fixture 接缝 + core 美东校验）。
+引擎包重建 39 文件，`bundle_sha256=a42b5d2e93b4db19474f1cdaee4f1f1f92f04a38b178af3c086e4e3edb42b5cf`（含 `python_analyzer.py` fixture 接缝 + 执行器首次 asOf 按市场校验 + core 美东校验）。

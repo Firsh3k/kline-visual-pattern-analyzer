@@ -229,6 +229,8 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     assert.ok(!html.includes('逆大盘'), '美股应隐藏逆大盘风险项');
     assert.ok(!html.includes('大盘环境适配'), '美股应隐藏大盘环境适配维度');
     assert.ok(!html.includes('缺少大盘环境维度'), '美股不取大盘，不应显示缺大盘警告');
+    assert.ok(!html.includes('大盘环境（上证指数）'), '美股应整卡隐藏大盘环境卡');
+    assert.ok(!html.includes('大盘数据获取中'), '美股不应残留永久悬挂的"大盘数据获取中"');
   });
 
   await test('A 股个股页保留相对强度（RS）卡片（保持原样）', async () => {
@@ -240,6 +242,17 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     await settle();
     const html = areaHtml(p);
     assert.ok(html.includes('相对强度（RS）'), 'A 股应保留相对强度卡片');
+    assert.ok(html.includes('大盘环境（上证指数）'), 'A 股应保留大盘环境卡（保持原样）');
+  });
+
+  await test('自选股输入框示例仅 A 股（去掉 AAPL 示例）', () => {
+    const fs = require('fs');
+    const page = process.env.V4_PAGE || require('path').join(ROOT, 'v6', 'app-builder', 'client', 'public', 'v4', 'index.html');
+    const html = fs.readFileSync(page, 'utf8');
+    const m = /id="addStockInput"[^>]*placeholder="([^"]*)"/.exec(html);
+    assert.ok(m, '页面应有 addStockInput 输入框');
+    assert.ok(!m[1].includes('AAPL'), '自选股入口只收 A 股，示例不应再含 AAPL');
+    assert.ok(m[1].includes('A 股'), '示例应明示 A 股');
   });
 
   await test('isUSCode / isCNCode 判定正确', () => {

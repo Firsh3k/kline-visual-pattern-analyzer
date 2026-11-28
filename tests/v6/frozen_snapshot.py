@@ -5,12 +5,15 @@ FIR-40 问题 11：冻结历史快照比对（替代“写死某只股票当日�
 tests/v6/snapshots/stage1_frozen.json 逐字段比对。行情每天变也不影响这个基准；
 只有算法 / 信号规则 / 数据合同真的变了，比对才会失败。
 
-注意：core.result_sha256 依赖 Python 小版本（3.12 起 sum() 对浮点改用补偿求和，末位会变）。
-快照用线上同版本 Python 3.10 生成；其它版本运行时只跳过 result_sha256，其余字段（信号、阶段、分数、
-确认、主导、日期、data_hash）必须完全一致。
+注意：core.result_sha256 依赖 Python 小版本（3.12 起 sum() 对浮点改用补偿求和，检测器原始输出末位会变）。
+快照用线上同版本 Python（PROD_PYTHON）生成，CI 的 python-tests 也用这个版本跑；其它版本运行时只跳过
+result_sha256，其余字段（信号、阶段、分数、确认、主导、日期、data_hash）必须完全一致。
+
+线上 Python 版本变了（以 /api/health 的 python_version 为准）：改 PROD_PYTHON 和 ci.yml 的 python-tests
+版本，用新版本重新生成快照，并在 PR 里证明除 python / result_sha256 外没有任何字段变化（FIR-45）。
 
 算法有意变更时（必须经 QA 同意）：
-    python3.10 tests/v6/frozen_snapshot.py --write
+    python3.13 tests/v6/frozen_snapshot.py --write
 并在 PR 里说明快照差异。
 """
 import argparse
@@ -26,6 +29,8 @@ sys.path.insert(0, str(ROOT))
 from core import analysis as A  # noqa: E402
 
 SNAPSHOT = ROOT / "tests" / "v6" / "snapshots" / "stage1_frozen.json"
+# 线上妙搭运行时的 Python 小版本（2026-10-26 实测 3.13.5，见 v6/app-builder/README.md）
+PROD_PYTHON = "3.13"
 NOW = datetime(2026, 10, 19, 12, 40, tzinfo=A.CN_TZ)   # 固定“当前时间”，session_state / stale 不随运行日期变化
 
 # (用例名, 代码, 行情文件, 日期是否为 YYYYMMDD, asOf)
@@ -81,8 +86,8 @@ def main():
     args = ap.parse_args()
     snap = build()
     if args.write:
-        if snap["python"] != "3.10":
-            sys.exit(f"请用线上同版本 Python 3.10 生成快照（当前 {snap['python']}）")
+        if snap["python"] != PROD_PYTHON:
+            sys.exit(f"请用线上同版本 Python {PROD_PYTHON} 生成快照（当前 {snap['python']}）")
         SNAPSHOT.write_text(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         print(f"已写入 {SNAPSHOT.relative_to(ROOT)}")
     else:

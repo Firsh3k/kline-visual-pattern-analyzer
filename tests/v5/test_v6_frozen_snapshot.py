@@ -1,6 +1,7 @@
 """FIR-40 问题 11：冻结历史快照比对（生成逻辑与更新方法见 tests/v6/frozen_snapshot.py）"""
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -25,14 +26,27 @@ def _drop_hash(entry):
     return e
 
 
-HINT = "算法 / 信号规则 / 数据合同发生变化。若为经 QA 同意的有意变更，运行 python3 tests/v6/frozen_snapshot.py --write 并在 PR 说明差异"
+HINT = (f"算法 / 信号规则 / 数据合同发生变化。若为经 QA 同意的有意变更，运行 python{F.PROD_PYTHON} "
+        "tests/v6/frozen_snapshot.py --write 并在 PR 说明差异")
 
 
 def test_snapshot_cases_unchanged():
     assert sorted(ACTUAL["stocks"]) == sorted(EXPECTED["stocks"])
     assert sorted(ACTUAL["market"]) == sorted(EXPECTED["market"])
     assert ACTUAL["schema_version"] == EXPECTED["schema_version"], HINT
-    assert EXPECTED["python"] == "3.10", "快照必须用线上同版本 Python 3.10 生成"
+    assert EXPECTED["python"] == F.PROD_PYTHON, f"快照必须用线上同版本 Python {F.PROD_PYTHON} 生成"
+
+
+def test_ci_runs_snapshot_on_production_python():
+    """FIR-45：CI 的 python-tests 必须用线上同版本 Python 跑，result_sha256 才真的被核对（否则一直被跳过）"""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = ci.split("\n  python-tests:", 1)[1].split("\n  js-syntax-check:", 1)[0]
+    versions = re.findall(r"python-version:\s*'([0-9.]+)'", job)
+    assert versions == [F.PROD_PYTHON], f"python-tests 的 Python 版本 {versions} 应为线上的 {F.PROD_PYTHON}"
+    pkg = ci.split("\n  platform-package:", 1)[1].split("\n  cross-runtime-parity:", 1)[0]
+    assert re.findall(r"python-version:\s*'([0-9.]+)'", pkg) == [F.PROD_PYTHON], "platform-package 应与线上同版本"
+    readme = (ROOT / "v6" / "app-builder" / "README.md").read_text(encoding="utf-8")
+    assert f"| Python | `{F.PROD_PYTHON}." in readme, "README 的平台 Python 版本与 PROD_PYTHON 不一致"
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED["stocks"]))

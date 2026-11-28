@@ -9,7 +9,7 @@
 手机/PC 浏览器
    │  V4 深色金融终端 UI（client/public/v4/index.html，含三道防线）
    ▼
-NestJS BFF（server/，Node 全栈，平台自带 Python 3.10）
+NestJS BFF（server/，Node 全栈，平台自带 Python 3.13）
    │  child_process spawn python_analyzer.py（不传 --allow-skeleton）
    ▼
 Python Canonical Core（仓库根 core/，唯一形态算法 Source of Truth）

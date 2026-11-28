@@ -59,7 +59,7 @@
   }
  },
  "now": "2026-10-19T12:40:00+08:00",
- "python": "3.10",
+ "python": "3.13",
  "schema_version": "3.1",
  "stocks": {
   "002436_asof_20260930": {
@@ -68,7 +68,7 @@
    "calendar_status": "verified",
    "data_hash": "9c5e325e5d393710961e127c44b33c9092254f084089a3be1e2d5b9202ad4680",
    "request_as_of": "2026-09-30",
-   "result_sha256": "8df6ed68ad10215a96565c58a8e5c12e96bb06cf6183e70fb3db15846e90a0ff",
+   "result_sha256": "807e1f4847dd315e93b5ce022a3b7f57ffd523e3336b7fc7593e2155e3cbcd5b",
    "session_state": "close_confirmed",
    "signals": {
     "dominant": {
@@ -250,7 +250,7 @@
       "stage": "post_break"
      }
     },
-    "result_sha256": "8df6ed68ad10215a96565c58a8e5c12e96bb06cf6183e70fb3db15846e90a0ff",
+    "result_sha256": "807e1f4847dd315e93b5ce022a3b7f57ffd523e3336b7fc7593e2155e3cbcd5b",
     "session_state": "close_confirmed",
     "signal_rule_version": "signals-1",
     "stale": true
@@ -262,7 +262,7 @@
    "calendar_status": "verified",
    "data_hash": "88285bc885f77550b287389e13cb98d12b6c38181d443b0647fdeb1415ff7036",
    "request_as_of": null,
-   "result_sha256": "b5c6023b6fa06b29545287bfc94414ff3146dc4f75ebb8595b504534b6a1f885",
+   "result_sha256": "5594166612d93e8c4a8d811a2720877a60c12a924c8a3db7ffbd3fd4c0b09abb",
    "session_state": "close_confirmed",
    "signals": {
     "dominant": {
@@ -491,7 +491,7 @@
       "stage": "post_break"
      }
     },
-    "result_sha256": "b5c6023b6fa06b29545287bfc94414ff3146dc4f75ebb8595b504534b6a1f885",
+    "result_sha256": "5594166612d93e8c4a8d811a2720877a60c12a924c8a3db7ffbd3fd4c0b09abb",
     "session_state": "close_confirmed",
     "signal_rule_version": "signals-1",
     "stale": true
@@ -503,7 +503,7 @@
    "calendar_status": "verified",
    "data_hash": "4fad83bea02532788265853e97cbfd500cca67adb0428f6c92c8468a31619142",
    "request_as_of": null,
-   "result_sha256": "71f4186f180355c857013114f40e5ab8a2354dcc6b2c2e082579ab6aec522414",
+   "result_sha256": "02b81518c7823862196561a2b01d284b41c02a63b62cf6482d21977cdf506986",
    "session_state": "close_confirmed",
    "signals": {
     "dominant": {
@@ -916,7 +916,7 @@
       "stage": "forming"
      }
     },
-    "result_sha256": "71f4186f180355c857013114f40e5ab8a2354dcc6b2c2e082579ab6aec522414",
+    "result_sha256": "02b81518c7823862196561a2b01d284b41c02a63b62cf6482d21977cdf506986",
     "session_state": "close_confirmed",
     "signal_rule_version": "signals-1",
     "stale": true
@@ -928,7 +928,7 @@
    "calendar_status": "verified",
    "data_hash": "a204007e5c2610ac7fc912d1879d481921b7e8720d08f9fc8fb3c28114c45361",
    "request_as_of": null,
-   "result_sha256": "dd830ecdf7ae52a9caeaf4fbb4d353549c1aae6a171f1011a0d7e074a568a9dd",
+   "result_sha256": "5973fb612e2f71a4ff1c8bf3ddde4683cd2f7ff588ac512ee23ff804ed36cc54",
    "session_state": "close_confirmed",
    "signals": {
     "dominant": {
@@ -1263,7 +1263,7 @@
       "stage": "retest"
      }
     },
-    "result_sha256": "dd830ecdf7ae52a9caeaf4fbb4d353549c1aae6a171f1011a0d7e074a568a9dd",
+    "result_sha256": "5973fb612e2f71a4ff1c8bf3ddde4683cd2f7ff588ac512ee23ff804ed36cc54",
     "session_state": "close_confirmed",
     "signal_rule_version": "signals-1",
     "stale": true

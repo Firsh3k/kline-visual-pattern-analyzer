@@ -51,6 +51,32 @@ function controlledFetch() {
 }
 const okResp = doc => ({ ok: true, status: 200, json: async () => doc });
 
+/** FIR-48：双市场自选股 / 板块桩。GET /supported-codes 返回已登记美股；POST/PUT 落桩内存。 */
+function watchlistFetchStub() {
+  const wl = { items: [], tombstones: [], count: 0, rev: 1, storage: 'memory' };
+  const sectors = { items: [], tombstones: [], count: 0, rev: 1, storage: 'memory' };
+  return async (url, init = {}) => {
+    const u = String(url);
+    const method = init.method || 'GET';
+    if (/\/supported-codes$/.test(u)) return okResp({ us: ['AAPL', 'NVDA', 'BRK.B'], rules: { cn: '6 位数字', us: '1-6 位字母（可带 .X）' } });
+    let mm;
+    if ((mm = u.match(/\/watchlist\/([^/]+)$/)) && method === 'POST') {
+      if (!wl.items.includes(mm[1])) wl.items.push(mm[1]);
+      wl.count = wl.items.length;
+      return okResp({ ...wl, added: true });
+    }
+    if (/\/watchlist$/.test(u)) return okResp(wl);
+    if ((mm = u.match(/\/custom-sectors\/([^/]+)$/)) && method === 'PUT') {
+      const body = JSON.parse(init.body || '{}');
+      sectors.items = [{ name: decodeURIComponent(mm[1]), codes: body.codes || [] }];
+      sectors.count = 1;
+      return okResp({ ...sectors, result: 'created' });
+    }
+    if (/\/custom-sectors$/.test(u)) return okResp(sectors);
+    return { ok: false, status: 404, json: async () => ({ message: 'stub' }) };
+  };
+}
+
 function racePage() {
   const { pending, fetchStub } = controlledFetch();
   const p = loadPage({ exports: EXPORTS, fetch: fetchStub, canvasIds: ['chartFull', 'chart60'] });
@@ -216,7 +242,7 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     assert.ok(html.includes('引擎不是 Python Canonical Core'), '应拒绝非 real_core 引擎');
   });
 
-  console.log('五、页面范围：美股仅个股分析，隐藏大盘依赖项；自选股/自定义板块限 A 股');
+  console.log('五、页面范围：美股个股分析隐藏大盘依赖项；FIR-48 自选股/自定义板块双市场混存');
 
   await test('美股个股页隐藏相对强度（RS）卡片与逆大盘项、无缺大盘警告', async () => {
     const p = loadPage({ exports: EXPORTS, canvasIds: ['chartFull', 'chart60'], fetch: async () => okResp(DOCS.AAPL.api) });
@@ -245,14 +271,15 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     assert.ok(html.includes('大盘环境（上证指数）'), 'A 股应保留大盘环境卡（保持原样）');
   });
 
-  await test('自选股输入框示例仅 A 股（去掉 AAPL 示例）', () => {
+  await test('FIR-48：自选股 / 板块输入框示例双市场（A 股 6 位数字 + 美股 AAPL、BRK.B）', () => {
     const fs = require('fs');
     const page = process.env.V4_PAGE || require('path').join(ROOT, 'v6', 'app-builder', 'client', 'public', 'v4', 'index.html');
     const html = fs.readFileSync(page, 'utf8');
-    const m = /id="addStockInput"[^>]*placeholder="([^"]*)"/.exec(html);
-    assert.ok(m, '页面应有 addStockInput 输入框');
-    assert.ok(!m[1].includes('AAPL'), '自选股入口只收 A 股，示例不应再含 AAPL');
-    assert.ok(m[1].includes('A 股'), '示例应明示 A 股');
+    const m1 = /id="addStockInput"[^>]*placeholder="([^"]*)"/.exec(html);
+    assert.ok(m1, '页面应有 addStockInput 输入框');
+    assert.ok(m1[1].includes('600519') && m1[1].includes('AAPL'), '自选股示例应同时给出 A 股与美股示例');
+    const m2 = /id="customSectorCodes"[^>]*placeholder="([^"]*)"/.exec(html);
+    assert.ok(m2 && m2[1].includes('AAPL'), '板块示例应给出美股示例');
   });
 
   await test('isUSCode / isCNCode 判定正确', () => {
@@ -265,23 +292,35 @@ const setCode = (p, c) => { p.sandbox.document.getElementById('codeInput').value
     assert.strictEqual(p.x.isCNCode('AAPL'), false);
   });
 
-  await test('自选股 addStock 拒绝美股代码（后端只收六位数字）', async () => {
-    const p = loadPage({ exports: EXPORTS });
+  await test('FIR-48：自选股 addStock 已登记美股 AAPL 放行提交；未登记 / 格式错误分别拦截', async () => {
+    const p = loadPage({ exports: EXPORTS, fetch: watchlistFetchStub() });
+    await settle();
     const alerts = [];
     p.sandbox.alert = m => alerts.push(String(m));
     p.sandbox.document.getElementById('addStockInput').value = 'AAPL';
     await p.x.addStock();
-    assert.ok(alerts.some(m => m.includes('自选股仅支持 A 股')), '应提示自选股仅限 A 股');
+    assert.ok(!alerts.some(a => /仅支持 A 股|格式不合法|未在当前已登记/.test(a)), `不应拦截已登记美股：${alerts.join('|')}`);
+    p.sandbox.document.getElementById('addStockInput').value = 'ZZZZ';
+    await p.x.addStock();
+    assert.ok(alerts.some(a => a.includes('未在当前已登记')), '未登记美股应被前端拦截');
+    p.sandbox.document.getElementById('addStockInput').value = '60051';
+    await p.x.addStock();
+    assert.ok(alerts.some(a => a.includes('格式不合法')), '格式错误应被前端拦截');
   });
 
-  await test('自定义板块 addCustomSector 拒绝美股代码', async () => {
-    const p = loadPage({ exports: EXPORTS });
+  await test('FIR-48：自定义板块可存 A 股 + 已登记美股混合；未登记成分拦截', async () => {
+    const p = loadPage({ exports: EXPORTS, fetch: watchlistFetchStub() });
+    await settle();
     const alerts = [];
     p.sandbox.alert = m => alerts.push(String(m));
-    p.sandbox.document.getElementById('customSectorName').value = '测试板块';
-    p.sandbox.document.getElementById('customSectorCodes').value = 'AAPL,600519';
+    p.sandbox.document.getElementById('customSectorName').value = '混合板块';
+    p.sandbox.document.getElementById('customSectorCodes').value = '600519,AAPL,BRK.B';
     await p.x.addCustomSector();
-    assert.ok(alerts.some(m => m.includes('自定义板块仅支持 A 股') && m.includes('AAPL')), '应拒绝并点名美股代码');
+    assert.ok(alerts.some(a => /已添加自定义板块/.test(a) && a.includes('3只')), `混合板块应保存成功：${alerts.join('|')}`);
+    p.sandbox.document.getElementById('customSectorName').value = '未登记板块';
+    p.sandbox.document.getElementById('customSectorCodes').value = 'ZZZZ,600519';
+    await p.x.addCustomSector();
+    assert.ok(alerts.some(a => a.includes('未在当前已登记') && a.includes('ZZZZ')), '未登记美股应被拦截并点名');
   });
 
   console.log(`\n结果: ${passed} 通过, ${failed} 失败`);

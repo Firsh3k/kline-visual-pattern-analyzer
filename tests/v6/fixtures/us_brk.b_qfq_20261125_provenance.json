@@ -1,0 +1,14 @@
+{
+  "ticker": "BRK.B",
+  "symbol": "usBRK.B",
+  "name": "伯克希尔-B",
+  "source": "tencent",
+  "adjustment": "qfq",
+  "trading_calendar": "NYSE",
+  "fetched_at": "2026-11-25T15:19:11.161207+00:00",
+  "bar_count": 250,
+  "first_day": "2025-11-28",
+  "last_day": "2026-11-25",
+  "raw_payload_sha256": "00bcd2a86dc075cbcd7badff70073255cd24e289e55cf7d19f28e576c32c6183",
+  "note": "冻结行情 fixture（BRK.B 路由）：样本克隆自 NVDA 冻结数据，仅用于确定性端到端验收，不代表真实 BRK.B 行情"
+}

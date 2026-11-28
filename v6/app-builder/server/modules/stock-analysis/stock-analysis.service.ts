@@ -1,7 +1,16 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { execFileSync, execSync } from 'child_process';
 import * as dotenv from 'dotenv';
-import { assertAsOf, assertCode, buildBatchItem, marketOfCode } from './stock-analysis.pure';
+import {
+  UnsupportedCodeError,
+  assertAsOf,
+  assertSupportedCode,
+  buildBatchItem,
+  chunkCodes,
+  marketOfCode,
+  normalizeCode,
+  US_REGISTERED_TICKERS,
+} from './stock-analysis.pure';
 import { Watchlist, WatchlistStatus, WatchlistView, createWatchlistStore } from './watchlist-store';
 import { ScanJobManager, ScanFilter } from './scan-jobs';
 import { SectorCatalogStatus, SectorCatalogStore } from './sector-catalog';
@@ -158,10 +167,18 @@ export class StockAnalysisService implements OnModuleInit {
 
   private validateCode(code: string): string {
     try {
-      return assertCode(code);  // A 股 6 位 / 美股字母，与 Python market 模块对齐
+      return assertSupportedCode(code);  // 格式 + 已登记可取数校验，与 Python market / US_EXCHANGE_MAP 对齐
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : '股票代码不合法');
     }
+  }
+
+  /** 前端预校验用：当前已登记可取数的美股清单（与 Python US_EXCHANGE_MAP 同源），A 股 6 位数字不限清单。 */
+  getSupportedCodes(): Record<string, unknown> {
+    return {
+      us: US_REGISTERED_TICKERS.slice(),
+      rules: { cn: '6 位数字（如 600519）', us: '1-6 位字母，可带 .X 后缀（如 AAPL、BRK.B）' },
+    };
   }
 
   /** 调用 Python Canonical Core 执行器。严格代码校验、spawn 参数数组（无 shell 注入）、fail-closed。 */
@@ -353,7 +370,17 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const { items, failed } = await this.runCodes(codes, 0, false);
+    // 超过单任务上限（200）时分批跑：每批 ≤200，累计合并结果与失败明细；单只失败只标记该行，其余继续。
+    const chunks = chunkCodes(codes, MAX_SCAN_CODES);
+    const items: Array<Record<string, unknown>> = [];
+    const failed: Array<{ code: string; reason: string }> = [];
+    for (const chunk of chunks) {
+      const r = await this.runCodes(chunk, 0, false);
+      items.push(...r.items);
+      failed.push(...r.failed);
+    }
+    const scoreOf = (it: Record<string, unknown>) => ((it.bull_top as any)?.score ?? -1);
+    items.sort((a, b) => scoreOf(b) - scoreOf(a));
     return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 
@@ -367,16 +394,24 @@ export class StockAnalysisService implements OnModuleInit {
     if (!this.pythonBinary) {
       throw new Error('无可用的Python分析后端');
     }
-    const clean = [...new Set((codes ?? []).map((c) => String(c).trim()))];
-    try {
-      clean.forEach((c) => assertCode(c));
-    } catch (err) {
-      throw new BadRequestException(err instanceof Error ? err.message : '扫描列表包含非法代码');
+    const clean: string[] = [];
+    for (const raw of codes ?? []) {
+      const c = normalizeCode(raw);
+      if (c && !clean.includes(c)) clean.push(c);
     }
-    if (clean.length > MAX_SCAN_CODES) {
-      throw new BadRequestException(`单次扫描最多 ${MAX_SCAN_CODES} 只（当前 ${clean.length}）`);
+    const badFormat: string[] = [];
+    const unsupported: string[] = [];
+    const supported: string[] = [];
+    for (const c of clean) {
+      try { supported.push(assertSupportedCode(c)); }
+      catch (err) { if (err instanceof UnsupportedCodeError) unsupported.push(c); else badFormat.push(c); }
     }
-    const { items, failed } = await this.runCodes(clean, minScore, onlyBull);
+    if (badFormat.length) throw new BadRequestException(`扫描列表包含格式不合法的代码：${badFormat.slice(0, 5).join(', ')}`);
+    if (unsupported.length) throw new BadRequestException(`扫描列表包含未在当前已登记交易所清单内的美股：${unsupported.slice(0, 5).join(', ')}`);
+    if (supported.length > MAX_SCAN_CODES) {
+      throw new BadRequestException(`单次扫描最多 ${MAX_SCAN_CODES} 只（当前 ${supported.length}）`);
+    }
+    const { items, failed } = await this.runCodes(supported, minScore, onlyBull);
     return { items, failed, count: items.length, failedCount: failed.length, run_mode: 'local' };
   }
 

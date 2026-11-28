@@ -14,15 +14,22 @@ const vm = require('vm');
 const ts = require('typescript');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const SRC = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis', 'watchlist-store.ts');
-const out = ts.transpileModule(fs.readFileSync(SRC, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true },
-  reportDiagnostics: true,
-});
-assert.strictEqual((out.diagnostics || []).length, 0, 'TS 诊断非空');
-const mod = { exports: {} };
-vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, require);
-const W = mod.exports;
+const DIR = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis');
+const SRC = path.join(DIR, 'watchlist-store.ts');
+function compile(file, requireMap) {
+  const out = ts.transpileModule(fs.readFileSync(path.join(DIR, file), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true },
+    reportDiagnostics: true,
+  });
+  assert.strictEqual((out.diagnostics || []).length, 0, `${file} TS 诊断非空`);
+  const mod = { exports: {} };
+  const req = (name) => (name in requireMap ? requireMap[name] : require(name));
+  vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, req);
+  return mod.exports;
+}
+const dataMod = compile('us-exchange-map.data.ts', {});
+const pureMod = compile('stock-analysis.pure.ts', { './us-exchange-map.data': dataMod });
+const W = compile('watchlist-store.ts', { './stock-analysis.pure': pureMod });
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
@@ -127,7 +134,7 @@ async function suite(label, makeStore) {
     const v = await wl.importLocal({ codes: ['60051', 'abcdef', '600519'],
       tombstones: [{ code: '002436', deletedAt: 'not-a-date' }, { code: '300750', deletedAt: '2099-01-01T00:00:00Z' }] });
     assert.deepStrictEqual(v.items, ['600519']);
-    assert.deepStrictEqual(v.skipped, ['60051', 'abcdef', '002436']);
+    assert.deepStrictEqual(v.skipped, ['60051', 'ABCDEF', '002436']);
     assert.ok(v.tombstones.find(t => t.code === '300750').deleted_at < '2027-01-01', '未来删除时间应被压到现在');
   });
 
@@ -135,6 +142,35 @@ async function suite(label, makeStore) {
     const { wl } = await fresh();
     await assert.rejects(() => wl.add('60051'), e => e.statusCode === 400);
     await assert.rejects(() => wl.remove('../x'), e => e.statusCode === 400);
+  });
+
+  await test('FIR-48：A 股 + 美股混存；归一化去重（aapl / AAPL / " AAPL " 同一条），美股存大写', async () => {
+    const { wl } = await fresh();
+    await wl.add('600519');
+    await wl.add('aapl');
+    await wl.add(' AAPL ');
+    await wl.add('BRK.B');
+    const v = await wl.view();
+    assert.deepStrictEqual(v.items, ['600519', 'AAPL', 'BRK.B']);
+    assert.strictEqual((await wl.add('nvda')).added, true);
+    assert.deepStrictEqual((await wl.view()).items, ['600519', 'AAPL', 'BRK.B', 'NVDA']);
+  });
+
+  await test('FIR-48：未登记美股与格式错误分开报错（UNSUPPORTED_CODE / INVALID_CODE）', async () => {
+    const { wl } = await fresh();
+    await assert.rejects(() => wl.add('ZZZZ'), e => e.statusCode === 400 && e.errorCode === 'UNSUPPORTED_CODE');
+    await assert.rejects(() => wl.add('60051'), e => e.statusCode === 400 && e.errorCode === 'INVALID_CODE');
+  });
+
+  await test('FIR-48：导入双市场；未登记 / 格式错误分别列入 skipped 与 skippedUnsupported；已删墓碑不复活', async () => {
+    const { wl } = await fresh();
+    await wl.add('600519');
+    await wl.remove('AAPL');
+    const v = await wl.importLocal({ codes: ['aapl', 'AAPL', '600519', 'ZZZZ', '60051', 'BRK.B'], tombstones: [] });
+    assert.deepStrictEqual(v.items, ['600519', 'BRK.B']);
+    assert.deepStrictEqual(v.skipped, ['ZZZZ', '60051']);
+    assert.deepStrictEqual(v.skippedUnsupported, ['ZZZZ']);
+    assert.ok(v.tombstones.find(t => t.code === 'AAPL'), '墓碑保留，旧设备迁入不复活');
   });
 
   await test('QA R73-2：rev 每次写入严格递增（含迁入“很早时间”的删除记录）；无改动则不变', async () => {

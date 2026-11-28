@@ -27,7 +27,8 @@ function compile(file, requireMap) {
   vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, req);
   return mod.exports;
 }
-const pure = compile('stock-analysis.pure.ts', {});
+const dataMod = compile('us-exchange-map.data.ts', {});
+const pure = compile('stock-analysis.pure.ts', { './us-exchange-map.data': dataMod });
 const { ScanJobManager } = compile('scan-jobs.ts', { './stock-analysis.pure': pure });
 const { runProcess } = compile('run-process.ts', {});
 
@@ -91,11 +92,31 @@ function fakeRunner({ fail = new Set(), hang = new Set(), score = () => 70 } = {
     const r = fakeRunner({ hang: new Set(codes(5)) });
     const m = new ScanJobManager(r.run, { maxActiveJobs: 1 });
     assert.strictEqual(m.create(['600000', ' 600000', '600000']).total, 1);
-    assert.throws(() => m.create(['60000a']), /非法代码/);
+    assert.throws(() => m.create(['60000a']), /格式不合法|非法代码/);
     assert.throws(() => m.create(codes(201)), /最多 200 只/);
     assert.throws(() => m.create([]), /不能为空/);
     assert.throws(() => m.create('600000'), /不能为空/);
     assert.throws(() => m.create(['600001']), /已有 1 个扫描在运行/);
+  });
+
+  await test('FIR-48：A 股 + 美股混合入队；归一化去重、美股转大写', async () => {
+    const r = fakeRunner();
+    const m = new ScanJobManager(r.run, { maxParallel: 3 });
+    const { job_id, total } = m.create(['600519', 'aapl', ' AAPL ', 'BRK.B', 'nvda']);
+    assert.strictEqual(total, 4);
+    await until(() => m.get(job_id).status === 'done');
+    assert.deepStrictEqual(r.st.calls.sort(), ['600519', 'AAPL', 'BRK.B', 'NVDA'].sort());
+  });
+
+  await test('FIR-48：格式错误与未登记美股分开报错（INVALID_CODE / UNSUPPORTED_CODE）', async () => {
+    const m = new ScanJobManager(fakeRunner().run);
+    let e1; try { m.create(['60051']); } catch (e) { e1 = e; }
+    assert.ok(e1, '60051 应抛格式错误');
+    assert.strictEqual(e1.errorCode, 'INVALID_CODE');
+    let e2; try { m.create(['ZZZZ']); } catch (e) { e2 = e; }
+    assert.ok(e2, 'ZZZZ 应抛未登记错误');
+    assert.strictEqual(e2.errorCode, 'UNSUPPORTED_CODE');
+    assert.ok(/未在当前已登记/.test(e2.message));
   });
 
   await test('单只失败 / 超时计入失败清单，带原因，不影响其它股票', async () => {

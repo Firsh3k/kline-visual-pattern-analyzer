@@ -186,7 +186,7 @@ exec ${JSON.stringify(realNpm)} "$@"
     fs.writeFileSync(orphan, 'module.exports = 1;');   // 对照：这次事故里孤立的 engine-bundle.js 就是这样丢的
     const { fileList } = await nodeFileTrace([path.join(build, 'dist', 'server', 'main.js')], opts);
     traced = [...fileList].filter((f) => f.startsWith('dist/server/')).sort();
-    for (const f of ['engine-bundle.js', 'engine.js', 'sector-catalog.data.js', 'v4-page.js', 'deploy-info.js']) {
+    for (const f of ['engine-bundle.js', 'engine.js', 'sector-catalog.data.js', 'us-exchange-map.data.js', 'v4-page.js', 'deploy-info.js']) {
       assert.ok(traced.includes(`dist/server/modules/stock-analysis/${f}`), `${f} 不在模块图里（线上不会部署）`);
     }
     assert.ok(!traced.includes('dist/server/orphan-not-imported.js'));

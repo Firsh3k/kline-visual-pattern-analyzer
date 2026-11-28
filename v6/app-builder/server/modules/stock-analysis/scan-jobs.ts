@@ -12,7 +12,7 @@
  *   前端以 finished_at 为最终结束标志，取消后继续轮询直到在途结果都回来。
  */
 import { randomUUID } from 'crypto';
-import { InvalidRequestError } from './stock-analysis.pure';
+import { InvalidRequestError, UnsupportedCodeError, assertSupportedCode, normalizeCode } from './stock-analysis.pure';
 
 /** signal 中止时 runner 应终止底层分析，并在清理完成后才 settle */
 export type ScanRunner = (code: string, signal: AbortSignal) => Promise<Record<string, any>>;
@@ -49,8 +49,6 @@ interface Job {
   scope: unknown[];                   // FIR-41 第 4 项：扫描范围说明（板块、来源、核对状态），原样回显
 }
 
-const CODE_RE = /^\d{6}$/;
-
 export class ScanJobManager {
   private readonly jobs = new Map<string, Job>();
   private readonly order: string[] = [];   // 创建顺序，用于公平轮转
@@ -73,9 +71,24 @@ export class ScanJobManager {
   create(codes: unknown, filter: ScanFilter = {}, meta: { scope?: unknown[] } = {}): { job_id: string; total: number } {
     this.purge();
     if (!Array.isArray(codes) || codes.length === 0) throw new InvalidRequestError('股票代码列表不能为空');
-    const clean = [...new Set(codes.map((c) => String(c).trim()))];
-    const bad = clean.filter((c) => !CODE_RE.test(c));
-    if (bad.length) throw new InvalidRequestError(`扫描列表包含非法代码（必须为 6 位数字）：${bad.slice(0, 5).join(', ')}`);
+    const seen = new Set<string>();
+    const clean: string[] = [];
+    const badFormat: string[] = [];
+    const unsupported: string[] = [];
+    for (const raw of codes) {
+      const s = normalizeCode(raw);
+      if (!s) { badFormat.push(String(raw ?? '')); continue; }
+      let valid: string;
+      try {
+        valid = assertSupportedCode(s);
+      } catch (err) {
+        if (err instanceof UnsupportedCodeError) unsupported.push(s); else badFormat.push(s);
+        continue;
+      }
+      if (!seen.has(valid)) { seen.add(valid); clean.push(valid); }
+    }
+    if (badFormat.length) throw new InvalidRequestError(`扫描列表包含格式不合法的代码（A 股需 6 位数字；美股需 1-6 位字母，如 AAPL）：${badFormat.slice(0, 5).join(', ')}`);
+    if (unsupported.length) throw new UnsupportedCodeError(`扫描列表包含未在当前已登记交易所清单内的美股：${unsupported.slice(0, 5).join(', ')}`);
     if (clean.length > this.opt.maxCodes) {
       throw new InvalidRequestError(`单次扫描最多 ${this.opt.maxCodes} 只（当前 ${clean.length}）`);
     }

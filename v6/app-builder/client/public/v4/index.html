@@ -230,7 +230,7 @@ canvas { width: 100%; display: block; }
       
       <!-- 添加股票 -->
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-        <input type="text" id="addStockInput" placeholder="输入 A 股 6 位代码，如 600519、002436" maxlength="8" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
+        <input type="text" id="addStockInput" placeholder="A 股 6 位代码（600519）或美股（AAPL、BRK.B）" maxlength="8" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:10px 12px;font-size:14px;" onkeypress="if(event.key==='Enter')addStock()">
         <button onclick="addStock()" style="padding:10px 20px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">添加</button>
         <button onclick="loadExampleWatchlist()" style="padding:10px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:14px;cursor:pointer;">加载示例</button>
       </div>
@@ -297,7 +297,7 @@ canvas { width: 100%; display: block; }
       <!-- 自定义板块 -->
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
         <input type="text" id="customSectorName" placeholder="自定义板块名称" style="width:140px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
-        <input type="text" id="customSectorCodes" placeholder="股票代码，逗号分隔" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
+        <input type="text" id="customSectorCodes" placeholder="代码逗号分隔：A 股 6 位数字 / 美股（AAPL、BRK.B）" style="flex:1;min-width:200px;background:#0f1419;border:1px solid #2a3441;border-radius:6px;color:#f0f0f0;padding:8px 10px;font-size:13px;">
         <button onclick="addCustomSector()" style="padding:8px 16px;background:#1a2332;color:#8899aa;border:1px solid #2a3441;border-radius:6px;font-size:13px;cursor:pointer;">添加板块</button>
       </div>
       
@@ -1915,8 +1915,31 @@ function isValidCode(code) {
 function normalizeCode(code) { return String(code).trim().toUpperCase(); }
 // 美股代码判定（字母开头）：本期美股仅支持个股分析，大盘依赖项（相对强度/逆大盘风险）隐藏。
 function isUSCode(code) { return /^[A-Z]/.test(String(code).trim()); }
-// 自选股 / 自定义板块后端只收 A 股 6 位数字，输入限制与之对齐（不接受美股代码）。
+// A 股 6 位数字判定（保留给旧引用；新逻辑用 classifyCode 区分格式错误 / 未支持）。
 function isCNCode(code) { return /^\d{6}$/.test(String(code).trim()); }
+
+// 已登记可取数的美股清单（来自 GET /api/supported-codes，与 Python US_EXCHANGE_MAP 同源）。
+// 前端只做预校验，后端 API 是最终校验；清单加载失败不阻断提交。
+const supportedState = { loaded: false, us: new Set(), error: null };
+async function loadSupportedCodes() {
+  try {
+    const resp = await fetch(`${_getApiBasePath()}/supported-codes`, { credentials: 'include', headers: { 'Accept': 'application/json' } });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const j = await resp.json();
+    supportedState.us = new Set((j.us || []).map(normalizeCode));
+    supportedState.loaded = true;
+  } catch (e) {
+    supportedState.error = e && e.message ? e.message : String(e);
+  }
+}
+// 代码分类：empty / invalid（格式错误）/ unsupported（格式合法但未在已登记清单）/ ok。
+function classifyCode(raw) {
+  const code = normalizeCode(raw);
+  if (!code) return { code, kind: 'empty' };
+  if (!isValidCode(code)) return { code, kind: 'invalid' };
+  if (isUSCode(code) && supportedState.loaded && !supportedState.us.has(code)) return { code, kind: 'unsupported' };
+  return { code, kind: 'ok' };
+}
 
 // 分析请求序号：快速切换标的（如 002436 → AAPL）且响应乱序时，
 // 旧请求的成功/失败/结束状态都不得覆盖当前页面的结果与按钮状态。
@@ -3189,8 +3212,10 @@ function renderWatchlistTags() {
 // 添加股票（写入服务端；用户主动加回删除过的股票会先确认）
 async function addStock() {
   const input = document.getElementById('addStockInput');
-  const code = normalizeCode(input.value);
-  if (!isCNCode(code)) { alert('自选股仅支持 A 股 6 位数字代码（如 600519）；美股请在上方个股分析框输入'); return; }
+  const { code, kind } = classifyCode(input.value);
+  if (kind === 'empty') { alert('请输入股票代码'); return; }
+  if (kind === 'invalid') { alert('股票代码格式不合法：A 股需 6 位数字（如 600519）；美股需 1-6 位字母，可带 .X 后缀（如 AAPL、BRK.B）'); return; }
+  if (kind === 'unsupported') { alert(`美股 ${code} 未在当前已登记交易所清单内，暂不支持`); return; }
   if (getWatchlist().includes(code)) { alert('该股票已在自选股池中'); return; }
   if (watchlistState.tombstones.find(t => t.code === code)) {
     const confirmed = await showConfirm(`该股票(${code})此前已从自选股删除。\n\n确定要重新加入吗？所有设备都会看到它。`, '重新添加已删除股票');
@@ -3446,20 +3471,29 @@ async function analyzeAllWatchlist() {
   watchlistResults = {};
   renderWatchlistTable();
 
+  // 超过单任务上限（200）时分批提交：每批 ≤200，累计总进度与失败数；单只失败只标记该行，其余继续。
+  const MAX_BATCH = 200;
+  const chunks = [];
+  for (let i = 0; i < codes.length; i += MAX_BATCH) chunks.push(codes.slice(i, i + MAX_BATCH));
+  const failed = [];
+  let okCount = 0, doneTotal = 0;
   try {
-    const view = await runScanJob(codes, {}, v => {
-      status.innerHTML = `<span style="color:#f39c12;">Python Core 分析中：${v.done}/${v.total}${v.failed_count ? `（失败 ${v.failed_count}）` : ''}…</span>`;
-    });
-    const failed = (view.failed || []).slice();
-
-    // 归一化后端 batch item（字段全部来自 Python core：最近实例 + 已确认 bull_top/bear_top）；合同不符计入失败
-    let okCount = 0;
-    for (const it of (view.items || [])) {
-      const item = normalizeBatchItem(it);
-      if (!item) continue;
-      if (item.unavailable) { failed.push({ code: item.code, reason: item.error || '数据合同不符' }); continue; }
-      watchlistResults[item.code] = item;
-      okCount++;
+    for (let bi = 0; bi < chunks.length; bi++) {
+      const chunk = chunks[bi];
+      const batchLabel = chunks.length > 1 ? `（第 ${bi + 1}/${chunks.length} 批）` : '';
+      const view = await runScanJob(chunk, {}, v => {
+        const done = doneTotal + v.done;
+        status.innerHTML = `<span style="color:#f39c12;">Python Core 分析中：${done}/${codes.length}${v.failed_count ? `（失败 ${v.failed_count}）` : ''}${batchLabel}…</span>`;
+      });
+      doneTotal += chunk.length;
+      for (const it of (view.items || [])) {
+        const item = normalizeBatchItem(it);
+        if (!item) continue;
+        if (item.unavailable) { failed.push({ code: item.code, reason: item.error || '数据合同不符' }); continue; }
+        watchlistResults[item.code] = item;
+        okCount++;
+      }
+      failed.push(...(view.failed || []));
     }
 
     renderWatchlistTags();
@@ -3737,10 +3771,16 @@ async function addCustomSector() {
   const codesStr = codesInput.value.trim();
   if (!name) { alert('请输入板块名称'); return; }
   const tokens = [...new Set(codesStr.split(/[,，\s]+/).map(c => normalizeCode(c)).filter(Boolean))];
-  const codes = tokens.filter(c => isCNCode(c));
-  const rejected = tokens.filter(c => !isCNCode(c));
-  if (rejected.length > 0) { alert(`自定义板块仅支持 A 股 6 位数字代码（后端只收六位数字），已拒绝：${rejected.join('、')}`); return; }
-  if (codes.length === 0) { alert('请输入有效的 A 股 6 位数字代码（如 600519,002436）'); return; }
+  const codes = [], invalid = [], unsupported = [];
+  for (const t of tokens) {
+    const r = classifyCode(t);
+    if (r.kind === 'invalid') invalid.push(r.code);
+    else if (r.kind === 'unsupported') unsupported.push(r.code);
+    else if (r.kind === 'ok') codes.push(r.code);
+  }
+  if (invalid.length > 0) { alert(`格式不合法（A 股需 6 位数字；美股需 1-6 位字母，如 AAPL、BRK.B），已拒绝：${invalid.join('、')}`); return; }
+  if (unsupported.length > 0) { alert(`以下美股未在当前已登记交易所清单内，暂不支持：${unsupported.join('、')}`); return; }
+  if (codes.length === 0) { alert('请输入有效的股票代码（A 股 6 位数字，如 600519；美股如 AAPL、BRK.B）'); return; }
   let r;
   try {
     r = await customSectorRequest('PUT', `/${encodeURIComponent(name)}`, { codes });
@@ -3888,20 +3928,34 @@ function toggleSelectAllScan(checkbox) {
 
 // 将勾选的股票加入自选股
 async function addSelectedToWatchlist() {
-  const checked = document.querySelectorAll('.scan-item-checkbox:checked');
+  const checked = [...document.querySelectorAll('.scan-item-checkbox:checked')];
   if (checked.length === 0) { alert('请先勾选股票'); return; }
+  const valid = [], invalid = [], unsupported = [], dup = [], tombstoned = [];
+  for (const cb of checked) {
+    const r = classifyCode(cb.value);
+    if (r.kind === 'invalid') { invalid.push(r.code); continue; }
+    if (r.kind === 'unsupported') { unsupported.push(r.code); continue; }
+    if (getWatchlist().includes(r.code)) { dup.push(r.code); continue; }
+    if (watchlistState.tombstones.find(t => t.code === r.code)) tombstoned.push(r.code);
+    valid.push(r.code);
+  }
+  if (invalid.length) alert(`以下代码格式不合法，已跳过：${invalid.join('、')}`);
+  if (unsupported.length) alert(`以下美股未在当前已登记交易所清单内，已跳过：${unsupported.join('、')}`);
+  if (!valid.length) { alert(dup.length ? '所选股票已在自选股池中' : '没有可加入的股票'); return; }
+  if (tombstoned.length) {
+    const ok = await showConfirm(`其中 ${tombstoned.length} 只（${tombstoned.slice(0, 5).join('、')}）此前已从自选股删除。\n确定要重新加入吗？所有设备都会看到它。`, '重新添加已删除股票');
+    if (!ok) return;
+  }
   let added = 0;
   try {
-    for (const cb of checked) {
-      const code = cb.value;
-      if (!isCNCode(code)) continue;  // 自选股后端只收 A 股 6 位数字
+    for (const code of valid) {
       if (!getWatchlist().includes(code)) { await watchlistRequest('POST', `/${code}`); added++; }
     }
   } catch (e) {
     alert(`加入自选股失败：${e.message}（已加入 ${added} 只）`);
     return;
   }
-  alert(`已添加 ${added} 只股票到自选股池`);
+  alert(`已添加 ${added} 只股票到自选股池${dup.length ? `；${dup.length} 只已在池中` : ''}`);
   // 跳转到自选股池
   switchTab('watchlist');
   renderWatchlistTags();
@@ -3914,6 +3968,7 @@ renderWatchlistTags();
 renderSectorList();
 loadSectors();
 refreshCustomSectors();
+loadSupportedCodes();
 initWatchlistSync();
 // 支持URL参数自动分析：?code=002436
 const urlParams = new URLSearchParams(window.location.search);

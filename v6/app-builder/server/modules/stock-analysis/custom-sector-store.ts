@@ -16,11 +16,16 @@
  *   在剩余容量内按顺序加入，超出的列在 over_limit（QA R80-1，与写入同一把版本行锁，多台设备并发迁入也不会超）。
  */
 import { WatchlistInputError, WatchlistUnavailableError } from './watchlist-store';
+import {
+  InvalidRequestError,
+  UnsupportedCodeError,
+  assertSupportedCode,
+  normalizeCode,
+} from './stock-analysis.pure';
 
 export const CS_TABLE = 'kline_custom_sectors';
 export const MAX_CUSTOM_SECTORS = 50;
 export const MAX_SECTOR_CODES = 200;
-const CODE_RE = /^\d{6}$/;
 const NAME_RE = /^[^\u0000-\u001f\u007f]{1,30}$/;
 
 export interface CustomSectorRow {
@@ -60,16 +65,48 @@ export function normalizeName(name: unknown): string {
   return n;
 }
 
+/** 迁入用：过滤出合法且已登记的代码；格式错误 / 未登记美股都剔除（不抛错）。返回归一化、去重后的清单。 */
+export function filterImportCodes(codes: unknown): string[] {
+  if (!Array.isArray(codes)) return [];
+  const out: string[] = [];
+  for (const raw of codes) {
+    const s = normalizeCode(raw);
+    if (!s) continue;
+    let valid: string;
+    try { valid = assertSupportedCode(s); } catch { continue; }
+    if (!out.includes(valid)) out.push(valid);
+  }
+  return out;
+}
+
 export function normalizeCodes(codes: unknown): string[] {
   if (!Array.isArray(codes)) throw new WatchlistInputError('codes 必须是股票代码数组');
   const out: string[] = [];
-  const bad: string[] = [];
-  for (const c of codes) {
-    const s = String(c ?? '').trim();
-    if (!CODE_RE.test(s)) bad.push(s);
-    else if (!out.includes(s)) out.push(s);
+  const badFormat: string[] = [];
+  const unsupported: string[] = [];
+  let firstErr: Error | undefined;
+  for (const raw of codes) {
+    const s = normalizeCode(raw);
+    if (!s) { badFormat.push(String(raw ?? '')); continue; }
+    let valid: string;
+    try { valid = assertSupportedCode(s); }
+    catch (err) {
+      if (err instanceof UnsupportedCodeError) { unsupported.push(s); } else { badFormat.push(s); }
+      if (!firstErr) firstErr = err as Error;
+      continue;
+    }
+    if (!out.includes(valid)) out.push(valid);
   }
-  if (bad.length) throw new WatchlistInputError(`股票代码必须为 6 位数字：${bad.slice(0, 5).join(', ')}`);
+  const parts: string[] = [];
+  if (badFormat.length) parts.push(`格式不合法（A 股需 6 位数字；美股需 1-6 位字母，如 AAPL）：${badFormat.slice(0, 5).join(', ')}`);
+  if (unsupported.length) parts.push(`未在当前已登记交易所清单内的美股：${unsupported.slice(0, 5).join(', ')}`);
+  if (parts.length) {
+    const msg = parts.join('；');
+    // 保留与纯口径一致的错误类型 / errorCode：格式错误 INVALID_CODE，未登记 UNSUPPORTED_CODE
+    if (firstErr instanceof UnsupportedCodeError) throw new UnsupportedCodeError(msg);
+    if (firstErr instanceof InvalidRequestError) throw new InvalidRequestError(msg);
+    throw new WatchlistInputError(msg);
+  }
   if (!out.length) throw new WatchlistInputError('板块至少要有 1 只股票');
   if (out.length > MAX_SECTOR_CODES) throw new WatchlistInputError(`单个自定义板块最多 ${MAX_SECTOR_CODES} 只`);
   return out;
@@ -399,7 +436,7 @@ export class CustomSectors {
       this.markOk();
       return out;
     } catch (err) {
-      if (err instanceof WatchlistInputError) throw err;
+      if (err instanceof WatchlistInputError || err instanceof InvalidRequestError || err instanceof UnsupportedCodeError) throw err;
       this.markDown(err);
       throw new WatchlistUnavailableError(`自定义板块存储不可用：${this.lastError}`);
     }
@@ -447,8 +484,9 @@ export class CustomSectors {
     for (const s of list) {
       try {
         const name = normalizeName(s.name);
-        // 迁入时只保留合法代码（旧浏览器数据可能混有错误代码），一只都不剩就跳过
-        const codes = normalizeCodes(Array.isArray(s.codes) ? (s.codes as unknown[]).filter((c) => CODE_RE.test(String(c ?? '').trim())) : s.codes);
+        // 迁入时只保留合法且已登记的代码（旧浏览器数据可能混有错误代码 / 未登记美股），一只都不剩就跳过
+        const codes = filterImportCodes(s.codes);
+        if (!codes.length) throw new WatchlistInputError('板块至少要有 1 只股票');
         if (!sectors.some((x) => x.name === name)) sectors.push({ name, codes });
       } catch {
         skipped.push(String(s.name ?? '(无名称)'));

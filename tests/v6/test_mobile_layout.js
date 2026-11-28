@@ -71,7 +71,8 @@ function annotate(title, err) {
     }
     let m;
     if ((m = api.match(/^\/analyze\/(\d{6})/))) return send(200, m[1] === '002594' ? DOCS.hs_002594 : DOCS.base_002436);
-    if (api.startsWith('/watchlist')) return send(200, { items: ['002436', '002594', '600519'], tombstones: [], count: 3, rev: 3, storage: 'postgres' });
+    if (api.endsWith('/supported-codes')) return send(200, { us: ['AAPL', 'NVDA', 'BRK.B'] });
+    if (api.startsWith('/watchlist')) return send(200, { items: ['002436', 'AAPL', '600519'], tombstones: [], count: 3, rev: 3, storage: 'postgres' });
     return send(404, { message: 'stub' });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -120,6 +121,14 @@ function annotate(title, err) {
           assert.ok(sw <= vw, `文档宽 ${sw} > 视口 ${vw}：${(await offenders(page)).join(' | ')}`);
         });
       }
+      await test('自选股混合清单标签同时渲染 A 股与美股', async () => {
+        current = '自选股标签';
+        await page.evaluate(() => switchTab('watchlist'));
+        await page.waitForTimeout(300);
+        const tags = await page.$eval('#watchlistTags', (el) => el.innerText || el.textContent || '');
+        assert.ok(tags.includes('600519'), `标签缺 A 股 600519：${tags}`);
+        assert.ok(tags.includes('AAPL'), `标签缺美股 AAPL：${tags}`);
+      });
       await test('回测开关点得动（隐藏的 checkbox 不占位但仍可切换）', async () => {
         current = '回测开关';
         await page.goto(base);

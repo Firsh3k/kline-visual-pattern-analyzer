@@ -13,15 +13,27 @@ const { execFileSync } = require('child_process');
 const ts = require('typescript');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const SRC = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis', 'stock-analysis.pure.ts');
-const out = ts.transpileModule(fs.readFileSync(SRC, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true },
-  reportDiagnostics: true,
-});
-assert.strictEqual((out.diagnostics || []).length, 0, 'TS 编译诊断非空');
-const mod = { exports: {} };
-vm.runInNewContext(out.outputText, { module: mod, exports: mod.exports, require, Date, JSON, Number, Object, Error, Intl });
-const { assertAsOf, buildBatchItem, todayShanghai, todayNewYork, marketOfCode, SIGNAL_RULE_VERSION } = mod.exports;
+const DIR = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis');
+const SRC = path.join(DIR, 'stock-analysis.pure.ts');
+
+function compileTs(file, requireMap) {
+  const out = ts.transpileModule(fs.readFileSync(path.join(DIR, file), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, strict: true },
+    reportDiagnostics: true,
+  });
+  assert.strictEqual((out.diagnostics || []).length, 0, `${file} TS 编译诊断非空`);
+  const mod = { exports: {} };
+  const req = (name) => (name in requireMap ? requireMap[name] : require(name));
+  vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, req);
+  return mod.exports;
+}
+const dataMod = compileTs('us-exchange-map.data.ts', {});
+const pureMod = compileTs('stock-analysis.pure.ts', { './us-exchange-map.data': dataMod });
+const {
+  assertAsOf, buildBatchItem, todayShanghai, todayNewYork, marketOfCode, SIGNAL_RULE_VERSION,
+  normalizeCode, assertCode, assertSupportedCode, isRegisteredCode, chunkCodes,
+  InvalidRequestError, UnsupportedCodeError,
+} = pureMod;
 
 const DOCS = JSON.parse(execFileSync(process.env.PYTHON || 'python3', [path.join(ROOT, 'tests', 'v6', 'r67_make_docs.py')],
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
@@ -68,6 +80,44 @@ test('marketOfCode 区分美股 / A 股', () => {
   assert.strictEqual(marketOfCode('BRK.B'), 'us');
   assert.strictEqual(marketOfCode('600519'), 'cn');
   assert.strictEqual(marketOfCode('002436'), 'cn');
+});
+
+console.log('FIR-48：双市场代码口径（归一化 / 格式 / 已登记 / 分批）');
+test('normalizeCode：去空格、美股转大写，A 股保留前导零；aapl / AAPL / " AAPL " 归一为同一条', () => {
+  assert.strictEqual(normalizeCode(' aapl '), 'AAPL');
+  assert.strictEqual(normalizeCode('brk.b'), 'BRK.B');
+  assert.strictEqual(normalizeCode('002436'), '002436');
+  assert.strictEqual(normalizeCode(' 600519 '), '600519');
+});
+test('assertCode：A 股 6 位数字 / 美股字母（可带 .X）通过；格式错误抛 INVALID_CODE', () => {
+  for (const ok of ['600519', '002436', 'AAPL', 'NVDA', 'BRK.B']) assert.strictEqual(assertCode(ok), normalizeCode(ok));
+  for (const bad of ['60051', '60000A', '12', '', 'abcdefg', 'BRK.XYZ']) {
+    assert.throws(() => assertCode(bad), e => e instanceof InvalidRequestError && e.errorCode === 'INVALID_CODE');
+  }
+});
+test('assertSupportedCode：已登记美股通过；格式合法但未登记抛 UNSUPPORTED_CODE，与格式错误分开', () => {
+  assert.strictEqual(assertSupportedCode('BRK.B'), 'BRK.B');
+  assert.throws(() => assertSupportedCode('ZZZZ'), e =>
+    e instanceof UnsupportedCodeError && e.errorCode === 'UNSUPPORTED_CODE' && /未在当前已登记/.test(e.message));
+  assert.throws(() => assertSupportedCode('60051'), e =>
+    e instanceof InvalidRequestError && e.errorCode === 'INVALID_CODE');
+  assert.strictEqual(isRegisteredCode('600519'), true);
+  assert.strictEqual(isRegisteredCode('AAPL'), true);
+  assert.strictEqual(isRegisteredCode('ZZZZ'), false);
+});
+test('chunkCodes：归一化 + 去重保持首次出现顺序；按每批 ≤max 拆分；非法代码抛错', () => {
+  const chunks = chunkCodes(['aapl', 'AAPL', ' 600519 ', '600519', 'NVDA'], 2);
+  assert.deepStrictEqual(chunks, [['AAPL', '600519'], ['NVDA']]);
+  assert.deepStrictEqual(chunkCodes(['BRK.B', 'brk.b'], 200), [['BRK.B']]);
+  assert.throws(() => chunkCodes(['60051'], 200), /格式不合法/);
+});
+test('buildBatchItem：batch item 带 market 字段（cn / us）', () => {
+  const cn = buildBatchItem(DOCS.base_002436);
+  assert.strictEqual(cn.market, 'cn');
+  const usDoc = JSON.parse(JSON.stringify(DOCS.base_002436));
+  usDoc.code = 'AAPL';
+  usDoc.summary.code = 'AAPL';
+  assert.strictEqual(buildBatchItem(usDoc).market, 'us');
 });
 
 console.log('R67-1：扫描 / 自选股列表透传 Python 确认');

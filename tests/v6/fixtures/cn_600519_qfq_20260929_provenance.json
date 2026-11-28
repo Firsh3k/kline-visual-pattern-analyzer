@@ -1,0 +1,14 @@
+{
+  "code": "600519",
+  "symbol": "sh600519",
+  "name": "贵州茅台",
+  "source": "tencent",
+  "adjustment": "qfq",
+  "trading_calendar": "SSE",
+  "fetched_at": "2026-09-29T16:00:00+00:00",
+  "bar_count": 100,
+  "first_day": "2026-05-11",
+  "last_day": "2026-09-29",
+  "raw_payload_sha256": "3f27cce430a449bd1814700b9e35c0e13e00f166b5b782c5021d0013f6b81e56",
+  "note": "冻结行情 fixture（A 股路由）：由 data/600519.csv 转换日期格式得到；验收注入腾讯 A 股路径，不访问网络"
+}

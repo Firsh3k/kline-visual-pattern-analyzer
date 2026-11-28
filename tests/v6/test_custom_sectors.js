@@ -25,8 +25,10 @@ function compile(file, requireMap) {
   vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, (n) => (n in requireMap ? requireMap[n] : require(n)));
   return mod.exports;
 }
-const WL = compile('watchlist-store.ts', {});
-const CS = compile('custom-sector-store.ts', { './watchlist-store': WL });
+const dataMod = compile('us-exchange-map.data.ts', {});
+const pureMod = compile('stock-analysis.pure.ts', { './us-exchange-map.data': dataMod });
+const WL = compile('watchlist-store.ts', { './stock-analysis.pure': pureMod });
+const CS = compile('custom-sector-store.ts', { './watchlist-store': WL, './stock-analysis.pure': pureMod });
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
@@ -114,6 +116,26 @@ async function suite(label, makeStore) {
     await assert.rejects(() => c.put('ok', { codes: ['60000'] }), (e) => e.statusCode === 400 && /6 位数字/.test(e.message));
     await assert.rejects(() => c.put('ok', { codes: [] }), (e) => e.statusCode === 400);
     await assert.rejects(() => c.put('ok', { codes: Array.from({ length: 201 }, (_, i) => String(600000 + i)) }), (e) => e.statusCode === 400 && /200/.test(e.message));
+  });
+
+  await test('FIR-48：自定义板块可存 A 股 + 美股混合；归一化大写、去重', async () => {
+    const c = await fresh();
+    const v = await c.put('混合', { codes: ['600519', 'aapl', ' BRK.B ', 'AAPL'] });
+    assert.strictEqual(v.result, 'created');
+    assert.deepStrictEqual(v.items[0].codes, ['600519', 'AAPL', 'BRK.B']);
+  });
+
+  await test('FIR-48：板块成分未登记美股 / 格式错误分开拒绝（UNSUPPORTED_CODE / INVALID_CODE）', async () => {
+    const c = await fresh();
+    await assert.rejects(() => c.put('未登记', { codes: ['ZZZZ'] }), e => e.statusCode === 400 && e.errorCode === 'UNSUPPORTED_CODE');
+    await assert.rejects(() => c.put('格式错', { codes: ['60051'] }), e => e.statusCode === 400 && e.errorCode === 'INVALID_CODE');
+  });
+
+  await test('FIR-48：迁入混合板块；错误 / 未登记成分被过滤，合法成分保留', async () => {
+    const c = await fresh();
+    const v = await c.importLocal({ sectors: { 混合: ['600519', 'nvda', 'ZZZZ', 'bad'], 空板块: ['ZZZZ'] } });
+    assert.deepStrictEqual(v.items.map(i => [i.name, i.codes]), [['混合', ['600519', 'NVDA']]]);
+    assert.deepStrictEqual(v.skipped, ['空板块']);
   });
 
   await test('QA R80-1：已有 50 个再迁入 1 个 → 不加入、列在 over_limit、数据与 rev 不变', async () => {

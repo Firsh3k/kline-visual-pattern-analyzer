@@ -13,13 +13,20 @@ const ts = require('typescript');
 const { loadPage, PAGE } = require('./v4_page_harness');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const SRC = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis', 'watchlist-store.ts');
-const out = ts.transpileModule(fs.readFileSync(SRC, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-});
-const mod = { exports: {} };
-vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, require);
-const W = mod.exports;
+const DIR = path.join(ROOT, 'v6', 'app-builder', 'server', 'modules', 'stock-analysis');
+const SRC = path.join(DIR, 'watchlist-store.ts');
+function compile(file, requireMap) {
+  const out = ts.transpileModule(fs.readFileSync(path.join(DIR, file), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  });
+  const mod = { exports: {} };
+  const req = (n) => (n in requireMap ? requireMap[n] : require(n));
+  vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, req);
+  return mod.exports;
+}
+const dataMod = compile('us-exchange-map.data.ts', {});
+const pureMod = compile('stock-analysis.pure.ts', { './us-exchange-map.data': dataMod });
+const W = compile('watchlist-store.ts', { './stock-analysis.pure': pureMod });
 
 let passed = 0, failed = 0;
 async function test(name, fn) {

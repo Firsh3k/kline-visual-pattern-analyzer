@@ -7,10 +7,19 @@
  *        （A 股北京时间 / 美股美东时间）。北京已跨日而美东未跨日时，美股未来日期按美东今天拒绝。
  */
 
+import { US_REGISTERED_TICKERS } from './us-exchange-map.data';
+export { US_REGISTERED_TICKERS, US_EXCHANGE_MAP_SOURCE_SHA256 } from './us-exchange-map.data';
+
 export const SIGNAL_RULE_VERSION = 'signals-1';
 
 export class InvalidRequestError extends Error {
   readonly statusCode = 400;
+  readonly errorCode: string = 'INVALID_CODE';
+}
+
+/** 格式合法但标的不在当前已登记可取数清单内（未登记美股）。与格式错误分开报错，便于页面 / 导入反馈 / API 区分。HTTP 400。 */
+export class UnsupportedCodeError extends InvalidRequestError {
+  readonly errorCode = 'UNSUPPORTED_CODE';
 }
 
 /** Asia/Shanghai 当前日期 YYYY-MM-DD（与 core.analysis.today_cn 一致） */
@@ -25,9 +34,21 @@ export function todayNewYork(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
+const CN_CODE = /^\d{6}$/;
+const US_CODE = /^[A-Z]{1,6}(\.[A-Z])?$/;
+
+/**
+ * 归一化代码：去首尾空格；美股转大写；A 股保留前导零。
+ * `aapl` / `AAPL` / ` AAPL ` 归一为同一条 `AAPL`。
+ */
+export function normalizeCode(code: unknown): string {
+  const c = String(code ?? '').trim();
+  return /^[A-Za-z]/.test(c) ? c.toUpperCase() : c;
+}
+
 /** 代码归属市场：美股字母代码 → 'us'，A 股 6 位数字 → 'cn'（与 assertCode 口径对齐）。 */
 export function marketOfCode(code: string): 'us' | 'cn' {
-  return /^[A-Za-z]/.test((code || '').trim()) ? 'us' : 'cn';
+  return /^[A-Z]/.test(normalizeCode(code)) ? 'us' : 'cn';
 }
 
 /** asOf 校验；undefined / 空串 = 最新。非法直接抛 InvalidRequestError（不取行情）。
@@ -53,17 +74,47 @@ export function assertAsOf(asOf: string | undefined | null, now: Date = new Date
  * 证券代码校验：A 股 6 位数字；美股 1-6 位字母（可带点后缀，如 BRK.B）。
  * 与 Python core.market_data.market 识别口径对齐；非法抛 InvalidRequestError（fail-closed）。
  */
-export function assertCode(code: string): string {
-  if (!code || typeof code !== 'string') {
+export function assertCode(code: unknown): string {
+  const c = normalizeCode(code);
+  if (!c) {
     throw new InvalidRequestError('股票代码不能为空');
   }
-  const c = code.trim();
-  const cn = /^\d{6}$/;
-  const us = /^[A-Z]{1,6}(\.[A-Z])?$/;
-  if (!cn.test(c) && !us.test(c)) {
-    throw new InvalidRequestError('股票代码必须是 A 股 6 位数字或美股字母代码（如 AAPL）');
+  if (!CN_CODE.test(c) && !US_CODE.test(c)) {
+    throw new InvalidRequestError('股票代码格式不合法：A 股需 6 位数字（如 600519）；美股需 1-6 位字母（可带 .X 后缀，如 AAPL、BRK.B）');
   }
   return c;
+}
+
+/** 美股是否在当前已登记可取数清单内（与 Python US_EXCHANGE_MAP 同源；A 股恒为 true）。 */
+export function isRegisteredCode(code: string): boolean {
+  const c = normalizeCode(code);
+  if (!CN_CODE.test(c)) return US_REGISTERED_TICKERS.includes(c);
+  return true;
+}
+
+/**
+ * 格式校验 + 可取数登记校验。格式非法抛 InvalidRequestError；格式合法但未登记抛 UnsupportedCodeError。
+ * 页面 / 导入反馈 / 直调 API 三处都以本函数为准，后端 API 是最终校验。
+ */
+export function assertSupportedCode(code: unknown): string {
+  const c = assertCode(code);
+  if (marketOfCode(c) === 'us' && !US_REGISTERED_TICKERS.includes(c)) {
+    throw new UnsupportedCodeError(`美股标的 ${c} 未在当前已登记交易所清单内，暂不支持（A 股 6 位数字不受此限）`);
+  }
+  return c;
+}
+
+/** 把代码清单按每批 ≤max 拆分（>200 只「分析全部」分批用）；返回归一化、去重后的批次，保持首次出现顺序。 */
+export function chunkCodes(codes: string[], max: number): string[][] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const raw of codes || []) {
+    const c = assertCode(raw);
+    if (!seen.has(c)) { seen.add(c); ordered.push(c); }
+  }
+  const batches: string[][] = [];
+  for (let i = 0; i < ordered.length; i += max) batches.push(ordered.slice(i, i + max));
+  return batches.length ? batches : [[]];
 }
 
 /**
@@ -112,8 +163,10 @@ export function buildBatchItem(doc: Record<string, any>): Record<string, unknown
   };
 
   const pct = typeof summary.change_pct === 'number' ? summary.change_pct.toFixed(2) : '0.00';
+  const code = String(doc.code ?? summary.code ?? '');
   return {
-    code: String(doc.code ?? summary.code ?? ''),
+    code,
+    market: marketOfCode(code),
     name: String(doc.name ?? summary.name ?? ''),
     as_of: String(doc.as_of ?? summary.as_of ?? ''),
     price: summary.close ?? null,

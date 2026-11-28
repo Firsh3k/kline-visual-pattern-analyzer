@@ -55,6 +55,14 @@ export interface WatchlistStore {
   close?(): Promise<void>;
 }
 
+import {
+  InvalidRequestError,
+  UnsupportedCodeError,
+  assertCode,
+  assertSupportedCode,
+  normalizeCode,
+} from './stock-analysis.pure';
+
 export class WatchlistInputError extends Error {
   readonly statusCode = 400;
 }
@@ -63,14 +71,7 @@ export class WatchlistUnavailableError extends Error {
   readonly statusCode = 503;
 }
 
-const CODE_RE = /^\d{6}$/;
 export const MAX_WATCHLIST = 500;
-
-function assertCode(code: unknown): string {
-  const c = String(code ?? '').trim();
-  if (!CODE_RE.test(c)) throw new WatchlistInputError(`股票代码必须为 6 位数字：${JSON.stringify(code)}`);
-  return c;
-}
 
 function iso(d: Date | string): string {
   return (d instanceof Date ? d : new Date(d)).toISOString();
@@ -182,7 +183,7 @@ export function watchlistMigrationSql(table = PG_TABLE): string {
   return `-- FIR-42：自选股（全站共用一份）。由平台 migration 执行；应用运行时只做 DML，不建表。
 -- 应用账号需要：两张表的 SELECT, INSERT, UPDATE（不需要 DELETE / CREATE）。可重复执行。
 CREATE TABLE IF NOT EXISTS ${table} (
-  code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$'),
+  code        text PRIMARY KEY CHECK (code ~ '^[0-9]{6}$' OR code ~ '^[A-Z]{1,6}(\\.[A-Z])?$'),
   state       text NOT NULL CHECK (state IN ('active', 'deleted')),
   added_at    timestamptz NOT NULL,
   deleted_at  timestamptz,
@@ -490,7 +491,7 @@ export class Watchlist {
       this.markOk();
       return out;
     } catch (err) {
-      if (err instanceof WatchlistInputError) throw err;
+      if (err instanceof WatchlistInputError || err instanceof InvalidRequestError || err instanceof UnsupportedCodeError) throw err;
       this.markDown(err);
       throw new WatchlistUnavailableError(`自选股存储不可用：${this.lastError}`);
     }
@@ -515,7 +516,7 @@ export class Watchlist {
   }
 
   async add(code: unknown): Promise<WatchlistView & { added: boolean }> {
-    const c = assertCode(code);
+    const c = assertSupportedCode(code);
     return this.run(async () => {
       const added = await this.store.add(c, this.now(), MAX_WATCHLIST);
       return { ...(await this.buildView()), added };
@@ -538,19 +539,31 @@ export class Watchlist {
   }
 
   /** 浏览器一次性迁入：codes 为本机清单，tombstones 为本机删除记录 [{code, deletedAt}] */
-  async importLocal(body: unknown): Promise<WatchlistView & { added: number; deleted: number; skipped: string[] }> {
+  async importLocal(body: unknown): Promise<WatchlistView & { added: number; deleted: number; skipped: string[]; skippedUnsupported: string[] }> {
     const b = (body ?? {}) as { codes?: unknown; tombstones?: unknown };
     const skipped: string[] = [];
+    const skippedUnsupported: string[] = [];
     const codes: string[] = [];
-    for (const c of Array.isArray(b.codes) ? b.codes : []) {
-      const s = String(c ?? '').trim();
-      if (CODE_RE.test(s)) { if (!codes.includes(s)) codes.push(s); } else skipped.push(s);
+    for (const raw of Array.isArray(b.codes) ? b.codes : []) {
+      const s = normalizeCode(raw);
+      if (!s) { skipped.push(String(raw ?? '')); continue; }
+      let valid: string;
+      try {
+        valid = assertSupportedCode(s);
+      } catch (err) {
+        skipped.push(s);
+        if (err instanceof UnsupportedCodeError) skippedUnsupported.push(s);
+        continue;
+      }
+      if (!codes.includes(valid)) codes.push(valid);
     }
     const tombs: ImportTombstone[] = [];
     for (const t of Array.isArray(b.tombstones) ? b.tombstones : []) {
-      const code = String((t as any)?.code ?? '').trim();
+      const code = normalizeCode((t as any)?.code);
       const at = new Date(String((t as any)?.deletedAt ?? (t as any)?.deleted_at ?? ''));
-      if (!CODE_RE.test(code) || Number.isNaN(at.getTime())) { skipped.push(code || '(无效删除记录)'); continue; }
+      let formatOk = true;
+      try { assertCode(code); } catch { formatOk = false; }
+      if (!formatOk || Number.isNaN(at.getTime())) { skipped.push(code || '(无效删除记录)'); continue; }
       // 未来时间的删除记录（设备时钟超前）按现在处理，避免永远压住之后的加入
       const now = this.now();
       tombs.push({ code, deletedAt: (at > now ? now : at).toISOString() });
@@ -560,7 +573,7 @@ export class Watchlist {
     }
     return this.run(async () => {
       const r = await this.store.importLocal(codes, tombs, this.now());
-      return { ...(await this.buildView()), ...r, skipped };
+      return { ...(await this.buildView()), ...r, skipped, skippedUnsupported };
     });
   }
 }

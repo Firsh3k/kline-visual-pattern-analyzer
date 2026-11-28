@@ -16,6 +16,8 @@
   逐个文件校验 sha256 后再 spawn python。Python 仍是唯一算法源，内容与仓库里的 .py 逐字节相同。
 - server/modules/stock-analysis/sector-catalog.data.ts
   板块清单 sector_data/catalog.json 的原文（由 scripts/build_sector_catalog.py 生成）。
+- server/modules/stock-analysis/us-exchange-map.data.ts
+  core/market_data/market.py 的 US_EXCHANGE_MAP 已登记 ticker 清单（BFF 预校验未登记美股，同源不另建名单）。
 
 两个文件都入库（平台从仓库构建，必须存在），不要手改。core / python_analyzer.py / catalog.json 改了之后
 重新运行本脚本并一起提交；CI 用 --check 拦住忘了重新生成的情况。--check 比较的是解码后的内容，
@@ -36,6 +38,8 @@ MODULE_DIR = APP / "server" / "modules" / "stock-analysis"
 ENGINE_TS = MODULE_DIR / "engine-bundle.ts"
 CATALOG_TS = MODULE_DIR / "sector-catalog.data.ts"
 CATALOG_JSON = APP / "sector_data" / "catalog.json"
+US_MAP_TS = MODULE_DIR / "us-exchange-map.data.ts"
+US_MAP_PY = APP / "core" / "market_data" / "market.py"
 
 ENGINE_FORMAT = "kline-engine-bundle-1"
 # 只允许这些路径进包；运行时 engine.ts 用同一条规则拒绝包里任何别的路径（防路径穿越）
@@ -122,6 +126,30 @@ def read_catalog_ts(path=CATALOG_TS):
     return _const(src, "SECTOR_CATALOG_SHA256").strip("'"), json.loads(_const(src, "SECTOR_CATALOG_JSON"))
 
 
+def parse_us_registered_tickers(py_text: str) -> list[str]:
+    """从 core/market_data/market.py 的 US_EXCHANGE_MAP 提取已登记 ticker 键（与 Python 同一来源，不另建手工名单）。"""
+    m = re.search(r"US_EXCHANGE_MAP[^=]*=\s*\{([^}]*)\}", py_text, re.S)
+    if not m:
+        raise ValueError("market.py 中找不到 US_EXCHANGE_MAP")
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
+def render_us_map_ts(py_text: str, tickers: list[str]):
+    return (
+        HEADER
+        + "// 美股已登记可取数 ticker 清单（与 core/market_data/market.py 的 US_EXCHANGE_MAP 同源；BFF 预校验未登记美股）。\n"
+        + f"export const US_EXCHANGE_MAP_SOURCE_SHA256 = '{hashlib.sha256(py_text.encode('utf-8')).hexdigest()}';\n"
+        + f"export const US_REGISTERED_TICKERS = {json.dumps(tickers, ensure_ascii=False, separators=(', ', ': '))};\n"
+    )
+
+
+def read_us_map_ts(path=US_MAP_TS):
+    src = path.read_text(encoding="utf-8")
+    sha = _const(src, "US_EXCHANGE_MAP_SOURCE_SHA256").strip("'")
+    tickers = json.loads(_const(src, "US_REGISTERED_TICKERS"))
+    return sha, tickers
+
+
 def check(app=APP, engine_ts=ENGINE_TS, catalog_ts=CATALOG_TS, catalog_json=CATALOG_JSON):
     """返回问题清单（空 = 一致）"""
     problems = []
@@ -146,6 +174,16 @@ def check(app=APP, engine_ts=ENGINE_TS, catalog_ts=CATALOG_TS, catalog_json=CATA
             problems.append(f"{catalog_ts.name} 的 SECTOR_CATALOG_SHA256 与内容不符")
     except (OSError, ValueError) as e:
         problems.append(f"{catalog_ts.name} 读不了：{e}")
+    try:
+        py_text = US_MAP_PY.read_text(encoding="utf-8")
+        tickers = parse_us_registered_tickers(py_text)
+        sha, embedded = read_us_map_ts()
+        if embedded != tickers:
+            problems.append(f"{US_MAP_TS.name} 与 {US_MAP_PY.name} 的 US_EXCHANGE_MAP 不一致（需要重新生成）")
+        if sha != hashlib.sha256(py_text.encode("utf-8")).hexdigest():
+            problems.append(f"{US_MAP_TS.name} 的 US_EXCHANGE_MAP_SOURCE_SHA256 与来源文件不符")
+    except (OSError, ValueError) as e:
+        problems.append(f"{US_MAP_TS.name} 读不了：{e}")
     return problems
 
 
@@ -164,13 +202,16 @@ def main(argv=None):
         if problems:
             print("请运行 python3 scripts/build_runtime_bundles.py 重新生成并提交", file=sys.stderr)
             return 1
-        print("engine-bundle.ts / sector-catalog.data.ts 与来源一致")
+        print("engine-bundle.ts / sector-catalog.data.ts / us-exchange-map.data.ts 与来源一致")
         return 0
     files = engine_sources_from_tree()
     ENGINE_TS.write_text(render_engine_ts(files), encoding="utf-8")
     write_catalog_module()
+    us_text = US_MAP_PY.read_text(encoding="utf-8")
+    US_MAP_TS.write_text(render_us_map_ts(us_text, parse_us_registered_tickers(us_text)), encoding="utf-8")
     print(f"已生成 {ENGINE_TS.relative_to(ROOT)}：{len(files)} 个文件，bundle_sha256={engine_bundle_sha256(files)}")
     print(f"已生成 {CATALOG_TS.relative_to(ROOT)}")
+    print(f"已生成 {US_MAP_TS.relative_to(ROOT)}")
     return 0
 
 

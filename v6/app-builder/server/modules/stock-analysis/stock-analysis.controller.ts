@@ -2,7 +2,11 @@ import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
   BadRequestException, NotFoundException, HttpException, ServiceUnavailableException,
 } from '@nestjs/common';
-import { assertAsOf, assertCode, marketOfCode } from './stock-analysis.pure';
+import {
+  assertAsOf,
+  assertSupportedCode,
+  marketOfCode,
+} from './stock-analysis.pure';
 import { StockAnalysisService } from './stock-analysis.service';
 import { collectDeployInfo } from './deploy-info';
 
@@ -42,9 +46,9 @@ export class StockAnalysisController {
   async analyze(@Param('code') code: string, @Query('asOf') asOf?: string) {
     let checkedCode: string;
     try {
-      checkedCode = assertCode(code);
+      checkedCode = assertSupportedCode(code);
     } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : '股票代码不合法');
+      throw toBadRequest(error, '股票代码不合法');
     }
     let checkedAsOf: string | undefined;
     try {
@@ -55,10 +59,14 @@ export class StockAnalysisController {
     try {
       return await this.service.analyzeStock(checkedCode, checkedAsOf);
     } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : '分析失败'
-      );
+      throw toBadRequest(error, '分析失败');
     }
+  }
+
+  /** 当前已登记可取数的代码清单（BFF 预校验用；与 Python US_EXCHANGE_MAP 同源）。 */
+  @Get('supported-codes')
+  supportedCodes() {
+    return this.service.getSupportedCodes();
   }
 
   @Get('market-env')
@@ -116,9 +124,7 @@ export class StockAnalysisController {
         body.only_bull ?? false
       );
     } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : '扫描失败'
-      );
+      throw toBadRequest(error, '扫描失败');
     }
   }
 
@@ -134,7 +140,7 @@ export class StockAnalysisController {
       if ((error as { statusCode?: number })?.statusCode === 503) {
         throw new ServiceUnavailableException((error as Error).message);
       }
-      throw new BadRequestException(error instanceof Error ? error.message : '提交扫描失败');
+      throw toBadRequest(error, '提交扫描失败');
     }
   }
 
@@ -210,6 +216,19 @@ export class StockAnalysisController {
   }
 }
 
+function errorCodeOf(err: unknown): string | undefined {
+  return (err as any)?.errorCode;
+}
+
+/** 400 映射：保留纯口径层的机器错误码（INVALID_CODE / UNSUPPORTED_CODE），消息文案随错误原样回传。 */
+function toBadRequest(error: unknown, fallback: string): BadRequestException {
+  const msg = error instanceof Error ? error.message : fallback;
+  const code = errorCodeOf(error);
+  return code
+    ? new BadRequestException({ message: msg, error: code, statusCode: 400 })
+    : new BadRequestException(msg);
+}
+
 /** 自选股接口统一错误映射：400 输入错误 / 503 存储不可用 / 其它 500 */
 async function watchlistCall<T>(fn: () => Promise<T>, label = '自选股'): Promise<T> {
   try {
@@ -217,7 +236,7 @@ async function watchlistCall<T>(fn: () => Promise<T>, label = '自选股'): Prom
   } catch (error) {
     const status = (error as any)?.statusCode;
     const msg = error instanceof Error ? error.message : String(error);
-    if (status === 400) throw new BadRequestException(msg);
+    if (status === 400) throw toBadRequest(error, msg);
     if (status === 503) throw new ServiceUnavailableException(msg);
     throw new HttpException(`${label}存储出错：${msg}`, 500);
   }

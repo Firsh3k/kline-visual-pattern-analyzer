@@ -61,30 +61,10 @@ def _fetch_start(as_of: str | None) -> str:
     return (anchor - timedelta(days=FETCH_CALENDAR_DAYS)).strftime("%Y-%m-%d")
 
 
-def _fixture_series(fixdir: str, symbol: str, adjustment: str):
-    """测试接缝（仅当 KLINE_FIXTURE_DIR 环境变量设置时启用）：从冻结 CSV 构造 MarketDataSeries，
-    供"真实 Nest /api/analyze/:code 端到端"确定性验收使用（不访问网络）。
-
-    生产环境不设此 env，_fetch_series_for 行为与原先完全一致。目前仅支持美股 fixture
-    （us_{ticker}_qfq_*.csv + 同名 _provenance.json，provenance 如实记冻结来源）。
-    """
+def _read_fixture_bars(path: str, prov: dict, adj) -> list:
+    """读取冻结 CSV 为 MarketDataBar 列表（美股 / A 股共用）。"""
     import csv
-    import glob
-    import os
-    from core import AdjustmentType, FrequencyType
-    from core.types import (DataProvenance, DataQualityFlag, DataSourceType,
-                            MarketDataBar, MarketDataSeries)
-    if not symbol.startswith("us"):
-        raise RuntimeError(f"KLINE_FIXTURE_DIR 测试接缝仅支持美股 fixture（收到 {symbol}）")
-    ticker = symbol[2:]
-    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
-    csvs = sorted(glob.glob(os.path.join(fixdir, f"us_{ticker.lower()}_qfq_*.csv")))
-    if not csvs:
-        raise RuntimeError(f"缺少 {ticker} 冻结 fixture（目录 {fixdir}）")
-    path = csvs[-1]
-    prov_path = path[:-4] + "_provenance.json"
-    with open(prov_path, encoding="utf-8") as f:
-        prov = json.load(f)
+    from core.types import (DataProvenance, DataQualityFlag, DataSourceType, MarketDataBar)
     bars = []
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -95,11 +75,57 @@ def _fixture_series(fixdir: str, symbol: str, adjustment: str):
                     source=DataSourceType.TENCENT, url="fixture", fetched_at=prov["fetched_at"],
                     raw_payload_hash=prov["raw_payload_sha256"],
                     adjustment_applied=adj, quality_flag=DataQualityFlag.ADJUSTED)))
+    return bars
+
+
+def _fixture_series(fixdir: str, symbol: str, adjustment: str):
+    """测试接缝（仅当 KLINE_FIXTURE_DIR 环境变量设置时启用）：从冻结 CSV 构造 MarketDataSeries，
+    供"真实 Nest /api/analyze/:code 端到端"确定性验收使用（不访问网络）。
+
+    生产环境不设此 env，_fetch_series_for 行为与原先完全一致。支持双市场 fixture：
+    - 美股：us_{ticker}_qfq_*.csv（symbol=usAAPL）；
+    - A 股：cn_{6位代码}_qfq_*.csv（symbol=sh600519 / sz000001）。
+    两者均配同名 _provenance.json，provenance 如实记冻结来源。
+    """
+    import glob
+    import os
+    import re
+    from core import AdjustmentType, FrequencyType
+    from core.types import DataSourceType, MarketDataSeries
+    adj = AdjustmentType.FORWARD if adjustment == "qfq" else AdjustmentType.NONE
+
+    if symbol.startswith("us"):
+        ticker = symbol[2:]
+        csvs = sorted(glob.glob(os.path.join(fixdir, f"us_{ticker.lower()}_qfq_*.csv")))
+        if not csvs:
+            raise RuntimeError(f"缺少 {ticker} 冻结 fixture（目录 {fixdir}）")
+        path = csvs[-1]
+        with open(path[:-4] + "_provenance.json", encoding="utf-8") as f:
+            prov = json.load(f)
+        bars = _read_fixture_bars(path, prov, adj)
+        if not bars:
+            raise RuntimeError(f"{ticker} fixture 为空")
+        return MarketDataSeries(
+            symbol=symbol, name=prov["name"], frequency=FrequencyType.DAILY, adjustment=adj,
+            trading_calendar=prov["trading_calendar"], source=DataSourceType.TENCENT,
+            fetched_at=prov["fetched_at"], bars=bars)
+
+    m = re.match(r"^(sh|sz)(\d{6})$", symbol)
+    if not m:
+        raise RuntimeError(f"KLINE_FIXTURE_DIR 测试接缝不支持符号 {symbol}")
+    code = m.group(2)
+    csvs = sorted(glob.glob(os.path.join(fixdir, f"cn_{code}_qfq_*.csv")))
+    if not csvs:
+        raise RuntimeError(f"缺少 {code} 冻结 fixture（目录 {fixdir}）")
+    path = csvs[-1]
+    with open(path[:-4] + "_provenance.json", encoding="utf-8") as f:
+        prov = json.load(f)
+    bars = _read_fixture_bars(path, prov, adj)
     if not bars:
-        raise RuntimeError(f"{ticker} fixture 为空")
+        raise RuntimeError(f"{code} fixture 为空")
     return MarketDataSeries(
         symbol=symbol, name=prov["name"], frequency=FrequencyType.DAILY, adjustment=adj,
-        trading_calendar=prov["trading_calendar"], source=DataSourceType.TENCENT,
+        trading_calendar=prov.get("trading_calendar", "SSE"), source=DataSourceType.TENCENT,
         fetched_at=prov["fetched_at"], bars=bars)
 
 

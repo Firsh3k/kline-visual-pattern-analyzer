@@ -34,12 +34,13 @@ function compile(file, requireMap) {
   vm.runInThisContext(`(function (module, exports, require) {${out.outputText}\n})`)(mod, mod.exports, req);
   return mod.exports;
 }
-const pure = compile('stock-analysis.pure.ts', {});
+const US = compile('us-exchange-map.data.ts', {});
+const pure = compile('stock-analysis.pure.ts', { './us-exchange-map.data': US });
 const DATA = compile('sector-catalog.data.ts', {});
 const C = compile('sector-catalog.ts', { './stock-analysis.pure': pure, './sector-catalog.data': DATA });
 const { ScanJobManager } = compile('scan-jobs.ts', { './stock-analysis.pure': pure });
-const WL = compile('watchlist-store.ts', {});
-const CS = compile('custom-sector-store.ts', { './watchlist-store': WL });
+const WL = compile('watchlist-store.ts', { './stock-analysis.pure': pure });
+const CS = compile('custom-sector-store.ts', { './watchlist-store': WL, './stock-analysis.pure': pure });
 /** 服务端自定义板块（内存实现），预置若干板块 */
 async function customWith(sectors = {}) {
   const c = new CS.CustomSectors(new CS.MemoryCustomSectorStore());
